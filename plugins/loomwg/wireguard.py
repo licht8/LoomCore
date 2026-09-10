@@ -22,6 +22,8 @@ def run_command(
     timeout: int = 15,
     input_text: str | None = None,
 ) -> str:
+    if command and command[0] in {"wg", "ip"}:
+        command = ["nsenter", "-t", "1", "-n", "--", *command]
     try:
         result = subprocess.run(
             command,

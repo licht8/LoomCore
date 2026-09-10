@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     hetzner_base_url: str = "https://inference.hetzner.com/api/v1"
     hetzner_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     debug: bool = False
+    admin_token: str = ""
     model_config = {"env_file": ".env"}
 
 @lru_cache()

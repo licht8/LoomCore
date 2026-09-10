@@ -69,7 +69,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
                     artifacts = None
                     if (
-                        tool_name == "wg_create_client"
+                        tool == "wg_create_client"
                         and isinstance(raw_result, dict)
                         and isinstance(raw_result.get("data"), dict)
                     ):
@@ -78,17 +78,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             artifacts = [
                                 {
                                     "label": "Скачать конфигурацию",
-                                    "url": f"/api/loomwg/artifacts/{artifact_data['config_token']}/config",
+                                    "url": (
+                                        f"/api/loomwg/artifacts/{artifact_data['config_token']}/config"
+                                        f"?access_token={settings.admin_token}"
+                                    ),
                                 },
                                 {
                                     "label": "Скачать QR-код",
-                                    "url": f"/api/loomwg/artifacts/{artifact_data['qr_token']}/qr",
+                                    "url": (
+                                        f"/api/loomwg/artifacts/{artifact_data['qr_token']}/qr"
+                                        f"?access_token={settings.admin_token}"
+                                    ),
                                 },
                             ]
 
                     artifacts = None
                     if (
-                        tool_name == "wg_create_client"
+                        tool == "wg_create_client"
                         and isinstance(raw_result, dict)
                         and raw_result.get("data", {}).get("artifact_token")
                     ):

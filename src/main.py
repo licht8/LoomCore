@@ -1,8 +1,9 @@
 import uuid
 import base64
+import secrets
 
 import uvicorn
-from fastapi import FastAPI, Depends, WebSocket
+from fastapi import FastAPI, Depends, WebSocket, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -42,6 +43,13 @@ class ChatRequest(BaseModel):
     message: str
 
 
+def require_admin_token(token: str | None) -> None:
+    if not settings.admin_token:
+        raise HTTPException(status_code=503, detail="Административный доступ не настроен")
+    if not token or not secrets.compare_digest(token, settings.admin_token):
+        raise HTTPException(status_code=401, detail="Требуется административный токен")
+
+
 @app.on_event("startup")
 async def startup():
     print("🚀 LoomHub Core starting up...")
@@ -57,8 +65,17 @@ def health():
 
 
 @app.get("/api/tools")
-async def list_plugins_tools():
+async def list_plugins_tools(
+    authorization: str | None = Header(default=None),
+    access_token: str | None = Query(default=None),
+):
     """Вернуть схемы инструментов всех плагинов (для Swagger/UI)."""
+    token = access_token or (
+        authorization.removeprefix("Bearer ").strip()
+        if authorization and authorization.startswith("Bearer ")
+        else None
+    )
+    require_admin_token(token)
     result = {}
     try:
         result["tools"] = await plugin_manager.get_all_tools()
@@ -71,8 +88,16 @@ async def list_plugins_tools():
 async def chat_endpoint(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
+    authorization: str | None = Header(default=None),
+    access_token: str | None = Query(default=None),
 ):
     """Отправить сообщение AI и получить ответ (REST)."""
+    token = access_token or (
+        authorization.removeprefix("Bearer ").strip()
+        if authorization and authorization.startswith("Bearer ")
+        else None
+    )
+    require_admin_token(token)
     try:
         result = await airouter.route(request.message, request.session_id)
         return result
@@ -84,8 +109,13 @@ async def chat_endpoint(
 
 
 @app.get("/api/loomwg/artifacts/{token}/{kind}")
-async def download_loomwg_artifact(token: str, kind: str):
+async def download_loomwg_artifact(
+    token: str,
+    kind: str,
+    access_token: str | None = Query(default=None),
+):
     """Consume a short-lived, one-time client artifact capability."""
+    require_admin_token(access_token)
     if kind not in {"config", "qr"}:
         return JSONResponse(status_code=404, content={"error": "Артефакт не найден"})
     try:
@@ -109,8 +139,13 @@ async def download_loomwg_artifact(token: str, kind: str):
 
 
 @app.websocket("/ws/{session_id}")
-async def ws_proxy(websocket: WebSocket, session_id: str):
+async def ws_proxy(websocket: WebSocket, session_id: str, access_token: str | None = Query(default=None)):
     """Прокси-роутер: передаёт управление в src.interfaces.websocket."""
+    if not settings.admin_token or not access_token or not secrets.compare_digest(
+        access_token, settings.admin_token
+    ):
+        await websocket.close(code=1008, reason="Требуется административный токен")
+        return
     await websocket_endpoint(websocket, session_id)
 
 

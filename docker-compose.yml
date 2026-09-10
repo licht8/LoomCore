@@ -40,6 +40,7 @@ services:
       LOOMHUB_MODE: self-hosted
       LOOMHUB_HOST_ROOT: /host
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"
@@ -64,6 +65,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     container_name: loom_frontend
     restart: unless-stopped
     depends_on:
