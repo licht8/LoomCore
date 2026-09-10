@@ -24,6 +24,12 @@ ARTIFACT_TTL_SECONDS = 600
 _artifacts: dict[str, tuple[str, float]] = {}
 
 
+def clients_directory() -> Path:
+    if CLIENTS_DIR.is_dir() and any(CLIENTS_DIR.glob("*.conf")):
+        return CLIENTS_DIR
+    return Path("/host/etc/wireguard/clients")
+
+
 def _safe_name(value: object) -> str:
     name = str(value or "").strip()
     if not NAME_RE.fullmatch(name):
@@ -151,6 +157,38 @@ def _write_secret(path: Path, content: str) -> None:
     os.chmod(path, 0o600)
 
 
+def remove_client_artifacts(public_key: str) -> list[str]:
+    """Remove generated client files whose key matches a server peer."""
+    removed: list[str] = []
+    directory = clients_directory()
+    if not directory.is_dir():
+        return removed
+
+    for client_path in directory.glob("*.conf"):
+        private_key = ""
+        for line in client_path.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "PrivateKey":
+                private_key = value.strip()
+                break
+        if not private_key:
+            continue
+        client_public_key = run_command(["wg", "pubkey"], timeout=5, input_text=private_key)
+        if client_public_key != public_key:
+            continue
+
+        name = client_path.stem
+        client_path.unlink()
+        qr_path = directory / f"{name}.png"
+        if qr_path.exists():
+            qr_path.unlink()
+        for token, (artifact_name, _) in list(_artifacts.items()):
+            if artifact_name == name:
+                _artifacts.pop(token, None)
+        removed.append(name)
+    return removed
+
+
 def create_client(arguments: dict) -> dict:
     interface = str(arguments.get("interface", "wg0"))
     name = _safe_name(arguments.get("name"))
@@ -171,8 +209,8 @@ def create_client(arguments: dict) -> dict:
             raise ValueError(f"Адрес клиента {address} уже занят")
     keypair = generate_keypair()
     preshared_key = run_command(["wg", "genpsk"])
-    client_path = CLIENTS_DIR / f"{name}.conf"
-    qr_path = CLIENTS_DIR / f"{name}.png"
+    client_path = clients_directory() / f"{name}.conf"
+    qr_path = clients_directory() / f"{name}.png"
     if client_path.exists() or qr_path.exists():
         raise ValueError(f"Клиент '{name}' уже существует")
 
@@ -268,7 +306,7 @@ def get_artifact(arguments: dict) -> dict:
         raise ValueError("Срок действия ссылки истёк")
     if kind not in {"config", "qr"}:
         raise ValueError("Недопустимый тип артефакта")
-    path = CLIENTS_DIR / f"{name}.{'conf' if kind == 'config' else 'png'}"
+    path = clients_directory() / f"{name}.{'conf' if kind == 'config' else 'png'}"
     if not path.is_file():
         raise FileNotFoundError("Файл артефакта не найден")
     raw = path.read_bytes()

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from config import add_peer as save_peer, remove_peer as delete_peer
-from client import create_client, get_artifact
+from client import create_client, get_artifact, remove_client_artifacts
 from keys import validate_public_key
 from lifecycle import format_lifecycle, restart, start, stop
 from install import install_wireguard, setup_server
@@ -202,10 +202,12 @@ def remove_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         raise CommandError(f"Интерфейс {interface} не активен")
     run_command(["wg", "set", interface, "peer", public_key, "remove"])
     delete_peer(interface, public_key)
+    removed_clients = remove_client_artifacts(public_key)
     return text_result(
         f"Пир {public_key[:12]}... удалён из {interface}",
         interface=interface,
         public_key=public_key,
+        removed_client_files=removed_clients,
     )
 
 
@@ -261,7 +263,8 @@ TOOLS_SCHEMA = [
         "description": (
             "Создать серверную WireGuard-конфигурацию после подтверждения администратора. "
             "Параметры имеют безопасные значения по умолчанию: wg0, 10.66.66.0/24, "
-            "fd42:42:42::/64, порт 51820, DNS 1.1.1.1 и 1.0.0.1"
+            "fd42:42:42::/64, порт 51820, DNS 1.1.1.1 и 1.0.0.1. "
+            "Для full-tunnel также включает forwarding, NAT и правило firewall."
         ),
         "inputSchema": {
             "type": "object",
@@ -274,6 +277,10 @@ TOOLS_SCHEMA = [
                     "type": "array",
                     "items": {"type": "string"},
                     "default": ["1.1.1.1", "1.0.0.1"],
+                },
+                "external_interface": {
+                    "type": "string",
+                    "description": "Необязательно: внешний интерфейс; иначе определяется по default route",
                 },
             },
             "required": [],
