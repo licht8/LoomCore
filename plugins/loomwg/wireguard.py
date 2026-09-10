@@ -99,7 +99,8 @@ def _parse_timestamp(value: str) -> str | None:
 
 
 def read_interface(interface: str) -> dict[str, Any]:
-    lines = run_command(["wg", "show", interface, "dump"]).splitlines()
+    dump_output = run_command(["wg", "show", interface, "dump"])
+    lines = dump_output.splitlines()
     if not lines:
         raise CommandError(f"Интерфейс {interface} не вернул данные")
 
@@ -126,12 +127,71 @@ def read_interface(interface: str) -> dict[str, Any]:
             }
         )
 
+    if not peers:
+        peers = _read_human_peers(interface)
+
     return {
         "interface": interface,
         "public_key": interface_parts[1],
         "listen_port": int(interface_parts[2]),
         "peers": peers,
     }
+
+
+def _read_human_peers(interface: str) -> list[dict[str, Any]]:
+    """Parse peer blocks when a platform does not expose dump rows reliably."""
+    lines = run_command(["wg", "show", interface]).splitlines()
+    peers: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("peer: "):
+            if current is not None:
+                peers.append(current)
+            current = {
+                "public_key": line[6:].strip(),
+                "endpoint": None,
+                "allowed_ips": [],
+                "latest_handshake": None,
+                "receive_bytes": 0,
+                "transmit_bytes": 0,
+                "persistent_keepalive": 0,
+            }
+        elif current is None:
+            continue
+        elif line.startswith("endpoint: "):
+            endpoint = line[10:].strip()
+            current["endpoint"] = None if endpoint == "(none)" else endpoint
+        elif line.startswith("allowed ips: "):
+            current["allowed_ips"] = [
+                value.strip() for value in line[13:].split(",") if value.strip()
+            ]
+        elif line.startswith("latest handshake: "):
+            # Human-readable durations are not compatible with the ISO
+            # timestamp format used by peer_is_online().
+            current["latest_handshake"] = None
+        elif line.startswith("transfer: "):
+            values = line[10:].split(",")
+            if len(values) == 2:
+                current["receive_bytes"] = _parse_transfer_bytes(values[0])
+                current["transmit_bytes"] = _parse_transfer_bytes(values[1])
+        elif line.startswith("persistent keepalive: "):
+            value = line[22:].strip()
+            current["persistent_keepalive"] = (
+                int(value.split()[0]) if value and value.split()[0].isdigit() else 0
+            )
+    if current is not None:
+        peers.append(current)
+    return peers
+
+
+def _parse_transfer_bytes(value: str) -> int:
+    match = re.search(r"([\d.]+)\s*([KMGTP]i?B)?", value)
+    if not match:
+        return 0
+    amount = float(match.group(1))
+    units = {"B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
+    return int(amount * units.get(match.group(2) or "B", 1))
 
 
 def peer_is_online(peer: dict[str, Any], timeout_seconds: int = 180) -> bool:
