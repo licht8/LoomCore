@@ -8,6 +8,7 @@ from config import add_peer as save_peer, remove_peer as delete_peer
 from client import create_client, get_artifact
 from keys import validate_public_key
 from lifecycle import format_lifecycle, restart, start, stop
+from install import install_wireguard, setup_server
 from wireguard import (
     CONFIG_DIR,
     CommandError,
@@ -84,18 +85,19 @@ def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
         raise CommandError(f"Интерфейс {interface} не активен")
 
     details = read_interface(interface)
-    rows = [
-        "Public Key | Allowed IPs | Endpoint | Handshake | RX | TX | Online",
-        "-" * 100,
-    ]
+    rows = [f"Интерфейс: {interface}", f"Всего пиров: {len(details['peers'])}", ""]
     for peer in details["peers"]:
-        rows.append(
-            f"{peer['public_key'][:20]:20} | "
-            f"{','.join(peer['allowed_ips']):18} | "
-            f"{str(peer['endpoint'] or '(none)'):21} | "
-            f"{str(peer['latest_handshake'] or 'never'):25} | "
-            f"{peer['receive_bytes']:>10} | {peer['transmit_bytes']:>10} | "
-            f"{'yes' if peer_is_online(peer) else 'no'}"
+        status = "online" if peer_is_online(peer) else "offline"
+        rows.extend(
+            [
+                f"Peer {peer['public_key']}",
+                f"  Адреса: {', '.join(peer['allowed_ips']) or '-'}",
+                f"  Endpoint: {peer['endpoint'] or '-'}",
+                f"  Handshake: {peer['latest_handshake'] or 'нет данных'}",
+                f"  Трафик: RX {peer['receive_bytes']} B / TX {peer['transmit_bytes']} B",
+                f"  Статус: {status}",
+                "",
+            ]
         )
     return text_result(
         "\n".join(rows) if details["peers"] else "Пиры не найдены",
@@ -121,6 +123,7 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
 
     checks["link_present"] = has_link(interface)
     checks["config_present"] = (config_directory() / f"{interface}.conf").is_file()
+    checks["setup_required"] = not checks["config_present"]
     checks["healthy"] = bool(
         checks["wg_installed"] and checks["active"] and checks["link_present"]
     )
@@ -129,6 +132,12 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         f"{interface} активен: {'yes' if checks['active'] else 'no'}",
         f"Сетевой link существует: {'yes' if checks['link_present'] else 'no'}",
         f"Конфигурация найдена: {'yes' if checks['config_present'] else 'no'}",
+        (
+            "Требуется настройка сервера: используйте wg_setup_server "
+            "с параметрами по умолчанию или укажите свои"
+            if checks["setup_required"]
+            else ""
+        ),
         f"Итог: {'OK' if checks['healthy'] else 'ПРОБЛЕМА'}",
     ]
     return text_result("\n".join(lines), **checks)
@@ -231,6 +240,8 @@ HANDLERS = {
     "wg_stop": lambda args: lifecycle_tool(stop, args),
     "wg_restart": lambda args: lifecycle_tool(restart, args),
     "wg_create_client": create_client_tool,
+    "wg_install": install_wireguard,
+    "wg_setup_server": setup_server,
     "wg_get_client_artifact": get_artifact_tool,
 }
 
@@ -239,6 +250,34 @@ TOOLS_SCHEMA = [
         "name": "wg_list_interfaces",
         "description": "Показать WireGuard-интерфейсы, их активность и наличие конфигурации",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "wg_install",
+        "description": "Установить wireguard-tools и зависимости на хосте без создания конфигурации",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "wg_setup_server",
+        "description": (
+            "Создать серверную WireGuard-конфигурацию после подтверждения администратора. "
+            "Параметры имеют безопасные значения по умолчанию: wg0, 10.66.66.0/24, "
+            "fd42:42:42::/64, порт 51820, DNS 1.1.1.1 и 1.0.0.1"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "interface": {"type": "string", "default": "wg0"},
+                "ipv4_network": {"type": "string", "default": "10.66.66.0/24"},
+                "ipv6_network": {"type": "string", "default": "fd42:42:42::/64"},
+                "listen_port": {"type": "integer", "default": 51820},
+                "dns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": ["1.1.1.1", "1.0.0.1"],
+                },
+            },
+            "required": [],
+        },
     },
     {
         "name": "wg_status",

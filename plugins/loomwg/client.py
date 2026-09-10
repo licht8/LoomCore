@@ -10,7 +10,7 @@ import time
 import base64
 import urllib.error
 import urllib.request
-from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
+from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
 from config import add_peer, config_path
@@ -98,26 +98,35 @@ def _used_addresses(interface: str) -> set:
     return used
 
 
-def _allocate_address(interface: str, server_networks: list[str], server_addresses: list[str]) -> str:
+def _allocate_addresses(
+    interface: str,
+    server_networks: list[str],
+    server_addresses: list[str],
+) -> list[str]:
     used = _used_addresses(interface)
     used.update(ip_address(address) for address in server_addresses)
-    for raw_network in server_networks:
-        network = ip_network(raw_network)
-        if network.version == 4:
-            candidates = network.hosts()
-        else:
-            start = int(network.network_address) + 1
-            candidates = (ip_address(value) for value in range(start, min(start + 65536, int(network.broadcast_address))))
-        for candidate in candidates:
-            if candidate not in used:
-                return f"{candidate}/{32 if network.version == 4 else 128}"
-    raise ValueError("В WireGuard-сетях нет свободного адреса для нового клиента")
+    networks = [ip_network(raw_network) for raw_network in server_networks]
+    ipv4_networks = [network for network in networks if network.version == 4]
+    ipv6_networks = [network for network in networks if network.version == 6]
+
+    for ipv4_network in ipv4_networks:
+        for ipv4 in ipv4_network.hosts():
+            if ipv4 in used:
+                continue
+            host_offset = int(ipv4) - int(ipv4_network.network_address)
+            for ipv6_network in ipv6_networks:
+                ipv6 = ip_address(int(ipv6_network.network_address) + host_offset)
+                if ipv6 in ipv6_network and ipv6 not in used:
+                    return [f"{ipv4}/32", f"{ipv6}/128"]
+            if not ipv6_networks:
+                return [f"{ipv4}/32"]
+    raise ValueError("В WireGuard-сетях нет свободной пары IPv4/IPv6 для нового клиента")
 
 
 def _client_addresses(arguments: dict, interface: str, server_networks: list[str], server_addresses: list[str]) -> list[str]:
     raw = arguments.get("addresses") or arguments.get("allowed_ips")
     if raw is None:
-        return [_allocate_address(interface, server_networks, server_addresses)]
+        return _allocate_addresses(interface, server_networks, server_addresses)
     if not isinstance(raw, list) or not raw:
         raise ValueError("addresses должен быть непустым массивом адресов")
     result = []
