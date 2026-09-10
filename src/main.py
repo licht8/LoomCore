@@ -1,9 +1,10 @@
 import uuid
+import base64
 
 import uvicorn
 from fastapi import FastAPI, Depends, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,6 +81,31 @@ async def chat_endpoint(
             status_code=500,
             content={"error": str(exc)},
         )
+
+
+@app.get("/api/loomwg/artifacts/{token}/{kind}")
+async def download_loomwg_artifact(token: str, kind: str):
+    """Consume a short-lived, one-time client artifact capability."""
+    if kind not in {"config", "qr"}:
+        return JSONResponse(status_code=404, content={"error": "Артефакт не найден"})
+    try:
+        result = await plugin_manager.execute_tool(
+            "loomwg",
+            "wg_get_client_artifact",
+            {"token": token, "kind": kind},
+        )
+        data = result.get("data", {})
+        payload = base64.b64decode(data["content_base64"], validate=True)
+        return Response(
+            content=payload,
+            media_type=data["media_type"],
+            headers={
+                "Content-Disposition": f'attachment; filename="{data["filename"]}"',
+                "Cache-Control": "no-store",
+            },
+        )
+    except (KeyError, ValueError, RuntimeError, OSError):
+        return JSONResponse(status_code=404, content={"error": "Артефакт не найден или истёк"})
 
 
 @app.websocket("/ws/{session_id}")

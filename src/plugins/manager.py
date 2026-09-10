@@ -136,7 +136,7 @@ class PluginManager:
         for plugin_name in self.plugin_names():
             for tool in await self.get_tools(plugin_name):
                 tool_name = tool.get("name")
-                if not tool_name:
+                if not tool_name or tool.get("internal"):
                     continue
                 self._tool_plugins[tool_name] = plugin_name
                 all_tools.append(tool)

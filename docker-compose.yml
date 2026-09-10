@@ -39,6 +39,7 @@ services:
       DEBUG: ${DEBUG:-false}
       LOOMHUB_MODE: self-hosted
       LOOMHUB_HOST_ROOT: /host
+      LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"

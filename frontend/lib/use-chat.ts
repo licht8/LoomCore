@@ -159,6 +159,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
               toolStatus: "pending",
               toolSummary: msg.summary || "ожидание ответа…",
               toolCode: msg.code || "",
+              artifacts: msg.artifacts,
             },
           ],
           error: null,
@@ -177,6 +178,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
                 toolStatus: msg.status === "error" ? "error" : "success",
                 toolSummary: msg.summary || updated[i].toolSummary || "",
                 toolCode: msg.code || updated[i].toolCode || "",
+                artifacts: msg.artifacts || updated[i].artifacts,
                 content: msg.content || updated[i].content,
               }
               break

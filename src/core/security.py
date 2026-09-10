@@ -3,6 +3,16 @@ def classify_tool_risk(tool_name: str) -> str:
 
     Возвращает: 'dangerous', 'moderate' или 'safe'.
     """
+    explicit_dangerous = {
+        "wg_remove_peer",
+        "wg_create_client",
+        "wg_start",
+        "wg_stop",
+        "wg_restart",
+    }
+    if tool_name.lower() in explicit_dangerous:
+        return "dangerous"
+
     dangerous = ["restart", "delete", "drop", "reboot", "rm", "chmod", "flush"]
     moderate = ["create", "add", "set", "config", "deploy"]
 

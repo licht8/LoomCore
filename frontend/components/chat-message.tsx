@@ -100,6 +100,19 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
           <pre className="overflow-x-auto bg-[oklch(0.28_0.06_285)] px-4 py-3 font-mono text-xs leading-relaxed text-[oklch(0.92_0.05_310)]">
             <code>{message.toolCode || message.content}</code>
           </pre>
+          {message.artifacts && (
+            <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+              {message.artifacts.map((artifact) => (
+                <a
+                  key={artifact.url}
+                  href={artifact.url}
+                  className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+                >
+                  {artifact.label}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
         <p className="mt-1 pl-1 text-xs text-muted-foreground">{message.timestamp}</p>
       </div>

@@ -15,6 +15,7 @@ export interface WsMessage {
   needs_approval?: boolean
   action?: string
   error?: string
+  artifacts?: Array<{ label: string; url: string }>
 }
 
 /** Тип сообщения в UI-ленте чата */
@@ -30,6 +31,7 @@ export interface ChatMessage {
   toolStatus?: "pending" | "success" | "error"
   toolSummary?: string
   toolCode?: string
+  artifacts?: Array<{ label: string; url: string }>
 }
 
 /** Внутреннее состояние хука useChat (не экспортируется в UI) */

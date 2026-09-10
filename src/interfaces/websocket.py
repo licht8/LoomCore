@@ -67,6 +67,43 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     else:
                         content_text = str(raw_result)
 
+                    artifacts = None
+                    if (
+                        tool_name == "wg_create_client"
+                        and isinstance(raw_result, dict)
+                        and isinstance(raw_result.get("data"), dict)
+                    ):
+                        artifact_data = raw_result["data"]
+                        if artifact_data.get("config_token") and artifact_data.get("qr_token"):
+                            artifacts = [
+                                {
+                                    "label": "Скачать конфигурацию",
+                                    "url": f"/api/loomwg/artifacts/{artifact_data['config_token']}/config",
+                                },
+                                {
+                                    "label": "Скачать QR-код",
+                                    "url": f"/api/loomwg/artifacts/{artifact_data['qr_token']}/qr",
+                                },
+                            ]
+
+                    artifacts = None
+                    if (
+                        tool_name == "wg_create_client"
+                        and isinstance(raw_result, dict)
+                        and raw_result.get("data", {}).get("artifact_token")
+                    ):
+                        token = raw_result["data"]["artifact_token"]
+                        artifacts = [
+                            {
+                                "label": "Скачать конфигурацию",
+                                "url": f"/api/loomwg/artifacts/{token}/config",
+                            },
+                            {
+                                "label": "Скачать QR-код",
+                                "url": f"/api/loomwg/artifacts/{token}/qr",
+                            },
+                        ]
+
                     await websocket.send_json({
                         "type": "tool_response",
                         "tool": tool,
@@ -74,6 +111,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         "result": content_text,
                         "status": "success",
                         "summary": "Выполнено",
+                        "artifacts": artifacts,
                     })
                 except Exception as exc:
                     await websocket.send_json({
@@ -181,6 +219,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             "risk": risk,
                             "status": "success",
                             "summary": "Выполнено",
+                            "artifacts": artifacts,
                         })
 
                     except Exception as exc:
