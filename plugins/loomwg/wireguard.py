@@ -103,13 +103,15 @@ def read_interface(interface: str) -> dict[str, Any]:
     if not lines:
         raise CommandError(f"Интерфейс {interface} не вернул данные")
 
-    interface_parts = lines[0].split("\t")
+    interface_parts = lines[0].split()
     if len(interface_parts) < 3:
         raise CommandError(f"Неожиданный формат вывода wg для {interface}")
 
     peers: list[dict[str, Any]] = []
     for line in lines[1:]:
-        parts = line.split("\t")
+        # `wg show dump` normally uses tabs, but some wrappers normalize
+        # whitespace before returning command output.
+        parts = line.split()
         if len(parts) < 9:
             continue
         peers.append(
