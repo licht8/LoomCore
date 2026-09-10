@@ -65,8 +65,6 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     container_name: loom_frontend
     restart: unless-stopped
     depends_on:

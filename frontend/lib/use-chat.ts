@@ -56,8 +56,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       (window.location.port === "3000"
         ? `${protocol}://${window.location.hostname}:8000`
         : `${protocol}://${window.location.host}`)
-    const adminToken = process.env.NEXT_PUBLIC_ADMIN_TOKEN
-    const url = `${baseWsUrl.replace(/\/$/, "")}/ws/${sessionId.current}?access_token=${encodeURIComponent(adminToken || "")}`
+    const url = `${baseWsUrl.replace(/\/$/, "")}/ws/${sessionId.current}`
     console.log("Connecting to WS:", url)
 
     const ws = new WebSocket(url)

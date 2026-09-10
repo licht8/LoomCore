@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     hetzner_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     debug: bool = False
     admin_token: str = ""
+    admin_username: str = "admin"
+    admin_password_hash: str = ""
+    admin_totp_secret: str = ""
+    session_secret: str = ""
     model_config = {"env_file": ".env"}
 
 @lru_cache()
