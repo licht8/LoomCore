@@ -1,0 +1,51 @@
+"use client"
+
+import { useChat } from "@/lib/use-chat"
+import { ChatMessageItem } from "@/components/chat-message"
+import { ChatInput } from "@/components/chat-input"
+
+/**
+ * Клиентский компонент чата: объединяет useChat с UI-компонентами.
+ * Вызывается из Server Component page.tsx.
+ */
+export function ChatRoom() {
+  const {
+    messages,
+    isThinking,
+    approvalRequest,
+    error,
+    isSending,
+    sendMessage,
+    sendApprovalResponse,
+  } = useChat()
+
+  return (
+    <>
+      {/* Контейнер сообщений — overflow-y-auto на скролл */}
+      <div className="flex-1 overflow-y-auto px-6 pt-6 pb-32">
+        <div className="mx-auto flex max-w-3xl flex-col gap-6">
+          {messages.map((message) => (
+            <ChatMessageItem key={message.id} message={message} />
+          ))}
+        </div>
+      </div>
+
+      {/* Блок ошибки — красный баннер над инпутом */}
+      {error && (
+        <div className="absolute inset-x-0 bottom-[128px] mx-auto max-w-3xl px-6">
+          <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-2 text-center text-xs font-medium text-destructive">
+            ⚠️ {error}
+          </div>
+        </div>
+      )}
+
+      <ChatInput
+        onSend={sendMessage}
+        isThinking={isThinking}
+        isSending={isSending}
+        approvalRequest={approvalRequest}
+        onApprovalResponse={sendApprovalResponse}
+      />
+    </>
+  )
+}
