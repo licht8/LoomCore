@@ -7,11 +7,11 @@ import tempfile
 from pathlib import Path
 
 from keys import validate_public_key
-from wireguard import CONFIG_DIR
+from wireguard import config_directory
 
 
 def config_path(interface: str) -> Path:
-    return CONFIG_DIR / f"{interface}.conf"
+    return config_directory() / f"{interface}.conf"
 
 
 def _write(path: Path, content: str) -> None:

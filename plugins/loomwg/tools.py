@@ -17,6 +17,7 @@ from wireguard import (
     peer_is_online,
     read_interface,
     run_command,
+    config_directory,
     validate_interface,
 )
 
@@ -119,7 +120,7 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         checks["interfaces_error"] = str(exc)
 
     checks["link_present"] = has_link(interface)
-    checks["config_present"] = (CONFIG_DIR / f"{interface}.conf").is_file()
+    checks["config_present"] = (config_directory() / f"{interface}.conf").is_file()
     checks["healthy"] = bool(
         checks["wg_installed"] and checks["active"] and checks["link_present"]
     )
