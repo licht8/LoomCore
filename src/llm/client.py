@@ -29,7 +29,8 @@ class HetznerClient:
         if tools:
             payload["tools"] = tools
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        timeout = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=15.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",

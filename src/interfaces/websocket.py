@@ -202,6 +202,31 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         else:
                             content_text = str(raw_result)
 
+                        artifacts = None
+                        if (
+                            tool_name == "wg_create_client"
+                            and isinstance(raw_result, dict)
+                            and isinstance(raw_result.get("data"), dict)
+                        ):
+                            artifact_data = raw_result["data"]
+                            if artifact_data.get("config_token") and artifact_data.get("qr_token"):
+                                artifacts = [
+                                    {
+                                        "label": "Скачать конфигурацию",
+                                        "url": (
+                                            f"/api/loomwg/artifacts/{artifact_data['config_token']}/config"
+                                            f"?access_token={settings.admin_token}"
+                                        ),
+                                    },
+                                    {
+                                        "label": "Скачать QR-код",
+                                        "url": (
+                                            f"/api/loomwg/artifacts/{artifact_data['qr_token']}/qr"
+                                            f"?access_token={settings.admin_token}"
+                                        ),
+                                    },
+                                ]
+
                         # Сохраняем результат как tool_message в БД
                         async with async_session_factory() as db:
                             from src.db.session import add_message
