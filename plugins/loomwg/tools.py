@@ -217,12 +217,7 @@ def remove_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     if interface not in set(active_interfaces()):
         raise CommandError(f"Интерфейс {interface} не активен")
     run_command(["wg", "set", interface, "peer", public_key, "remove"])
-    # Пир может отсутствовать в файле конфигурации (был добавлен напрямую)
-    # или файл может быть недоступен из контейнера — игнорируем ошибки
-    try:
-        delete_peer(interface, public_key)
-    except Exception:
-        pass
+    delete_peer(interface, public_key)
     try:
         removed_clients = remove_client_artifacts(public_key)
     except Exception:

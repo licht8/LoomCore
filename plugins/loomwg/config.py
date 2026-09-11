@@ -72,6 +72,8 @@ def remove_peer(interface: str, public_key: str) -> None:
             current = [line]
         else:
             current.append(line)
+    if current:
+        blocks.append(current)
     retained = []
     removed = False
     for block in blocks:
