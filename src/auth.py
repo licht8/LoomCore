@@ -27,11 +27,15 @@ def verify_password(password: str, encoded: str) -> bool:
 def verify_totp(code: str, secret: str) -> bool:
     try:
         key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
-        counter = int(time.time()) // 30
-        digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
-        offset = digest[-1] & 15
-        value = (struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
-        return hmac.compare_digest(f"{value:06d}", code.strip())
+        normalized_code = "".join(code.split())
+        current_counter = int(time.time()) // 30
+        for counter in range(current_counter - 1, current_counter + 2):
+            digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+            offset = digest[-1] & 15
+            value = (struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+            if hmac.compare_digest(f"{value:06d}", normalized_code):
+                return True
+        return False
     except (ValueError, TypeError):
         return False
 
