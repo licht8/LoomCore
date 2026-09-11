@@ -56,13 +56,16 @@ def list_interfaces(arguments: dict[str, Any]) -> dict[str, Any]:
 def status(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
     if interface not in set(active_interfaces()):
-        return text_result(
-            f"{interface}: DOWN\nПиров: 0\nАктивных: 0\nНеактивных: 0",
-            interface=interface,
-            active=False,
-            peer_count=0,
-            online_peers=0,
-        )
+        try:
+            run_command(["wg-quick", "up", interface], timeout=60)
+        except CommandError:
+            return text_result(
+                f"{interface}: DOWN\nПиров: 0\nАктивных: 0\nНеактивных: 0",
+                interface=interface,
+                active=False,
+                peer_count=0,
+                online_peers=0,
+            )
 
     details = read_interface(interface)
     online = sum(peer_is_online(peer) for peer in details["peers"])
@@ -82,7 +85,11 @@ def status(arguments: dict[str, Any]) -> dict[str, Any]:
 def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
     if interface not in set(active_interfaces()):
-        raise CommandError(f"Интерфейс {interface} не активен")
+        # Интерфейс настроен, но не запущен — пробуем автозапуск
+        try:
+            run_command(["wg-quick", "up", interface], timeout=60)
+        except CommandError:
+            raise CommandError(f"Интерфейс {interface} не активен")
 
     details = read_interface(interface)
     rows = [f"Интерфейс: {interface}", f"Всего пиров: {len(details['peers'])}", ""]
@@ -121,9 +128,18 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         checks["active"] = False
         checks["interfaces_error"] = str(exc)
 
+    # Пробуем запустить, если конфиг есть, но интерфейс не активен
+    config_exists = (config_directory() / f"{interface}.conf").is_file()
+    if config_exists and not checks["active"]:
+        try:
+            run_command(["wg-quick", "up", interface], timeout=60)
+            checks["active"] = True
+        except CommandError:
+            checks["active"] = False
+
     checks["link_present"] = has_link(interface)
-    checks["config_present"] = (config_directory() / f"{interface}.conf").is_file()
-    checks["setup_required"] = not checks["config_present"]
+    checks["config_present"] = config_exists
+    checks["setup_required"] = not config_exists
     checks["healthy"] = bool(
         checks["wg_installed"] and checks["active"] and checks["link_present"]
     )
