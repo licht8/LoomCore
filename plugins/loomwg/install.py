@@ -103,10 +103,9 @@ def _configure_firewall(
 
 
 def _enable_forwarding() -> None:
-    """Включить forwarding через sysctl.d внутри контейнера."""
+    """Включить forwarding через sysctl напрямую (без файловой системы)."""
     _container_shell(
-        "printf 'net.ipv4.ip_forward=1\\nnet.ipv6.conf.all.forwarding=1\\n' > "
-        "/etc/sysctl.d/99-loomwg-forwarding.conf && sysctl --system"
+        "sysctl -w net.ipv4.ip_forward=1 net.ipv6.conf.all.forwarding=1"
     )
 
 
