@@ -18,6 +18,7 @@ dependencies = [
     "pydantic",
     "mcp",
     "slowapi",
+    "pyjwt>=2.13.0",
 ]
 
 [project.optional-dependencies]

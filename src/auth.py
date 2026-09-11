@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import secrets
 import struct
 import time
 
+import jwt
+
 SESSION_COOKIE = "loomhub_session"
-_sessions: dict[str, float] = {}
+# Simple blocklist for revoked tokens (token_id → revoke timestamp)
+_revoked: dict[str, float] = {}
 
 
 def verify_password(password: str, encoded: str) -> bool:
@@ -40,25 +42,36 @@ def verify_totp(code: str, secret: str) -> bool:
         return False
 
 
-def create_session(secret: str) -> str:
-    token = secrets.token_urlsafe(48)
-    _sessions[token] = time.time() + 28800
-    return token
+def create_jwt_token(payload: dict, secret: str, expires_in: int = 28800) -> str:
+    """Create a signed JWT token (survives container restarts)."""
+    now = int(time.time())
+    data = {**payload, "iat": now, "exp": now + expires_in}
+    return jwt.encode(data, secret, algorithm="HS256")
 
 
-def verify_session(value: str | None, secret: str, max_age: int = 28800) -> bool:
-    if not value:
-        return False
-    expires_at = _sessions.get(value)
-    if expires_at is None or expires_at < time.time():
-        _sessions.pop(value, None)
-        return False
-    return True
+def decode_jwt_token(token: str | None, secret: str, max_age: int = 28800) -> dict | None:
+    """Verify and decode a JWT token. Returns payload dict or None."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        # Check age
+        age = int(time.time()) - payload.get("iat", 0)
+        if age > max_age:
+            return None
+        # Check if revoked
+        token_id = payload.get("jti")
+        if token_id and _revoked.get(token_id, 0) > 0:
+            return None
+        return payload
+    except (jwt.ExpiredSignatureError, jwt.DecodeError, jwt.InvalidTokenError):
+        return None
 
 
-def revoke_session(value: str | None) -> None:
-    if value:
-        _sessions.pop(value, None)
+def revoke_jwt_token(token_id: str | None) -> None:
+    """Revoke a token by id."""
+    if token_id:
+        _revoked[token_id] = int(time.time())
 
 
 def generate_password_hash(password: str) -> str:

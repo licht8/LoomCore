@@ -18,7 +18,7 @@ from src.db.database import get_db, init_db
 from src.interfaces.websocket import websocket_endpoint
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
-from src.auth import SESSION_COOKIE, create_session, revoke_session, verify_password, verify_session, verify_totp
+from src.auth import SESSION_COOKIE, create_jwt_token, revoke_jwt_token, decode_jwt_token, verify_password, verify_totp
 
 logger = logging.getLogger("loomhub.main")
 
@@ -76,7 +76,8 @@ class ChatRequest(BaseModel):
 
 def require_admin_token(token: str | None) -> None:
     if settings.admin_password_hash and settings.admin_totp_secret:
-        if not token or not verify_session(token, settings.session_secret):
+        payload = decode_jwt_token(token, settings.session_secret)
+        if not payload:
             raise HTTPException(status_code=401, detail="Требуется вход администратора")
         return
     if not settings.admin_token:
@@ -99,10 +100,14 @@ async def login(request: Request):
         raise HTTPException(status_code=401, detail="Неверные данные входа")
     if not settings.session_secret:
         raise HTTPException(status_code=503, detail="SESSION_SECRET не настроен")
+    token = create_jwt_token(
+        {"username": settings.admin_username, "jti": secrets.token_urlsafe(32)},
+        settings.session_secret,
+    )
     response = JSONResponse({"ok": True})
     response.set_cookie(
         SESSION_COOKIE,
-        create_session(settings.session_secret),
+        token,
         httponly=True,
         secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https",
         samesite="strict",
@@ -113,7 +118,9 @@ async def login(request: Request):
 
 @app.post("/api/auth/logout")
 async def logout(request: Request):
-    revoke_session(request.cookies.get(SESSION_COOKIE))
+    payload = decode_jwt_token(request.cookies.get(SESSION_COOKIE), settings.session_secret)
+    if payload:
+        revoke_jwt_token(payload.get("jti"))
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE)
     return response
@@ -121,7 +128,8 @@ async def logout(request: Request):
 
 @app.get("/api/auth/session")
 async def auth_session(request: Request):
-    if not verify_session(request.cookies.get(SESSION_COOKIE), settings.session_secret):
+    payload = decode_jwt_token(request.cookies.get(SESSION_COOKIE), settings.session_secret)
+    if not payload:
         raise HTTPException(status_code=401, detail="Не авторизован")
     return {"authenticated": True}
 
@@ -321,7 +329,7 @@ async def ws_proxy(websocket: WebSocket, session_id: str, access_token: str | No
     """Прокси-роутер: передаёт управление в src.interfaces.websocket."""
     cookie = websocket.cookies.get(SESSION_COOKIE)
     authorized = (
-        verify_session(cookie, settings.session_secret)
+        decode_jwt_token(cookie, settings.session_secret) is not None
         if settings.admin_password_hash and settings.admin_totp_secret
         else bool(settings.admin_token and access_token and secrets.compare_digest(access_token, settings.admin_token))
     )
