@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "mcp",
+    "slowapi",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +26,6 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "alembic",
-    "slowapi",
 ]
 
 [tool.pytest.ini_options]
