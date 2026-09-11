@@ -41,6 +41,10 @@ services:
       LOOMHUB_HOST_ROOT: /host
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      ADMIN_TOTP_SECRET: ${ADMIN_TOTP_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"
