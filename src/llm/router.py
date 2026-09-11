@@ -69,11 +69,19 @@ class AIRouter:
 
             # 2. Формируем messages (с инструментами, если есть plugin_manager)
             tools_schema = []
+            unavailable_plugins: list[str] = []
             if self.plugin_manager:
                 try:
                     tools_schema = await self.plugin_manager.get_all_tools()
                 except Exception as exc:
-                    print(f"⚠️ Не удалось получить инструменты плагина: {exc}")
+                    logger.warning(f"Не удалось получить инструменты плагина: {exc}")
+                    unavailable_plugins.append("все плагины")
+
+            # Если некоторые инструменты недоступны, фиксируем это
+            message_extra = {}
+            if unavailable_plugins:
+                logger.warning(f"Недоступные плагины при маршрутизации: {unavailable_plugins}")
+                message_extra["tool_schema_warning"] = unavailable_plugins
 
             messages = build_messages(user_message, history_dicts, tools_schema)
             llm_tools = [
@@ -136,4 +144,4 @@ class AIRouter:
                 "content": content if answer_type == "text" else None,
                 "tool_name": tool_name,
                 "tool_args": tool_args,
-            }
+            } | message_extra

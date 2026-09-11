@@ -145,6 +145,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             try:
                 result = await airouter_with_plugins.route(user_text, session_id)
                 logger.info(f"✅ LLM вернула ответ, type={result.get('type')}, session={session_id}")
+
+                # Уведомление UI о недоступных плагинах
+                unavailable = result.get("tool_schema_warning")
+                if unavailable:
+                    await websocket.send_json({
+                        "type": "schema_warning",
+                        "unavailable_plugins": unavailable,
+                    })
             except Exception as exc:
                 await websocket.send_json(
                     {
