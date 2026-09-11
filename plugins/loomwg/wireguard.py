@@ -11,7 +11,6 @@ from typing import Any
 
 INTERFACE_RE = re.compile(r"^[A-Za-z0-9]{1,15}$")
 CONFIG_DIR = Path("/etc/wireguard")
-HOST_CONFIG_DIR = Path("/host/etc/wireguard")
 
 
 class CommandError(RuntimeError):
@@ -58,20 +57,17 @@ def active_interfaces() -> list[str]:
 
 
 def configured_interfaces() -> list[str]:
-    config_dir = CONFIG_DIR if CONFIG_DIR.is_dir() and any(CONFIG_DIR.glob("*.conf")) else HOST_CONFIG_DIR
-    if not config_dir.is_dir():
+    if not CONFIG_DIR.is_dir():
         return []
     return sorted(
         path.stem
-        for path in config_dir.glob("*.conf")
+        for path in CONFIG_DIR.glob("*.conf")
         if INTERFACE_RE.fullmatch(path.stem)
     )
 
 
 def config_directory() -> Path:
-    if CONFIG_DIR.is_dir() and any(CONFIG_DIR.glob("*.conf")):
-        return CONFIG_DIR
-    return HOST_CONFIG_DIR if HOST_CONFIG_DIR.is_dir() else CONFIG_DIR
+    return CONFIG_DIR
 
 
 def _parse_timestamp(value: str) -> str | None:

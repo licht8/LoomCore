@@ -25,9 +25,7 @@ _artifacts: dict[str, tuple[str, float]] = {}
 
 
 def clients_directory() -> Path:
-    if CLIENTS_DIR.is_dir() and any(CLIENTS_DIR.glob("*.conf")):
-        return CLIENTS_DIR
-    return Path("/host/etc/wireguard/clients")
+    return CLIENTS_DIR
 
 
 def _safe_name(value: object) -> str:
