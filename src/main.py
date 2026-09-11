@@ -167,6 +167,28 @@ async def _ensure_wg_interface() -> None:
             timeout=30,
         )
         logger.info("WireGuard wg0 поднят")
+
+        # Показать пиры сразу после запуска
+        try:
+            result = subprocess.run(
+                ["wg", "show", "wg0"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                lines = result.stdout.strip().splitlines()
+                peer_count = sum(1 for l in lines if l.startswith("peer: "))
+                if peer_count:
+                    print(f"🔌 WireGuard wg0 поднят, найдено {peer_count} пиров:")
+                    for line in lines:
+                        if line.startswith("peer: "):
+                            key = line[6:][:12]
+                            print(f"   {key}...")
+                else:
+                    print("🔌 WireGuard wg0 поднят, пиров нет")
+        except Exception:
+            pass
     except Exception as exc:
         logger.warning(f"Не удалось поднять wg0: {exc}")
 
