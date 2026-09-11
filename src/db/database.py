@@ -28,10 +28,11 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Создать все таблицы при старте приложения."""
-    from src.db.models import Base  # noqa: F401 — импортирует DeclarativeBase с метаданными
+    """Проверить подключение к БД (миграции применяются через alembic).
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    init_db() теперь не создаёт таблицы — это делает Alembic:
+        alembic upgrade head
 
-    print("✅ Database initialized")
+    Вызывается в main.py:startup() для совместимости, но больше не инициализирует схему.
+    """
+    pass

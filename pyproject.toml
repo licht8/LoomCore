@@ -24,4 +24,5 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
+    "alembic",
 ]
