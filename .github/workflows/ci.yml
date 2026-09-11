@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Установка зависимостей
+        run: uv sync --extra dev
+      - name: Линтер
+        run: uv run ruff check .
+      - name: Тесты
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Установка зависимостей
+        run: npm ci
+      - name: Проверка типов
+        run: npx tsc --noEmit
+      - name: Сборка
+        run: npm run build
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: loomuser
+          POSTGRES_PASSWORD: secret_password
+          POSTGRES_DB: loomhub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U loomuser -d loomhub"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://loomuser:secret_password@localhost:5432/loomhub
+      LOOMHUB_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Установка зависимостей
+        run: uv sync --extra dev
+      - name: Интеграционные тесты
+        run: uv run pytest -q tests/test_smoke_integration.py

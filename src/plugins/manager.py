@@ -8,16 +8,17 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
 import uuid
 from collections import defaultdict
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from time import time
 
 logger = logging.getLogger("loomhub.plugins")
 
 
-class PluginState(str, Enum):
+class PluginState(StrEnum):
     """Состояние процесса плагина."""
 
     IDLE = "idle"
@@ -32,6 +33,8 @@ class PluginManager:
         # name -> {"proc": subprocess, "state": PluginState, "config": {...}}
         self._plugins: dict[str, dict] = {}
         self._tool_plugins: dict[str, str] = {}
+        # Инструменты с "internal": True (доступны только ядру, не отдаются LLM)
+        self._internal_tools: dict[str, str] = {}
 
         # Лимит вызовов инструментов: tool_name -> [timestamps]
         self._tool_calls: dict[str, list[float]] = defaultdict(list)
@@ -81,7 +84,7 @@ class PluginManager:
             name = plugin_dir.name
             if name in self._plugins:
                 continue
-            self.register(name, ["python", str(plugin_dir / "main.py")])
+            self.register(name, [sys.executable, str(plugin_dir / "main.py")])
             discovered.append(name)
         return discovered
 
@@ -91,6 +94,10 @@ class PluginManager:
     # ------------------------------------------------------------------
     # Задача 1: Auto-restart плагина
     # ------------------------------------------------------------------
+
+    async def restart_plugin(self, plugin_name: str) -> bool:
+        """Публичная обёртка автоперезапуска (для фонового healthcheck)."""
+        return await self._restart_plugin(plugin_name)
 
     async def _restart_plugin(self, plugin_name: str) -> bool:
         """Перезапустить плагин с экспоненциальной задержкой (backoff).
@@ -181,7 +188,6 @@ class PluginManager:
     async def _initialize_plugin(self, plugin_name: str) -> None:
         """Отправить {\"method\": \"initialize\"} и дождаться ответа (таймаут 10s)."""
         request = {"jsonrpc": "2.0", "method": "initialize"}
-        request_id = str(uuid.uuid4())
         line = json.dumps(request, ensure_ascii=False) + "\n"
 
         plugin = self._plugins[plugin_name]
@@ -190,29 +196,30 @@ class PluginManager:
 
         # Ждём ответ в течение 10 секунд
         try:
-            response = await asyncio.wait_for(
+            await asyncio.wait_for(
                 asyncio.to_thread(self._read_response, plugin_name),
                 timeout=10,
             )
             logger.info(f"Плагин '{plugin_name}' инициализирован")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Таймаут инициализации плагина '{plugin_name}' (10s)")
             raise
 
     def _rebuild_tool_cache(self, plugin_name: str, tools: list[dict]) -> None:
-        """Перестроить кэш _tool_plugins для данного плагина (очистить старые, добавить новые)."""
+        """Перестроить кэши инструментов плагина (очистить старые, добавить новые)."""
         # Удаляем старые записи этого плагина
-        tools_to_remove = [
-            tname for tname, pname in self._tool_plugins.items() if pname == plugin_name
-        ]
-        for tname in tools_to_remove:
-            del self._tool_plugins[tname]
+        for cache in (self._tool_plugins, self._internal_tools):
+            stale = [name for name, owner in cache.items() if owner == plugin_name]
+            for name in stale:
+                del cache[name]
 
-        # Добавляем новые
+        # Добавляем новые: internal — только для ядра, остальные — для LLM
         for tool in tools:
             tool_name = tool.get("name")
-            if tool_name and not tool.get("internal"):
-                self._tool_plugins[tool_name] = plugin_name
+            if not tool_name:
+                continue
+            cache = self._internal_tools if tool.get("internal") else self._tool_plugins
+            cache[tool_name] = plugin_name
 
     # ------------------------------------------------------------------
     # Задача 2: Методы is_healthy / get_plugin_status
@@ -268,48 +275,13 @@ class PluginManager:
     # Задача 5: Обработка BrokenPipeError / OSError в _write_request
     # ------------------------------------------------------------------
 
-    def _write_request(self, plugin_name: str, request: dict) -> int:
+    async def _write_request(self, plugin_name: str, request: dict) -> str:
         """Записать JSON-RPC запрос в stdin плагина. Возвращает request_id.
 
-        Обработка BrokenPipeError / OSError при записи — если процесс мёртв,
-        ставим STOPPED и поднимаем RuntimeError для вызова из execute_tool.
-        """
-        plugin = self._plugins.get(plugin_name)
-        if not plugin:
-            raise ValueError(f"Плагин '{plugin_name}' не зарегистрирован")
-
-        if plugin["state"] == PluginState.BUSY:
-            raise RuntimeError(f"Плагин '{plugin_name}' занят (timeout 30s)")
-
-        # Проверяем, не мёртв ли процесс
-        if plugin["proc"].poll() is not None:
-            if plugin["state"] != PluginState.STOPPED:
-                logger.warning(f"Процесс плагина '{plugin_name}' мёртв — ставим STOPPED")
-                plugin["state"] = PluginState.STOPPED
-            raise RuntimeError(f"Плагин '{plugin_name}' недоступен (процесс мёртв)")
-
-        request["id"] = request.get("id") or str(uuid.uuid4())
-        line = json.dumps(request, ensure_ascii=False)
-        try:
-            plugin["proc"].stdin.write(line + "\n")
-            plugin["proc"].stdin.flush()
-        except (BrokenPipeError, OSError) as exc:
-            logger.error(f"BrokenPipeError для плагина '{plugin_name}': {exc}")
-            plugin["state"] = PluginState.STOPPED
-            raise RuntimeError(f"Плагин '{plugin_name}' недоступен (поток ввода разорван)") from exc
-
-        return request["id"]
-
-    async def _write_request_with_retry(self, plugin_name: str, request: dict) -> str:
-        """Записать запрос в stdin плагина, с автоперезапуском при BrokenPipeError.
-
-        Если процесс мёртв при записи:
+        Если процесс мёртв или поток ввода разорван (BrokenPipeError/OSError):
         1. Ставит STOPPED, запускает _restart_plugin().
         2. После успешного перезапуска — повторяет запись один раз.
         3. Если перезапуск не удался — поднимает RuntimeError.
-
-        Returns:
-            request_id
         """
         plugin = self._plugins.get(plugin_name)
         if not plugin:
@@ -336,10 +308,10 @@ class PluginManager:
             plugin["state"] = PluginState.STOPPED
 
             # Пытаемся перезапустить
-            logger.info(f"Попытка автоперезпуска плагина '{plugin_name}' из _write_request_with_retry")
+            logger.info(f"Попытка автоперезпуска плагина '{plugin_name}' из _write_request")
             success = await self._restart_plugin(plugin_name)
             if not success:
-                raise RuntimeError(f"Плагин '{plugin_name}' недоступен (перезапуск не удался)")
+                raise RuntimeError(f"Плагин '{plugin_name}' недоступен (перезапуск не удался)") from exc
 
             # Повторяем запись один раз
             plugin = self._plugins[plugin_name]
@@ -378,10 +350,13 @@ class PluginManager:
         plugin = self._plugins.get(plugin_name)
 
         # Проверяем, мёртв ли процесс
-        if plugin and plugin["proc"].poll() is not None:
-            if plugin["state"] != PluginState.STOPPED:
-                logger.warning(f"Процесс плагина '{plugin_name}' мёртв — ставим STOPPED")
-                plugin["state"] = PluginState.STOPPED
+        if (
+            plugin
+            and plugin["proc"].poll() is not None
+            and plugin["state"] != PluginState.STOPPED
+        ):
+            logger.warning(f"Процесс плагина '{plugin_name}' мёртв — ставим STOPPED")
+            plugin["state"] = PluginState.STOPPED
 
         if not plugin or plugin["state"] == PluginState.STOPPED:
             logger.info(f"Попытка автоперезпуска плагина '{plugin_name}' перед get_tools")
@@ -396,7 +371,7 @@ class PluginManager:
 
         try:
             request = {"jsonrpc": "2.0", "method": "tools/list"}
-            self._write_request(plugin_name, request)
+            await self._write_request(plugin_name, request)
             plugin["state"] = PluginState.BUSY
             response = await asyncio.wait_for(
                 asyncio.to_thread(self._read_response, plugin_name),
@@ -420,7 +395,10 @@ class PluginManager:
             try:
                 for tool in await self.get_tools(plugin_name):
                     tool_name = tool.get("name")
-                    if not tool_name or tool.get("internal"):
+                    if not tool_name:
+                        continue
+                    if tool.get("internal"):
+                        self._internal_tools[tool_name] = plugin_name
                         continue
                     self._tool_plugins[tool_name] = plugin_name
                     all_tools.append(tool)
@@ -438,8 +416,12 @@ class PluginManager:
                     # Перечитаем инструменты только для возврата в all_tools
                     for tool in await self.get_tools(plugin_name):
                         tool_name = tool.get("name")
-                        if not tool_name or tool.get("internal"):
+                        if not tool_name:
                             continue
+                        if tool.get("internal"):
+                            self._internal_tools[tool_name] = plugin_name
+                            continue
+                        self._tool_plugins[tool_name] = plugin_name
                         all_tools.append(tool)
             except Exception as inner_exc:
                 logger.error(f"Не удалось перезапустить плагин '{plugin_name}' из get_all_tools: {inner_exc}")
@@ -451,6 +433,22 @@ class PluginManager:
         if not plugin_name:
             raise ValueError(f"Инструмент '{tool_name}' не зарегистрирован")
         return plugin_name
+
+    async def execute_internal_tool(
+        self, tool_name: str, arguments: dict | None = None
+    ) -> dict:
+        """Вызвать внутренний инструмент плагина (не отдаётся LLM).
+
+        Используется ядром для служебных операций (например, отдача артефактов).
+        """
+        plugin_name = self._internal_tools.get(tool_name)
+        if not plugin_name:
+            # Кэш мог быть ещё не заполнен — однократно опрашиваем плагины
+            await self.get_all_tools()
+            plugin_name = self._internal_tools.get(tool_name)
+        if not plugin_name:
+            raise ValueError(f"Внутренний инструмент '{tool_name}' не зарегистрирован")
+        return await self.execute_tool(plugin_name, tool_name, arguments)
 
     # ------------------------------------------------------------------
     # Задача 1 (продолжение): execute_tool с проверкой мёртвого процесса
@@ -506,7 +504,7 @@ class PluginManager:
         }
 
         try:
-            await self._write_request_with_retry(plugin_name, request)
+            await self._write_request(plugin_name, request)
             plugin["state"] = PluginState.BUSY
             response = await asyncio.wait_for(
                 asyncio.to_thread(self._read_response, plugin_name),
@@ -518,11 +516,13 @@ class PluginManager:
             if result is None:
                 raise RuntimeError(f"Плагин '{plugin_name}' не вернул результат")
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Таймаут 30s для плагина '{plugin_name}' — убиваем процесс")
             plugin["proc"].kill()
             plugin["state"] = PluginState.STOPPED
-            raise TimeoutError(f"Таймаут вызова '{tool_name}' в '{plugin_name}' (30s)")
+            raise TimeoutError(
+                f"Таймаут вызова '{tool_name}' в '{plugin_name}' (30s)"
+            ) from None
 
         finally:
             if plugin["state"] == PluginState.BUSY:
@@ -534,25 +534,3 @@ class PluginManager:
         return await self.execute_tool(
             self.plugin_for_tool(tool_name), tool_name, arguments
         )
-
-    def stop(self, plugin_name: str):
-        """Остановить процесс плагина."""
-        plugin = self._plugins.get(plugin_name)
-        if not plugin:
-            return
-        if plugin["proc"].poll() is None:
-            plugin["proc"].terminate()
-            try:
-                plugin["proc"].wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                plugin["proc"].kill()
-        plugin["state"] = PluginState.STOPPED
-        plugin["restart_attempt"] = 0  # сбрасываем счётчик при ручной остановке
-        logger.info(f"Плагин '{plugin_name}' остановлен")
-
-    def is_running(self, plugin_name: str) -> bool:
-        """Проверить, работает ли процесс плагина."""
-        plugin = self._plugins.get(plugin_name)
-        if not plugin:
-            return False
-        return plugin["proc"].poll() is None

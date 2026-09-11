@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -23,10 +24,8 @@ def _write(path: Path, content: str) -> None:
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(temporary)
-        except OSError:
-            pass
         raise
 
 
@@ -62,11 +61,7 @@ def remove_peer(interface: str, public_key: str) -> None:
     blocks: list[list[str]] = []
     current: list[str] = []
     for line in lines + ["[end]"]:
-        if line.strip() == "[Peer]":
-            if current:
-                blocks.append(current)
-            current = [line]
-        elif line.strip().startswith("[") and line.strip() != "[end]":
+        if line.strip() == "[Peer]" or line.strip().startswith("[") and line.strip() != "[end]":
             if current:
                 blocks.append(current)
             current = [line]

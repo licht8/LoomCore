@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 INTERFACE_RE = re.compile(r"^[A-Za-z0-9]{1,15}$")
-CONFIG_DIR = Path("/etc/wireguard")
+CONFIG_DIR = Path(os.environ.get("LOOMWG_CONFIG_DIR", "/etc/wireguard"))
 
 
 class CommandError(RuntimeError):
@@ -75,7 +75,7 @@ def _parse_timestamp(value: str) -> str | None:
         return None
     try:
         return datetime.fromtimestamp(
-            int(value), tz=timezone.utc
+            int(value), tz=UTC
         ).isoformat()
     except ValueError:
         return None
@@ -182,7 +182,7 @@ def peer_is_online(peer: dict[str, Any], timeout_seconds: int = 180) -> bool:
     if not handshake:
         return False
     timestamp = datetime.fromisoformat(handshake).timestamp()
-    return datetime.now(tz=timezone.utc).timestamp() - timestamp < timeout_seconds
+    return datetime.now(tz=UTC).timestamp() - timestamp < timeout_seconds
 
 
 def has_link(interface: str) -> bool:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from wireguard import CommandError, active_interfaces, run_command, validate_interface
+from wireguard import active_interfaces, run_command, validate_interface
 
 
 def start(arguments: dict) -> dict:

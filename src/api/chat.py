@@ -1,0 +1,41 @@
+"""REST-роут чата с AI."""
+
+import logging
+import uuid
+
+from fastapi import APIRouter, Header, Query, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from src.api.deps import chat_key_func, extract_admin_token
+from src.core.rate_limit import limiter
+from src.core.security import require_admin_token
+from src.llm.router import AIRouter
+from src.plugins import plugin_manager
+
+logger = logging.getLogger("loomhub.api.chat")
+
+router = APIRouter(prefix="/api", tags=["chat"])
+
+airouter = AIRouter(plugin_manager=plugin_manager)
+
+
+class ChatRequest(BaseModel):
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    message: str
+
+
+@router.post("/chat")
+@limiter.limit("30 per 60 seconds", key_func=chat_key_func)
+async def chat_endpoint(
+    payload: ChatRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    access_token: str | None = Query(default=None),
+):
+    """Отправить сообщение AI и получить ответ (REST)."""
+    require_admin_token(extract_admin_token(request, authorization, access_token))
+    try:
+        return await airouter.route(payload.message, payload.session_id)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})

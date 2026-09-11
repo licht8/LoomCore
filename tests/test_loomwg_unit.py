@@ -1,0 +1,128 @@
+"""Unit-тесты логики плагина loomwg без реальных вызовов WireGuard."""
+
+import base64
+import time
+from datetime import UTC, datetime
+
+import pytest
+
+
+def _fake_key(seed: int) -> str:
+    """Валидный по форме WireGuard public key (base64 от 32 байт)."""
+    return base64.b64encode(bytes([seed] * 32)).decode()
+
+
+# === client.py: чистые функции ===
+
+def test_format_endpoint_ipv4(load_loomwg):
+    client = load_loomwg("client")["client"]
+    assert client._format_endpoint("1.2.3.4", 51820) == "1.2.3.4:51820"
+
+
+def test_format_endpoint_ipv6(load_loomwg):
+    client = load_loomwg("client")["client"]
+    assert client._format_endpoint("fd42::1", 51820) == "[fd42::1]:51820"
+
+
+def test_safe_name(load_loomwg):
+    client = load_loomwg("client")["client"]
+    assert client._safe_name("good-name_1") == "good-name_1"
+    with pytest.raises(ValueError):
+        client._safe_name("bad name")
+
+
+def test_client_addresses_explicit(load_loomwg):
+    client = load_loomwg("client")["client"]
+    result = client._client_addresses(
+        {"addresses": ["10.0.0.2/32"]}, "wg0", ["10.0.0.0/24"], ["10.0.0.1"]
+    )
+    assert result == ["10.0.0.2/32"]
+
+
+def test_client_addresses_rejects_default_route(load_loomwg):
+    client = load_loomwg("client")["client"]
+    with pytest.raises(ValueError):
+        client._client_addresses({"addresses": ["0.0.0.0/0"]}, "wg0", [], [])
+
+
+def test_allocate_addresses(load_loomwg, monkeypatch):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+
+    result = client._allocate_addresses("wg0", ["10.66.66.0/24"], ["10.66.66.1"])
+
+    assert result == ["10.66.66.2/32"]
+
+
+def test_get_artifact_is_one_time(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(client, "CLIENTS_DIR", tmp_path)
+    (tmp_path / "alice.conf").write_bytes(b"[Interface]\n")
+    client._artifacts["tok"] = ("alice", time.time() + 60)
+
+    result = client.get_artifact({"token": "tok", "kind": "config"})
+
+    assert result["filename"] == "alice.conf"
+    assert base64.b64decode(result["content_base64"]) == b"[Interface]\n"
+    with pytest.raises(ValueError):
+        client.get_artifact({"token": "tok", "kind": "config"})
+
+
+def test_get_artifact_rejects_expired(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(client, "CLIENTS_DIR", tmp_path)
+    client._artifacts["old"] = ("alice", time.time() - 1)
+
+    with pytest.raises(ValueError):
+        client.get_artifact({"token": "old", "kind": "config"})
+
+
+# === config.py: персистентность пиров ===
+
+def test_add_and_remove_peer(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    config_file = tmp_path / "wg0.conf"
+    config_file.write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    public_key = _fake_key(7)
+
+    config.add_peer("wg0", public_key, ["10.0.0.2/32"], None)
+    assert public_key in config_file.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        config.add_peer("wg0", public_key, ["10.0.0.2/32"], None)
+
+    config.remove_peer("wg0", public_key)
+    assert public_key not in config_file.read_text(encoding="utf-8")
+
+
+def test_add_peer_rejects_bad_key(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    (tmp_path / "wg0.conf").write_text("[Interface]\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        config.add_peer("wg0", "not-a-key", ["10.0.0.2/32"], None)
+
+
+# === wireguard.py: парсеры ===
+
+def test_parse_transfer_bytes(load_loomwg):
+    wg = load_loomwg("wireguard")["wireguard"]
+    assert wg._parse_transfer_bytes("1.5 KiB") == 1536
+    assert wg._parse_transfer_bytes("2 MiB") == 2 * 1024**2
+    assert wg._parse_transfer_bytes("bogus") == 0
+
+
+def test_peer_is_online(load_loomwg):
+    wg = load_loomwg("wireguard")["wireguard"]
+    recent = datetime.now(tz=UTC).isoformat()
+    assert wg.peer_is_online({"latest_handshake": recent}) is True
+    assert wg.peer_is_online({"latest_handshake": None}) is False
+
+
+def test_validate_interface(load_loomwg):
+    wg = load_loomwg("wireguard")["wireguard"]
+    assert wg.validate_interface({"interface": "wg0"}) == "wg0"
+    with pytest.raises(ValueError):
+        wg.validate_interface({"interface": "bad iface!"})

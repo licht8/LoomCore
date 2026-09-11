@@ -1,26 +1,25 @@
 """Install helpers for WireGuard prerequisites.
 
-WARNING: install_wireguard() is a NO-OP inside the container.
-Package installation must be done on the host via deploy/install.sh
-before starting the container.
+Package installation is done on the host via deploy/install.sh before
+starting the container.
 
-setup_server() now runs entirely inside the container using
+setup_server() runs entirely inside the container using
 cap_add NET_ADMIN for firewall/NAT and sysctl configuration.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
-import subprocess
 import re
-import shutil
+import subprocess
 import tempfile
 from ipaddress import ip_network
-from pathlib import Path
 
-from config import config_path
 from keys import generate_keypair
 from wireguard import run_command
+
+from config import config_path
 
 
 def _container_shell(command: str, timeout: int = 300) -> str:
@@ -109,32 +108,6 @@ def _enable_forwarding() -> None:
     )
 
 
-def install_wireguard(_: dict) -> dict:
-    """Проверить, установлен ли WireGuard.
-
-    Это NO-OP внутри контейнера — установка пакетов выполняется
-    на хосте через deploy/install.sh.
-    """
-    try:
-        run_command(["wg", "--version"])
-    except RuntimeError:
-        pass
-    else:
-        return {
-            "installed": True,
-            "changed": False,
-            "package_manager": None,
-            "message": "WireGuard уже установлен внутри контейнера.",
-        }
-    # wg не найден — установка должна быть выполнена на хосте
-    return {
-        "installed": False,
-        "changed": False,
-        "package_manager": None,
-        "message": "WireGuard не найден. Установите пакеты на хосте через deploy/install.sh.",
-    }
-
-
 def setup_server(arguments: dict) -> dict:
     """Настроить WireGuard-сервер внутри контейнера.
 
@@ -201,10 +174,8 @@ def setup_server(arguments: dict) -> dict:
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(temporary)
-        except OSError:
-            pass
         raise
 
     _enable_forwarding()

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -23,7 +23,7 @@ async def add_message(
         content=content,
         tool_calls=tool_calls,
         tool_result=tool_result,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     session_db.add(message)
     await session_db.commit()
@@ -42,7 +42,7 @@ async def add_user_message(
         session_id=session_id,
         role="user",
         content=content,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     session_db.add(message)
     await session_db.commit()
@@ -63,7 +63,7 @@ async def add_assistant_message(
         role="assistant",
         content=content,
         tool_calls=tool_calls,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     session_db.add(message)
     await session_db.commit()

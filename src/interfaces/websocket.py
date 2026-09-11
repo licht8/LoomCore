@@ -1,14 +1,13 @@
+import contextlib
 import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from src.config import settings
 from src.core.security import classify_tool_risk
-from src.db import session as db_session
-from src.db.session import ensure_session
 from src.db.database import async_session_factory
-from src.plugins import plugin_manager
+from src.db.session import add_message, ensure_session
 from src.llm.router import AIRouter
+from src.plugins import plugin_manager
 
 logger = logging.getLogger("loomhub.websocket")
 
@@ -19,6 +18,85 @@ airouter_with_plugins = AIRouter(plugin_manager=plugin_manager)
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
     """Выполнить инструмент через плагин, которому он принадлежит."""
     return await plugin_manager.execute_tool_by_name(tool_name, arguments)
+
+
+def _extract_text(raw_result: dict) -> str:
+    """Извлечь текст из MCP-результата ({"content": [{"type": "text", ...}]})."""
+    if isinstance(raw_result, dict) and "content" in raw_result:
+        return "".join(
+            item.get("text", "")
+            for item in raw_result["content"]
+            if item.get("type") == "text"
+        )
+    return str(raw_result)
+
+
+def _build_artifacts(tool_name: str, raw_result: dict) -> list[dict] | None:
+    """Собрать одноразовые ссылки на артефакты клиента (config/QR)."""
+    if tool_name != "wg_create_client" or not isinstance(raw_result, dict):
+        return None
+    data = raw_result.get("data")
+    if not isinstance(data, dict):
+        return None
+    config_token = data.get("config_token")
+    qr_token = data.get("qr_token")
+    if not (config_token and qr_token):
+        return None
+    return [
+        {
+            "label": "Скачать конфигурацию",
+            "url": f"/api/artifacts/{config_token}/config",
+        },
+        {
+            "label": "Скачать QR-код",
+            "url": f"/api/artifacts/{qr_token}/qr",
+        },
+    ]
+
+
+async def _save_tool_message(
+    session_id: str,
+    tool_name: str,
+    arguments: dict | None,
+    content: str,
+) -> None:
+    """Сохранить результат вызова инструмента в историю сессии."""
+    async with async_session_factory() as db:
+        await add_message(
+            db,
+            session_id,
+            "tool",
+            content,
+            tool_calls=[{"name": tool_name, "arguments": arguments}],
+        )
+
+
+async def _run_tool_and_notify(
+    websocket: WebSocket,
+    session_id: str,
+    tool_name: str,
+    arguments: dict | None,
+    risk: str | None = None,
+) -> None:
+    """Выполнить инструмент, сохранить результат и отправить его в UI."""
+    raw_result = await _execute_tool(tool_name, arguments)
+    content_text = _extract_text(raw_result)
+    artifacts = _build_artifacts(tool_name, raw_result)
+
+    await _save_tool_message(session_id, tool_name, arguments, content_text)
+
+    payload = {
+        "type": "tool_response",
+        "tool": tool_name,
+        "content": content_text,
+        "result": content_text,
+        "status": "success",
+        "summary": "Выполнено",
+        "artifacts": artifacts,
+    }
+    if risk:
+        payload["risk"] = risk
+    await websocket.send_json(payload)
 
 
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -53,72 +131,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if action == "approve":
                 tool = data.get("tool", "unknown")
                 tool_args = data.get("args") or {}
-
-                # Выполняем инструмент через плагин
                 try:
-                    raw_result = await _execute_tool(tool, tool_args)
-
-                    # Извлекаем текст из результата (MCP формат: {"content": [{"type": "text", "text": "..."}]})
-                    if isinstance(raw_result, dict) and "content" in raw_result:
-                        content_text = ""
-                        for item in raw_result["content"]:
-                            if item.get("type") == "text":
-                                content_text += item.get("text", "")
-                    else:
-                        content_text = str(raw_result)
-
-                    artifacts = None
-                    if (
-                        tool == "wg_create_client"
-                        and isinstance(raw_result, dict)
-                        and isinstance(raw_result.get("data"), dict)
-                    ):
-                        artifact_data = raw_result["data"]
-                        if artifact_data.get("config_token") and artifact_data.get("qr_token"):
-                            artifacts = [
-                                {
-                                    "label": "Скачать конфигурацию",
-                                    "url": (
-                                        f"/api/loomwg/artifacts/{artifact_data['config_token']}/config"
-                                        f"?access_token={settings.admin_token}"
-                                    ),
-                                },
-                                {
-                                    "label": "Скачать QR-код",
-                                    "url": (
-                                        f"/api/loomwg/artifacts/{artifact_data['qr_token']}/qr"
-                                        f"?access_token={settings.admin_token}"
-                                    ),
-                                },
-                            ]
-
-                    artifacts = None
-                    if (
-                        tool == "wg_create_client"
-                        and isinstance(raw_result, dict)
-                        and raw_result.get("data", {}).get("artifact_token")
-                    ):
-                        token = raw_result["data"]["artifact_token"]
-                        artifacts = [
-                            {
-                                "label": "Скачать конфигурацию",
-                                "url": f"/api/loomwg/artifacts/{token}/config",
-                            },
-                            {
-                                "label": "Скачать QR-код",
-                                "url": f"/api/loomwg/artifacts/{token}/qr",
-                            },
-                        ]
-
-                    await websocket.send_json({
-                        "type": "tool_response",
-                        "tool": tool,
-                        "content": content_text,
-                        "result": content_text,
-                        "status": "success",
-                        "summary": "Выполнено",
-                        "artifacts": artifacts,
-                    })
+                    await _run_tool_and_notify(
+                        websocket, session_id, tool, tool_args
+                    )
                 except Exception as exc:
                     await websocket.send_json({
                         "type": "error",
@@ -126,7 +142,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     })
                 continue
 
-            elif action == "deny":
+            if action == "deny":
                 await websocket.send_json({"type": "tool_denied"})
                 continue
 
@@ -155,10 +171,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     })
             except Exception as exc:
                 await websocket.send_json(
-                    {
-                        "type": "error",
-                        "error": f"{type(exc).__name__}: {exc}" or type(exc).__name__,
-                    }
+                    {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
                 )
                 continue
 
@@ -169,8 +182,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_json(
                     {"type": "response", "content": result.get("content", "")}
                 )
+                continue
 
-            elif answer_type == "tool_call":
+            if answer_type == "tool_call":
                 tool_name = result.get("tool_name", "unknown")
                 tool_args = result.get("tool_args")
 
@@ -186,81 +200,20 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 })
 
                 if risk == "dangerous":
-                    await websocket.send_json(
-                        {
-                            "type": "approval_request",
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "risk": "dangerous",
-                            "action": tool_name,
-                            "content": f"Подтвердите выполнение инструмента: {tool_name}",
-                        }
-                    )
+                    await websocket.send_json({
+                        "type": "approval_request",
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "risk": "dangerous",
+                        "action": tool_name,
+                        "content": f"Подтвердите выполнение инструмента: {tool_name}",
+                    })
                 else:
                     # Safe/Moderate — выполняем автоматически через плагин
                     try:
-                        raw_result = await _execute_tool(tool_name, tool_args)
-
-                        # Извлекаем текст из результата
-                        if isinstance(raw_result, dict) and "content" in raw_result:
-                            content_text = ""
-                            for item in raw_result["content"]:
-                                if item.get("type") == "text":
-                                    content_text += item.get("text", "")
-                        else:
-                            content_text = str(raw_result)
-
-                        artifacts = None
-                        if (
-                            tool_name == "wg_create_client"
-                            and isinstance(raw_result, dict)
-                            and isinstance(raw_result.get("data"), dict)
-                        ):
-                            artifact_data = raw_result["data"]
-                            if artifact_data.get("config_token") and artifact_data.get("qr_token"):
-                                artifacts = [
-                                    {
-                                        "label": "Скачать конфигурацию",
-                                        "url": (
-                                            f"/api/loomwg/artifacts/{artifact_data['config_token']}/config"
-                                            f"?access_token={settings.admin_token}"
-                                        ),
-                                    },
-                                    {
-                                        "label": "Скачать QR-код",
-                                        "url": (
-                                            f"/api/loomwg/artifacts/{artifact_data['qr_token']}/qr"
-                                            f"?access_token={settings.admin_token}"
-                                        ),
-                                    },
-                                ]
-
-                        # Сохраняем результат как tool_message в БД
-                        async with async_session_factory() as db:
-                            from src.db.session import add_message
-                            await add_message(
-                                db, session_id,
-                                "tool",
-                                content_text,
-                                tool_calls=[{
-                                    "name": tool_name,
-                                    "arguments": tool_args,
-                                }],
-                            )
-                            await db.commit()
-
-                        # Показываем пользователю результат
-                        await websocket.send_json({
-                            "type": "tool_response",
-                            "tool": tool_name,
-                            "content": content_text,
-                            "result": content_text,
-                            "risk": risk,
-                            "status": "success",
-                            "summary": "Выполнено",
-                            "artifacts": artifacts,
-                        })
-
+                        await _run_tool_and_notify(
+                            websocket, session_id, tool_name, tool_args, risk=risk
+                        )
                     except Exception as exc:
                         logger.error(f"Ошибка выполнения инструмента '{tool_name}': {exc}")
                         await websocket.send_json({
@@ -272,11 +225,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket disconnected for session {session_id}")
     except Exception as exc:
-        try:
-            await websocket.send_json(
-                {"type": "error", "error": str(exc)}
-            )
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "error", "error": str(exc)})
         logger.error(f"❌ Фатальная ошибка WebSocket для session {session_id}: {exc}")
-        import traceback; logger.error(traceback.format_exc())
+        import traceback
+        logger.error(traceback.format_exc())

@@ -2,26 +2,39 @@
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import os
 import re
 import secrets
 import subprocess
 import time
-import base64
 import urllib.error
 import urllib.request
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
-from config import add_peer, config_path
 from keys import generate_keypair
 from wireguard import CommandError, run_command
 
+from config import add_peer, config_path
 
 CLIENTS_DIR = Path("/etc/wireguard/clients")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ARTIFACT_TTL_SECONDS = 600
 _artifacts: dict[str, tuple[str, float]] = {}
+
+
+def _format_endpoint(endpoint: str, port: int) -> str:
+    """Format endpoint, bracketing IPv6 addresses per WireGuard spec."""
+    try:
+        ip_address(endpoint)
+    except ValueError:
+        pass
+    else:
+        if ":" in endpoint:
+            endpoint = f"[{endpoint}]"
+    return f"{endpoint}:{port}"
 
 
 def clients_directory() -> Path:
@@ -222,7 +235,7 @@ def create_client(arguments: dict) -> dict:
             "[Peer]",
             f"PublicKey = {server_public_key}",
             f"PresharedKey = {preshared_key}",
-            f"Endpoint = {endpoint}:{listen_port}",
+            f"Endpoint = {_format_endpoint(endpoint, listen_port)}",
             "AllowedIPs = 0.0.0.0/0, ::/0",
             "PersistentKeepalive = 25",
             "",
@@ -258,21 +271,15 @@ def create_client(arguments: dict) -> dict:
             raise CommandError(qrencode.stderr.strip() or "qrencode завершился с ошибкой")
         os.chmod(qr_path, 0o600)
     except BaseException:
-        try:
+        with contextlib.suppress(CommandError):
             run_command(["wg", "set", interface, "peer", keypair["public_key"], "remove"])
-        except CommandError:
-            pass
         for path in (client_path, qr_path):
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 path.unlink()
-            except FileNotFoundError:
-                pass
         from config import remove_peer
 
-        try:
+        with contextlib.suppress(FileNotFoundError, ValueError):
             remove_peer(interface, keypair["public_key"])
-        except (FileNotFoundError, ValueError):
-            pass
         raise
 
     config_token = secrets.token_urlsafe(32)

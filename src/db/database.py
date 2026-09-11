@@ -25,14 +25,3 @@ async def get_db() -> AsyncSession:
             yield session
         finally:
             await session.close()
-
-
-async def init_db():
-    """Проверить подключение к БД (миграции применяются через alembic).
-
-    init_db() теперь не создаёт таблицы — это делает Alembic:
-        alembic upgrade head
-
-    Вызывается в main.py:startup() для совместимости, но больше не инициализирует схему.
-    """
-    pass

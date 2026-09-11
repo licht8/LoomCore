@@ -1,5 +1,6 @@
-import httpx
 import logging
+
+import httpx
 
 from src.config import settings
 
@@ -9,7 +10,6 @@ logger = logging.getLogger("loomhub.llm")
 class HetznerClient:
     """Клиент для Hetzner Inference API."""
 
-    BASE_URL = "https://inference.hetzner.com/api/v1"
     MODEL = settings.hetzner_model
 
     def __init__(self, api_key: str | None = None):

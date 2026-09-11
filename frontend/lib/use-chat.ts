@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import type { ChatMessage, WsMessage, ApprovalRequest, UseChatState } from "@/lib/chat-types"
+import { withAdminToken } from "@/lib/admin-token"
 
 /** Генерация случайного ID сессии */
 function generateSessionId(): string {
@@ -56,7 +57,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       (window.location.port === "3000"
         ? `${protocol}://${window.location.hostname}:8000`
         : `${protocol}://${window.location.host}`)
-    const url = `${baseWsUrl.replace(/\/$/, "")}/ws/${sessionId.current}`
+    const url = withAdminToken(`${baseWsUrl.replace(/\/$/, "")}/ws/${sessionId.current}`)
     console.log("Connecting to WS:", url)
 
     const ws = new WebSocket(url)

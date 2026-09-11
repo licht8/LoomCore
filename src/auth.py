@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import secrets
 import struct
+import sys
 import time
 
 import jwt
@@ -78,5 +80,15 @@ def generate_password_hash(password: str) -> str:
     salt = secrets.token_bytes(16)
     rounds = 310_000
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
-    encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+    def encode(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
     return f"pbkdf2_sha256${rounds}${encode(salt)}${encode(digest)}"
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Использование: python -m src.auth <пароль>", file=sys.stderr)
+        raise SystemExit(2)
+    print(generate_password_hash(sys.argv[1]))

@@ -4,23 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from config import add_peer as save_peer, remove_peer as delete_peer
 from client import create_client, get_artifact, remove_client_artifacts
+from install import setup_server
 from keys import validate_public_key
 from lifecycle import format_lifecycle, restart, start, stop
-from install import install_wireguard, setup_server
 from wireguard import (
-    CONFIG_DIR,
     CommandError,
     active_interfaces,
+    config_directory,
     configured_interfaces,
     has_link,
     peer_is_online,
     read_interface,
     run_command,
-    config_directory,
     validate_interface,
 )
+
+from config import add_peer as save_peer
+from config import remove_peer as delete_peer
 
 
 def text_result(content: str, **data: Any) -> dict[str, Any]:
@@ -89,7 +90,7 @@ def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             run_command(["wg-quick", "up", interface], timeout=60)
         except CommandError:
-            raise CommandError(f"Интерфейс {interface} не активен")
+            raise CommandError(f"Интерфейс {interface} не активен") from None
 
     details = read_interface(interface)
     rows = [f"Интерфейс: {interface}", f"Всего пиров: {len(details['peers'])}", ""]
@@ -261,7 +262,6 @@ HANDLERS = {
     "wg_stop": lambda args: lifecycle_tool(stop, args),
     "wg_restart": lambda args: lifecycle_tool(restart, args),
     "wg_create_client": create_client_tool,
-    "wg_install": install_wireguard,
     "wg_setup_server": setup_server,
     "wg_get_client_artifact": get_artifact_tool,
 }
@@ -270,11 +270,6 @@ TOOLS_SCHEMA = [
     {
         "name": "wg_list_interfaces",
         "description": "Показать WireGuard-интерфейсы, их активность и наличие конфигурации",
-        "inputSchema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "wg_install",
-        "description": "Установить wireguard-tools и зависимости на хосте без создания конфигурации",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {

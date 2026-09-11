@@ -8,13 +8,11 @@ from __future__ import annotations
 
 import pytest
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
-
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from fastapi.responses import JSONResponse
-
 
 # === Утилиты ===
 
@@ -203,10 +201,10 @@ async def test_tools_rate_limit(tools_app):
 @pytest.mark.asyncio
 async def test_websocket_not_limited():
     """WebSocket не имеет @limiter.limit."""
-    from src.main import app as main_app
+    from src.api.websocket import router as ws_router
 
     route = next(
-        (r for r in main_app.routes if hasattr(r, "path") and r.path == "/ws/{session_id}"),
+        (r for r in ws_router.routes if getattr(r, "path", None) == "/ws/{session_id}"),
         None,
     )
     assert route is not None, "WebSocket route /ws/{session_id} не найден"

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { Paperclip, SendHorizonal } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import type { ApprovalRequest } from "@/lib/chat-data"
+import type { ApprovalRequest } from "@/lib/chat-types"
 
 interface ChatInputProps {
   onSend: (text: string) => void

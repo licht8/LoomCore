@@ -1,7 +1,17 @@
 import { Activity, MessageSquareText, Sparkles } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { navItems } from "@/lib/chat-data"
+
+type NavItem = {
+  label: string
+  icon: "assistant" | "status"
+  active?: boolean
+}
+
+const navItems: NavItem[] = [
+  { label: "AI Assistant", icon: "assistant", active: true },
+  { label: "System Status", icon: "status" },
+]
 
 const icons = {
   assistant: MessageSquareText,

@@ -1,17 +1,13 @@
-import asyncio
 import json
 import logging
 
-from datetime import datetime, timezone
-from uuid import uuid4
-
+from src.config import settings
 from src.db import session as db_session
 from src.db.database import async_session_factory
+from src.db.session import ensure_session
 from src.llm.client import HetznerClient
 from src.llm.prompt import build_messages
-from src.config import settings
 from src.plugins.manager import PluginManager
-from src.db.session import ensure_session
 
 logger = logging.getLogger("loomhub.router")
 
@@ -102,11 +98,12 @@ class AIRouter:
             # 3. Отправляем запрос к LLM
             logger.info(f"🚀 Вызов LLM: user_msg='{user_message[:100]}...', history_len={len(history_dicts)}, tools_count={len(tools_schema)}")
             llm_response = await self.client.chat_completion(messages, tools=llm_tools)
-            finish_reason = llm_response.get("choices", [{}])[0].get("finish_reason", "N/A")
-            logger.info(f"✅ LLM API ответ: finish_reason={finish_reason}")
 
             # 4. Парсим ответ LLM
             choices = llm_response.get("choices", [])
+            finish_reason = choices[0].get("finish_reason", "N/A") if choices else "N/A"
+            logger.info(f"✅ LLM API ответ: finish_reason={finish_reason}")
+
             if not choices:
                 return {"type": "text", "content": "Нет ответа от LLM"}
 
@@ -129,10 +126,7 @@ class AIRouter:
                     tool_args = {"_raw": args_str}
 
             # Определяем тип ответа
-            if tool_name:
-                answer_type = "tool_call"
-            else:
-                answer_type = "text"
+            answer_type = "tool_call" if tool_name else "text"
 
             # Сохраняем ответ ассистента через db_session (SRP)
             await db_session.add_assistant_message(

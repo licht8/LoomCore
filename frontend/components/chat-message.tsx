@@ -2,7 +2,8 @@
 
 import { CheckCircle2, Loader2, XCircle, Sparkles, Terminal } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { ChatMessage } from "@/lib/chat-data"
+import type { ChatMessage } from "@/lib/chat-types"
+import { withAdminToken } from "@/lib/admin-token"
 
 function renderBold(text: string) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
@@ -105,7 +106,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
               {message.artifacts.map((artifact) => (
                 <a
                   key={artifact.url}
-                  href={artifact.url}
+                  href={withAdminToken(artifact.url)}
                   className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
                 >
                   {artifact.label}
