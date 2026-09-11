@@ -25,4 +25,8 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "alembic",
+    "slowapi",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

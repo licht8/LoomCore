@@ -5,13 +5,15 @@ import secrets
 import logging
 
 import uvicorn
-from fastapi import FastAPI, Depends, WebSocket, HTTPException, Header, Query, Request
+from fastapi import FastAPI, Depends, WebSocket, HTTPException, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.core.rate_limit import limiter
 from src.db.database import get_db, init_db
 from src.interfaces.websocket import websocket_endpoint
 from src.llm.router import AIRouter
@@ -20,11 +22,35 @@ from src.auth import SESSION_COOKIE, create_session, revoke_session, verify_pass
 
 logger = logging.getLogger("loomhub.main")
 
+
+def _chat_key_func(request: Request) -> str:
+    """Ключ для /api/chat — по session_id из query-параметра.
+
+    Не читает тело запроса, чтобы не конфликтовать с Pydantic ChatRequest.
+    """
+    session_id = request.query_params.get("session_id")
+    if session_id:
+        return session_id
+    return request.client.host if request.client else "unknown"
+
+
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Кастомный обработчик 429 на русском языке."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Слишком много запросов. Попробуйте позже."},
+    )
+
+
 app = FastAPI(
     title="LoomHub Core",
     version="0.0.1",
     docs_url="/docs" if settings.debug else None,
 )
+
+# Регистрируем обработчик 429
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Подключение CORS для React (Vite/Next.js) ---
 app.add_middleware(
@@ -60,6 +86,7 @@ def require_admin_token(token: str | None) -> None:
 
 
 @app.post("/api/auth/login")
+@limiter.limit("5 per 60 seconds")
 async def login(request: Request):
     data = await request.json()
     valid = (
@@ -130,11 +157,13 @@ async def _healthcheck_loop():
 
 
 @app.get("/health")
-def health():
+@limiter.limit("60 per 60 seconds")
+def health(request: Request):
     return {"status": "ok"}
 
 
 @app.get("/api/plugins/status")
+@limiter.limit("10 per 60 seconds")
 async def get_plugins_status(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -154,6 +183,7 @@ async def get_plugins_status(
 
 
 @app.get("/api/tools")
+@limiter.limit("10 per 60 seconds")
 async def list_plugins_tools(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -175,6 +205,7 @@ async def list_plugins_tools(
 
 
 @app.post("/api/chat")
+@limiter.limit("30 per 60 seconds", key_func=_chat_key_func)
 async def chat_endpoint(
     request: ChatRequest,
     http_request: Request,

@@ -9,8 +9,10 @@ import json
 import logging
 import subprocess
 import uuid
+from collections import defaultdict
 from enum import Enum
 from pathlib import Path
+from time import time
 
 logger = logging.getLogger("loomhub.plugins")
 
@@ -30,6 +32,10 @@ class PluginManager:
         # name -> {"proc": subprocess, "state": PluginState, "config": {...}}
         self._plugins: dict[str, dict] = {}
         self._tool_plugins: dict[str, str] = {}
+
+        # Лимит вызовов инструментов: tool_name -> [timestamps]
+        self._tool_calls: dict[str, list[float]] = defaultdict(list)
+        self._max_tool_calls_per_minute = 10
 
     def register(
         self,
@@ -477,6 +483,18 @@ class PluginManager:
 
             # После успешного перезапуска — повторяем вызов
             plugin = self._plugins[plugin_name]
+
+        # --- Лимит вызовов инструмента (защита от зацикливания AI) ---
+        now = time()
+        window = 60  # секунд
+        self._tool_calls[tool_name] = [
+            t for t in self._tool_calls[tool_name] if t > now - window
+        ]
+        if len(self._tool_calls[tool_name]) >= self._max_tool_calls_per_minute:
+            raise RuntimeError(
+                f"Слишком частые вызовы '{tool_name}' — лимит {self._max_tool_calls_per_minute}/мин"
+            )
+        self._tool_calls[tool_name].append(now)
 
         request = {
             "jsonrpc": "2.0",
