@@ -134,8 +134,41 @@ async def startup():
     discovered = plugin_manager.discover_plugins("/app/plugins")
     print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
 
-    # Запускаем background-healthcheck каждые 30 секунд
+    # Запускаем фоновый healthcheck каждые 30 секунд
     asyncio.create_task(_healthcheck_loop())
+
+    # Поднимаем WireGuard, если конфиг есть, но интерфейс не активен
+    asyncio.create_task(_ensure_wg_interface())
+
+
+async def _ensure_wg_interface() -> None:
+    """Поднять WireGuard-интерфейс, если конфиг существует."""
+    from pathlib import Path
+    import subprocess
+
+    config_path = Path("/etc/wireguard/wg0.conf")
+    if not config_path.is_file():
+        return
+    try:
+        result = subprocess.run(
+            ["wg", "show", "interfaces"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        active = result.stdout.strip().split()
+        if "wg0" in active:
+            return
+        logger.info("Конфиг wg0 существует, но интерфейс не активен — поднимаю")
+        subprocess.run(
+            ["wg-quick", "up", "wg0"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        logger.info("WireGuard wg0 поднят")
+    except Exception as exc:
+        logger.warning(f"Не удалось поднять wg0: {exc}")
 
 
 async def _healthcheck_loop():
