@@ -1,9 +1,17 @@
-"""Host package installation for WireGuard prerequisites."""
+"""Install helpers for WireGuard prerequisites.
+
+WARNING: install_wireguard() is a NO-OP inside the container.
+Package installation must be done on the host via deploy/install.sh
+before starting the container.
+
+setup_server() now runs entirely inside the container using
+cap_add NET_ADMIN for firewall/NAT and sysctl configuration.
+"""
 
 from __future__ import annotations
 
-import subprocess
 import os
+import subprocess
 import re
 import shutil
 import tempfile
@@ -15,28 +23,38 @@ from keys import generate_keypair
 from wireguard import run_command
 
 
-def _host_shell(command: str, timeout: int = 300) -> str:
-    if shutil.which("nsenter") and shutil.which("chroot"):
-        command = ["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "chroot", "/host", "/bin/sh", "-c", command]
-    else:
-        command = ["/bin/sh", "-c", command]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+def _container_shell(command: str, timeout: int = 300) -> str:
+    """Выполнить команду внутри контейнера (без nsenter/chroot).
+
+    Контейнер имеет NET_ADMIN capability, поэтому команды
+    iptables/nft/sysctl выполняются напрямую.
+    """
+    result = subprocess.run(
+        ["/bin/sh", "-c", command],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
     if result.returncode:
         details = result.stderr.strip() or result.stdout.strip() or "нет деталей"
-        raise RuntimeError(f"Установка WireGuard завершилась с кодом {result.returncode}: {details}")
+        raise RuntimeError(
+            f"Команда завершилась с кодом {result.returncode}: {details}"
+        )
     return result.stdout.strip()
 
 
 def _detect_host() -> dict[str, str]:
+    """Определить ОС, внешний интерфейс и firewall внутри контейнера."""
     return {
-        "os": _host_shell(
+        "os": _container_shell(
             "test -r /etc/os-release && . /etc/os-release && "
             "printf '%s %s' \"${ID:-unknown}\" \"${VERSION_ID:-unknown}\""
         ),
-        "external_interface": _host_shell(
+        "external_interface": _container_shell(
             "ip -4 route show default | awk 'NR==1 {print $5}'"
         ),
-        "firewall": _host_shell(
+        "firewall": _container_shell(
             "if command -v firewall-cmd >/dev/null; then printf firewalld; "
             "elif command -v ufw >/dev/null; then printf ufw; "
             "elif command -v nft >/dev/null; then printf nftables; "
@@ -53,16 +71,17 @@ def _configure_firewall(
     listen_port: int,
     ipv4_network: str,
 ) -> str:
+    """Настроить firewall внутри контейнера (без nsenter/chroot)."""
     if firewall == "firewalld":
-        _host_shell(
+        _container_shell(
             f"firewall-cmd --permanent --add-port={listen_port}/udp && "
             "firewall-cmd --permanent --add-masquerade && firewall-cmd --reload"
         )
     elif firewall == "ufw":
-        _host_shell(f"ufw allow {listen_port}/udp")
-        _host_shell("ufw route allow in on " + interface + " out on " + external_interface)
+        _container_shell(f"ufw allow {listen_port}/udp")
+        _container_shell("ufw route allow in on " + interface + " out on " + external_interface)
     elif firewall == "nftables":
-        _host_shell(
+        _container_shell(
             "nft add table inet loomwg 2>/dev/null || true; "
             "nft 'add chain inet loomwg input { type filter hook input priority 0; policy accept; }' 2>/dev/null || true; "
             f"nft add rule inet loomwg input udp dport {listen_port} accept 2>/dev/null || true; "
@@ -70,7 +89,7 @@ def _configure_firewall(
             f"nft add rule inet loomwg postrouting oifname \"{external_interface}\" masquerade 2>/dev/null || true"
         )
     elif firewall == "iptables":
-        _host_shell(
+        _container_shell(
             f"iptables -C INPUT -p udp --dport {listen_port} -j ACCEPT 2>/dev/null || "
             f"iptables -I INPUT -p udp --dport {listen_port} -j ACCEPT; "
             f"iptables -t nat -C POSTROUTING -s {ipv4_network} -o {external_interface} -j MASQUERADE 2>/dev/null || "
@@ -84,15 +103,21 @@ def _configure_firewall(
 
 
 def _enable_forwarding() -> None:
-    _host_shell(
-        "printf 'net.ipv4.ip_forward=1\\nnet.ipv6.conf.all.forwarding=1\\n' "
-        "> /etc/sysctl.d/99-loomwg-forwarding.conf && sysctl --system"
+    """Включить forwarding через sysctl.d внутри контейнера."""
+    _container_shell(
+        "printf 'net.ipv4.ip_forward=1\\nnet.ipv6.conf.all.forwarding=1\\n' > "
+        "/etc/sysctl.d/99-loomwg-forwarding.conf && sysctl --system"
     )
 
 
 def install_wireguard(_: dict) -> dict:
+    """Проверить, установлен ли WireGuard.
+
+    Это NO-OP внутри контейнера — установка пакетов выполняется
+    на хосте через deploy/install.sh.
+    """
     try:
-        _host_shell("command -v wg >/dev/null")
+        run_command(["wg", "--version"])
     except RuntimeError:
         pass
     else:
@@ -100,37 +125,25 @@ def install_wireguard(_: dict) -> dict:
             "installed": True,
             "changed": False,
             "package_manager": None,
-            "message": "WireGuard уже установлен",
+            "message": "WireGuard уже установлен внутри контейнера.",
         }
-
-    manager = _host_shell(
-        "if command -v apt-get >/dev/null; then printf apt; "
-        "elif command -v dnf >/dev/null; then printf dnf; "
-        "elif command -v yum >/dev/null; then printf yum; "
-        "elif command -v apk >/dev/null; then printf apk; "
-        "else printf unsupported; fi"
-    )
-    if manager == "unsupported":
-        raise RuntimeError("Не найден поддерживаемый пакетный менеджер на хосте")
-    commands = {
-        "apt": "export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y wireguard-tools iproute2 iptables nftables",
-        "dnf": "dnf install -y wireguard-tools iproute iptables-nft nftables",
-        "yum": "yum install -y wireguard-tools iproute iptables nftables",
-        "apk": "apk add --no-cache wireguard-tools iproute2 iptables nftables",
-    }
-    _host_shell(commands[manager])
-    run_command(["wg", "--version"])
-    host = _detect_host()
+    # wg не найден — установка должна быть выполнена на хосте
     return {
-        "installed": True,
-        "changed": True,
-        "package_manager": manager,
-        "host": host,
-        "message": f"WireGuard установлен через {manager}. Конфигурация wg0 не создавалась.",
+        "installed": False,
+        "changed": False,
+        "package_manager": None,
+        "message": "WireGuard не найден. Установите пакеты на хосте через deploy/install.sh.",
     }
 
 
 def setup_server(arguments: dict) -> dict:
+    """Настроить WireGuard-сервер внутри контейнера.
+
+    Работает полностью внутри контейнера:
+    - Конфиг записывается в /etc/wireguard (смонтирован rw)
+    - Firewall/NAT настраивается через iptables/nft (cap_add NET_ADMIN)
+    - Forwarding включается через /etc/sysctl.d
+    """
     interface = str(arguments.get("interface", "wg0")).strip()
     if not re.fullmatch(r"[A-Za-z0-9]{1,15}", interface):
         raise ValueError("Некорректное имя WireGuard-интерфейса")
@@ -155,6 +168,7 @@ def setup_server(arguments: dict) -> dict:
     path = config_path(interface)
     if path.exists():
         raise ValueError(f"Конфигурация {path} уже существует")
+
     run_command(["wg", "--version"])
 
     keypair = generate_keypair()

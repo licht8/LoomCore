@@ -26,6 +26,32 @@ if [[ ! -f .env ]]; then
   exit 0
 fi
 
+# === Установка пакетов на хосте (выполняется на хосте, не в контейнере) ===
+
+echo "=== Установка WireGuard-пакетов ==="
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update && apt-get install -y wireguard-tools iproute2 qrencode iptables nftables
+  echo "Установлено через apt"
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y wireguard-tools iproute iptables-nft nftables
+  echo "Установлено через dnf"
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y wireguard-tools iproute iptables nftables
+  echo "Установлено через yum"
+elif command -v apk >/dev/null 2>&1; then
+  apk add --no-cache wireguard-tools iproute2 iptables nftables
+  echo "Установлено через apk"
+else
+  echo "Не найден поддерживаемый пакетный менеджер. Установите wireguard-tools вручную."
+  exit 1
+fi
+
+# === Сборка и запуск Docker-контейнеров ===
+echo "=== Сборка и запуск LoomHub ==="
 docker compose up -d --build
 docker compose ps
 echo "LoomHub is available on port 80."
+echo ""
+echo "Для настройки WireGuard-сервера используйте инструмент wg_setup_server"
+echo "в чате LoomHub (или через API /api/chat)."

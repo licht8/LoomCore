@@ -23,12 +23,10 @@ def run_command(
     timeout: int = 15,
     input_text: str | None = None,
 ) -> str:
-    host_command = command
-    if command and command[0] in {"wg", "ip"}:
-        host_command = ["nsenter", "-t", "1", "-n", "--", *command]
+    # Выполняем напрямую — контейнер имеет NET_ADMIN capability
     try:
         result = subprocess.run(
-            host_command,
+            command,
             capture_output=True,
             text=True,
             input=input_text,
@@ -36,23 +34,12 @@ def run_command(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CommandError(f"Не удалось выполнить {' '.join(host_command)}: {exc}") from exc
+        raise CommandError(f"Не удалось выполнить {' '.join(command)}: {exc}") from exc
 
     if result.returncode != 0:
-        if host_command != command:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                input=input_text,
-                timeout=timeout,
-                check=False,
-            )
-        if result.returncode == 0:
-            return result.stdout.strip()
         details = result.stderr.strip() or result.stdout.strip() or "нет деталей"
         raise CommandError(
-            f"Команда {' '.join(host_command)} завершилась с кодом "
+            f"Команда {' '.join(command)} завершилась с кодом "
             f"{result.returncode}: {details}"
         )
     return result.stdout.strip()

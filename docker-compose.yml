@@ -27,18 +27,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    privileged: true
-    pid: host
+    # Безопасность: минимум привилегий
     cap_add:
       - NET_ADMIN
       - NET_RAW
       - SYS_MODULE
+    security_opt:
+      - no-new-privileges:false
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@db:5432/${POSTGRES_DB:-loomhub}
       HETZNER_API_KEY: ${HETZNER_API_KEY:-}
       DEBUG: ${DEBUG:-false}
       LOOMHUB_MODE: self-hosted
-      LOOMHUB_HOST_ROOT: /host
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
@@ -48,12 +48,10 @@ services:
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"
+    # Только нужные тома
     volumes:
-      - /:/host
       - /etc/wireguard:/etc/wireguard
       - /lib/modules:/lib/modules:ro
-      - /sys:/sys
-      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 15s

@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 import base64
 import secrets
+import logging
 
 import uvicorn
 from fastapi import FastAPI, Depends, WebSocket, HTTPException, Header, Query, Request
@@ -15,6 +17,8 @@ from src.interfaces.websocket import websocket_endpoint
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
 from src.auth import SESSION_COOKIE, create_session, revoke_session, verify_password, verify_session, verify_totp
+
+logger = logging.getLogger("loomhub.main")
 
 app = FastAPI(
     title="LoomHub Core",
@@ -103,10 +107,50 @@ async def startup():
     discovered = plugin_manager.discover_plugins("/app/plugins")
     print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
 
+    # Запускаем background-healthcheck каждые 30 секунд
+    asyncio.create_task(_healthcheck_loop())
+
+
+async def _healthcheck_loop():
+    """Фоновая задача: проверяет здоровье всех плагинов каждые 30 секунд.
+
+    Если плагин не здоров (процесс мёртв) — пытается автоперезапуск
+    асинхронно, не блокируя обработчики API-запросов.
+    """
+    while True:
+        await asyncio.sleep(30)
+        for name in plugin_manager.plugin_names():
+            if not plugin_manager.is_healthy(name):
+                logger.warning(f"Плагин '{name}' не здоров — перезапуск")
+                try:
+                    await plugin_manager._restart_plugin(name)
+                    logger.info(f"Плагин '{name}' успешно перезапущен")
+                except Exception as exc:
+                    logger.error(f"Не удалось перезапустить '{name}': {exc}")
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/plugins/status")
+async def get_plugins_status(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    access_token: str | None = Query(default=None),
+):
+    """Вернуть состояние всех плагинов."""
+    token = access_token or request.cookies.get(SESSION_COOKIE) or (
+        authorization.removeprefix("Bearer ").strip()
+        if authorization and authorization.startswith("Bearer ")
+        else None
+    )
+    require_admin_token(token)
+    statuses = {}
+    for name in plugin_manager.plugin_names():
+        statuses[name] = plugin_manager.get_plugin_status(name)
+    return {"plugins": statuses}
 
 
 @app.get("/api/tools")

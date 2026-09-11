@@ -15,28 +15,42 @@ cd LoomCore
 cp .env.vds.example .env
 chmod 600 .env
 nano .env
-docker compose up -d --build
 ```
 
-Для установки в стандартный каталог можно использовать:
+### Шаг 1: Установка пакетов на хосте
+
+```bash
+sudo bash deploy/install.sh
+```
+
+Этот скрипт:
+- Устанавливает `wireguard-tools`, `iproute2`, `qrencode`, `iptables`, `nftables` на хосте
+- Создает `.env` если его нет
+- Собирает и запускает Docker-контейнеры через `docker compose up -d --build`
+- Показывает статус контейнеров
+
+После выполнения контейнеры запускаются, но WireGuard-сервер ещё не настроен.
+
+### Альтернативный ручной запуск
 
 ```bash
 sudo mkdir -p /opt/loomhub
 sudo git clone git@github.com:USER/REPOSITORY.git /opt/loomhub
 cd /opt/loomhub
-sudo bash deploy/install.sh
+# Установите пакеты вручную:
+# apt-get update && apt-get install -y wireguard-tools iproute2 qrencode iptables nftables
+cp .env.vds.example .env
+chmod 600 .env
+docker compose up -d --build
 ```
 
-Проверка:
+### Шаг 2: Настройка WireGuard-сервера
 
-```bash
-docker compose ps
-curl http://127.0.0.1/health
-docker compose logs -f hub
-```
+После запуска хаб подключает плагин loomwg. Для настройки сервера:
 
-Сайт будет доступен на `http://SERVER_IP/`. WebSocket идет через тот же домен по
-пути `/ws/{session_id}`, поэтому браузеру не нужен прямой доступ к порту `8000`.
+1. Откройте Web UI на `http://SERVER_IP/` или используйте API `/api/chat`
+2. Вызовите инструмент `wg_setup_server` — это создаст конфигурацию `/etc/wireguard/wg0.conf`, включит IPv4/IPv6 forwarding и настроит firewall/NAT **внутри контейнера**
+3. Инструмент требует подтверждения администратора (approval)
 
 ## Управление сервером через плагины
 
@@ -44,13 +58,20 @@ Backend автоматически запускает каждый плагин,
 `plugins/<name>/main.py`. Инструменты всех таких плагинов передаются в LLM и
 маршрутизируются обратно владельцу инструмента.
 
-Self-hosted compose намеренно дает контейнеру `hub` доступ к host-интеграциям:
-host PID namespace, `/etc/wireguard`, `/sys`, `/lib/modules`, Docker socket и
-корень хоста в `/host`. Это нужно для плагинов управления инфраструктурой.
-Добавляйте только доверенные плагины и оставляйте опасные операции за approval.
+Self-hosted compose использует принцип минимальных привилегий:
+
+- Контейнер `hub` работает **без `privileged: true`**
+- Контейнер имеет только необходимые capabilities: `NET_ADMIN`, `NET_RAW`, `SYS_MODULE`
+- Монтируются только нужные тома:
+  - `/etc/wireguard:/etc/wireguard` (rw) — конфиги WireGuard
+  - `/lib/modules:/lib/modules:ro` — модули ядра
+- **Не монтируется:** `/:/host`, `/var/run/docker.sock`, `/sys`, `pid: host`
+- **Не используется:** `nsenter`, `chroot`
+
+Это означает, что даже при компрометации плагина или LLM-инъекции, доступ к хосту ограничен управлением WireGuard.
 
 Read-only-инструменты и создание клиентов `loomwg` выполняются внутри
-этого host-enabled контейнера. `wg_create_client` сохраняет client config и
+контейнера с ограниченными правами. `wg_create_client` сохраняет client config и
 защищённый QR-файл в `/etc/wireguard/clients` с правами `600`; private key не
 возвращается в чат и не сохраняется в истории сообщений. Для QR-генерации в
 образ включён `qrencode`.
@@ -60,10 +81,12 @@ Read-only-инструменты и создание клиентов `loomwg` �
 задайте в `.env` `LOOMWG_ENDPOINT` (например, `vpn.example.com`) или передайте
 endpoint в отдельном вызове инструмента.
 
-Настройка серверной конфигурации в full-tunnel режиме также определяет ОС,
-внешний интерфейс по default route и доступный firewall (`firewalld`, `ufw`,
-`nftables` или `iptables`). После подтверждения администратора она включает
-IPv4/IPv6 forwarding, открывает UDP-порт WireGuard и настраивает NAT для VPN-сети.
+Настройка серверной конфигурации в full-tunnel режиме (инструмент `wg_setup_server`)
+определяет ОС, внешний интерфейс по default route и доступный firewall
+(`firewalld`, `ufw`, `nftables` или `iptables`) **внутри контейнера**. После
+подтверждения администратора она включает IPv4/IPv6 forwarding через
+`/etc/sysctl.d/99-loomwg-forwarding.conf`, открывает UDP-порт WireGuard и
+настраивает NAT с помощью `iptables`/`nftables` внутри контейнера.
 Если firewall не поддерживается, операция завершается ошибкой с требованием
 настроить его вручную.
 
@@ -80,6 +103,7 @@ docker compose up -d --build
 ## Обновление
 
 ```bash
+cd /opt/loomhub  # или ваша рабочая директория
 git pull
 docker compose up -d --build
 docker image prune -f
@@ -101,3 +125,16 @@ docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sq
 ```
 
 Файл `.env` и `backup.sql` не должны попадать в Git.
+
+## Безопасность контейнера
+
+| Действие | Было | Стало |
+|---|---|---|
+| `wg show/add-peer` | `privileged: true` | `NET_ADMIN` capability |
+| `wg-quick up/down` | `privileged` | `NET_ADMIN` + `SYS_MODULE` |
+| `/etc/wireguard` | через `/:/host` | прямой mount volume |
+| Установка пакетов | `chroot /host` | только `deploy/install.sh` на хосте |
+| Firewall/NAT | `chroot /host` | внутри контейнера (iptables/nft) |
+| Полный root к хосту | ✅ | ❌ УБРАНО |
+| Docker socket | ✅ | ❌ УБРАНО |
+| PID namespace | ✅ | ❌ УБРАНО |
