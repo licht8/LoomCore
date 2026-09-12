@@ -60,12 +60,30 @@ sudo docker compose up -d --build
 
 ## 3. Apply migrations
 
+`deploy/install.sh` runs migrations automatically at the end (`alembic upgrade
+head`). If you started the containers manually, run it yourself:
+
 ```bash
 docker compose exec hub alembic upgrade head
 docker compose exec db psql -U loomuser -d loomcore -c '\dt'
 ```
 
 You should see `users`, `sessions`, `messages`, `alembic_version`.
+
+### Existing database without `alembic_version`
+
+If the database already has `users`/`sessions`/`messages` but Alembic has no
+record (error `DuplicateTableError: relation "users" already exists`), the
+schema was created before migrations ran. Pick one:
+
+- **Keep the data** (adopt the existing schema): `docker compose exec hub alembic stamp head`
+- **Start clean** (this is a test server):
+  ```bash
+  docker compose stop hub frontend nginx
+  docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP TABLE IF EXISTS messages, sessions, users, alembic_version CASCADE;"'
+  docker compose up -d
+  docker compose exec hub alembic upgrade head
+  ```
 
 ## 4. Check port layout, SELinux, and logs
 

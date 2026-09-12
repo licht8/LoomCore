@@ -33,16 +33,17 @@ The script:
   (on RHEL/Rocky it enables EPEL first);
 - creates `.env` if missing;
 - builds and starts the containers via `docker compose up -d --build`;
+- applies database migrations (`alembic upgrade head`);
 - prints the container status.
 
 If `.env` did not exist yet, the script creates it and exits — fill it in and
 rerun.
 
-### Step 2: Apply database migrations
+### Step 2: Database migrations
 
-The schema is managed by Alembic only. `docker-compose.yml` does **not** run
-migrations, so do this once after the first start (and after every update that
-adds a migration):
+The schema is managed by Alembic. `deploy/install.sh` applies migrations
+automatically. If you started the containers manually with `docker compose up
+-d --build`, run them yourself (and after every update that adds a migration):
 
 ```bash
 docker compose exec hub alembic upgrade head

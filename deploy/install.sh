@@ -66,7 +66,10 @@ fi
 echo "=== Building and starting LoomCore ==="
 docker compose up -d --build
 docker compose ps
+
+echo "=== Applying database migrations ==="
+docker compose exec -T hub alembic upgrade head
+
 echo "LoomCore is available on port 80."
 echo ""
-echo "Apply DB migrations once: docker compose exec hub alembic upgrade head"
 echo "Then configure WireGuard via the wg_setup_server tool in the LoomCore UI/chat."

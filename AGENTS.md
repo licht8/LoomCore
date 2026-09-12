@@ -33,7 +33,7 @@ docker compose up -d --build         # VDS: sudo bash deploy/install.sh (nginx:8
 
 ## Non-obvious facts
 
-- **Migrations via Alembic only.** Startup (`src/app.py`) and `docker-compose.yml` do NOT run migrations. After the DB starts, run `alembic upgrade head` (`alembic/env.py` reads the URL from `.env`/`DATABASE_URL`).
+- **Migrations via Alembic only.** Startup (`src/app.py`) and `docker-compose.yml` do NOT run migrations; `deploy/install.sh` does (`alembic upgrade head`). For manual starts, run `alembic upgrade head` yourself (`alembic/env.py` uses an async engine and reads the URL from `.env`/`DATABASE_URL`).
 - `src/app.py` calls `plugin_manager.discover_plugins(settings.plugins_dir)` on startup (`PLUGINS_DIR`, default `/app/plugins`) — outside Docker set `PLUGINS_DIR=./plugins`, otherwise no plugins load.
 - A plugin is launched as `sys.executable <plugins/<name>/main.py>`; `plugins/loomwg/main.py` uses bare imports (`from server import ...`), relying on the script directory being on sys.path.
 - The plugin's WireGuard config directory is `LOOMWG_CONFIG_DIR` (default `/etc/wireguard`); tests/e2e use a temp directory.
