@@ -93,6 +93,21 @@ the container** (which shares the host network namespace). For firewalld hosts
 the plugin cannot drive the host firewall, so use `LOOMWG_SKIP_FIREWALL=1` and
 open UDP/NAT manually.
 
+## LLM request timeouts
+
+A non-streaming LLM request can take a while; the client retries transport/timeout
+errors and then returns a clear message. Tune via `.env` (seconds / count):
+
+| Variable | Default |
+|---|---|
+| `HETZNER_CONNECT_TIMEOUT` | `15` |
+| `HETZNER_READ_TIMEOUT` | `300` |
+| `HETZNER_WRITE_TIMEOUT` | `30` |
+| `HETZNER_POOL_TIMEOUT` | `15` |
+| `HETZNER_MAX_RETRIES` | `2` |
+
+If timeouts persist at 300s, the provider/model is the bottleneck.
+
 ## Admin authentication
 
 Two modes are supported (`src/core/security.py:require_admin_token`):

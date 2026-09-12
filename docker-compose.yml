@@ -43,6 +43,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@127.0.0.1:5432/${POSTGRES_DB:-loomcore}
       HETZNER_API_KEY: ${HETZNER_API_KEY:-}
+      HETZNER_CONNECT_TIMEOUT: ${HETZNER_CONNECT_TIMEOUT:-15}
+      HETZNER_READ_TIMEOUT: ${HETZNER_READ_TIMEOUT:-300}
+      HETZNER_WRITE_TIMEOUT: ${HETZNER_WRITE_TIMEOUT:-30}
+      HETZNER_POOL_TIMEOUT: ${HETZNER_POOL_TIMEOUT:-15}
+      HETZNER_MAX_RETRIES: ${HETZNER_MAX_RETRIES:-2}
       DEBUG: ${DEBUG:-false}
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
       # On firewalld hosts (RHEL/Rocky) set to 1 and open UDP/NAT manually.

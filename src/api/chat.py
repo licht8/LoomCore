@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from src.api.deps import chat_key_func, extract_admin_token
 from src.core.rate_limit import limiter
 from src.core.security import require_admin_token
+from src.llm.client import LlmError
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
 
@@ -37,5 +38,7 @@ async def chat_endpoint(
     require_admin_token(extract_admin_token(request, authorization, access_token))
     try:
         return await airouter.route(payload.message, payload.session_id)
+    except LlmError as exc:
+        return JSONResponse(status_code=504, content={"error": str(exc)})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})

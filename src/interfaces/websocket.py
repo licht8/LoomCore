@@ -6,6 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from src.core.security import classify_tool_risk
 from src.db.database import async_session_factory
 from src.db.session import add_message, ensure_session
+from src.llm.client import LlmError
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
 
@@ -169,6 +170,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         "type": "schema_warning",
                         "unavailable_plugins": unavailable,
                     })
+            except LlmError as exc:
+                await websocket.send_json(
+                    {"type": "error", "error": str(exc)}
+                )
+                continue
             except Exception as exc:
                 await websocket.send_json(
                     {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
