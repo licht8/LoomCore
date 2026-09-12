@@ -4,18 +4,7 @@ import { CheckCircle2, Loader2, XCircle, Sparkles, Terminal } from "lucide-react
 import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/lib/chat-types"
 import { withAdminToken } from "@/lib/admin-token"
-
-function renderBold(text: string) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith("**") && part.endsWith("**") ? (
-      <strong key={i} className="font-semibold">
-        {part.slice(2, -2)}
-      </strong>
-    ) : (
-      part
-    ),
-  )
-}
+import { Markdown } from "@/components/markdown"
 
 /**
  * Компонент отображения одного сообщения в чате.
@@ -29,7 +18,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
       <div className="flex justify-end">
         <div className="max-w-[75%]">
           <div className="rounded-2xl rounded-br-md bg-[oklch(0.72_0.07_305)] px-4 py-3 text-sm leading-relaxed text-[oklch(0.18_0.02_295)] shadow-sm">
-            {message.content}
+            <Markdown content={message.content} />
           </div>
           <p className="mt-1 pr-1 text-right text-xs text-muted-foreground">{message.timestamp}</p>
         </div>
@@ -46,7 +35,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
         </div>
         <div className="max-w-[75%]">
           <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 text-sm leading-relaxed text-card-foreground shadow-sm backdrop-blur-md">
-            {renderBold(message.content)}
+            <Markdown content={message.content} />
           </div>
           <p className="mt-1 pl-1 text-xs text-muted-foreground">{message.timestamp}</p>
         </div>
