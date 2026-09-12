@@ -6,9 +6,33 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 
 - Server configs: `LOOMWG_CONFIG_DIR` (default `/etc/wireguard`)
 - Client configs / QR: `LOOMWG_CONFIG_DIR/clients`
+- Client/user store: `LOOMWG_CONFIG_DIR/.loomwg/clients.json`
 - Autostart state: `LOOMWG_CONFIG_DIR/.loomwg/autostart.json`
 - Private keys are never returned in chat; configs/QR are served as one-time
   artifact links (`/api/artifacts/<token>/{config,qr}`).
+
+## Client store (`clients.json`)
+
+Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
+
+```json
+{
+  "phone1": {
+    "public_key": "...", "private_key": "...", "preshared_key": "...",
+    "addresses": ["10.66.66.4/32", "fd42:42:42::4/128"],
+    "endpoint": "91.90.160.72:51820",
+    "created_at": "2026-09-12T10:00:00Z"
+  }
+}
+```
+
+- `private_key`/`preshared_key`/`endpoint` are present only for clients created
+  by the plugin; external/backfilled peers have only `public_key` + `addresses`.
+- The store holds secrets (same as the `.conf`); keep it mode `600` and never
+  expose it through a tool.
+- The WireGuard configs remain the source of truth for live state; `wg_list_peers`
+  reconciles the store against live peers and **reports** untracked/stale entries
+  without changing anything.
 
 ## Tools
 
@@ -17,42 +41,51 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 | `wg_list_interfaces` | safe | Overview of all interfaces: active/config present. |
 | `wg_setup_server` | dangerous | Create the server config, enable forwarding, firewall/NAT. |
 | `wg_show_config` | safe | Show the live (or saved) config; keys masked unless `show_secrets`. |
-| `wg_check_config` | safe | Validate a config without starting it (keys, CIDRs, duplicates, overlaps, `wg-quick strip`). |
+| `wg_check_config` | safe | Validate a config without starting it (keys, CIDRs, duplicates, overlaps). |
 | `wg_status` | safe | Interface status and peer online counts. |
 | `wg_diagnostics` | safe | In-depth check: wg installed, active, link, config present. |
 | `wg_stats` | safe | Snapshot totals, per-peer share, top peers (no history). |
-| `wg_add_peer` | moderate | Add or update a peer (idempotent on identical allowed IPs). |
-| `wg_remove_peer` | dangerous | Remove a peer and its client files. |
-| `wg_list_peers` | safe | Peers with handshake and traffic. |
+| `wg_add_peer` | moderate | Create/track a client (generates keys when no `public_key`); idempotent. |
+| `wg_remove_peer` | dangerous | Remove by `name` (store) or `public_key`; deletes peer, files, record. |
+| `wg_list_peers` | safe | Clients from the store merged with live peers (unmanaged/stale reported). |
 | `wg_start` / `wg_stop` / `wg_restart` | dangerous | Interface lifecycle. |
 | `wg_service_enable` / `wg_service_disable` | dangerous | App-managed autostart flag. |
-| `wg_create_client` | dangerous | Generate keys, add peer, save config + QR (errors if the name exists). |
-| `wg_export_client` | dangerous | Re-issue config/QR links; `rotate=true` recreates if the config is lost. |
+| `wg_export_client` | dangerous | Ensure config + QR exist and return one-time links. |
+| `wg_backfill_clients` | dangerous | Import untracked peers from the server config. |
 | `wg_get_client_artifact` | internal | One-time artifact download (not exposed to the LLM). |
 
 Risk is enforced by the core (`src/core/security.py:classify_tool_risk`);
-`dangerous` tools require explicit admin approval.
+`dangerous` tools require explicit admin approval. `wg_create_client` no longer
+exists — use `wg_add_peer` + `wg_export_client`.
 
-## Parameters (new tools)
+## Parameters
 
-- `wg_show_config`: `interface` (default `wg0`), `show_secrets` (default `false`).
-- `wg_check_config`: `interface` (default `wg0`) **or** `path` **or** `content`.
-- `wg_stats`: `interface` (default `wg0`), `top` (default `5`).
-- `wg_export_client`: `name` (required), `interface`, `kind` (`config`/`qr`/`both`), `rotate`.
-- `wg_service_enable` / `wg_service_disable`: `interface` (default `wg0`).
+- `wg_add_peer`: `name` (required), `interface`, `public_key` (optional → keys are
+  generated), `addresses` (optional → auto-allocated), `preshared_key`, `allowed_ips`.
+- `wg_remove_peer`: `name` or `public_key`.
+- `wg_list_peers`: `interface`.
+- `wg_export_client`: `name`, `interface`, `kind` (`config`/`qr`/`both`), `rotate`.
+- `wg_backfill_clients`: `interface`.
+- `wg_show_config`: `interface`, `show_secrets`.
+- `wg_check_config`: `interface` or `path` or `content`.
+- `wg_stats`: `interface`, `top`.
+- `wg_service_enable` / `wg_service_disable`: `interface`.
+
+## Flows
+
+- **New client:** `wg_add_peer {name}` → generates keys, adds the peer, and writes
+  `clients/<name>.conf` + `.png`, returning links. `wg_export_client` re-issues
+  links later.
+- **Lost config/QR:** `wg_export_client {name}` rebuilds files from the stored
+  private key. If the peer has no stored private key (external/backfilled), it
+  errors; `rotate=true` recreates it with new keys.
+- **First run:** existing peers in `wg0.conf` are not tracked until you approve
+  `wg_backfill_clients` (names them `peer-<shortkey>`).
 
 ## Autostart semantics
 
 The plugin runs in a container and cannot drive host systemd. `wg_service_enable`
 writes the interface to `autostart.json` and brings it up immediately;
-`wg_service_disable` clears the flag (it does not stop a running interface —
-use `wg_stop`). On plugin startup `apply_autostart()` (in `server.py`) brings up
-every flagged interface that has a config and is not already active.
-
-## Client files
-
-`wg_create_client` and `wg_export_client` use these names under
-`<config-dir>/clients`: `<name>.conf` (mode `600`) and `<name>.png` (mode `600`).
-`wg_export_client` regenerates a missing QR from the saved config; if the config
-file is gone, the private key is unrecoverable and the call errors unless
-`rotate=true`, which recreates the client with a new keypair.
+`wg_service_disable` clears the flag (does not stop a running interface). On
+plugin startup `apply_autostart()` brings up every flagged interface that has a
+config and is not already active.

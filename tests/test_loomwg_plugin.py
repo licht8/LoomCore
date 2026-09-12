@@ -35,15 +35,16 @@ def test_initialize_and_tools_list():
 
     tools = responses[1]["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert {"wg_status", "wg_list_peers", "wg_create_client"} <= names
+    assert {"wg_status", "wg_list_peers", "wg_export_client"} <= names
     assert {
         "wg_show_config",
         "wg_check_config",
         "wg_stats",
-        "wg_export_client",
         "wg_service_enable",
         "wg_service_disable",
+        "wg_backfill_clients",
     } <= names
+    assert "wg_create_client" not in names
 
     internal = next(t for t in tools if t["name"] == "wg_get_client_artifact")
     assert internal.get("internal") is True

@@ -14,10 +14,11 @@ import urllib.request
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
+import clients_store
 from keys import generate_keypair
 from wireguard import CommandError, config_directory, run_command
 
-from config import add_peer, config_path
+from config import add_peer, config_path, remove_peer
 
 CLIENTS_DIR = config_directory() / "clients"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -39,17 +40,103 @@ def _format_endpoint(endpoint: str, port: int) -> str:
 
 def _generate_qr(client_config: str, qr_path: Path) -> None:
     """Render a client config to a PNG QR code (mode 600)."""
-    qrencode = subprocess.run(
-        ["qrencode", "-o", str(qr_path), "-t", "png"],
-        input=client_config,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    try:
+        qrencode = subprocess.run(
+            ["qrencode", "-o", str(qr_path), "-t", "png"],
+            input=client_config,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except OSError as exc:
+        raise CommandError(f"qrencode is not available: {exc}") from exc
     if qrencode.returncode != 0:
         raise CommandError(qrencode.stderr.strip() or "qrencode failed")
     os.chmod(qr_path, 0o600)
+
+
+def build_client_config(
+    server_public_key: str,
+    listen_port: int,
+    addresses: list[str],
+    private_key: str,
+    preshared_key: str,
+    endpoint: str,
+    dns: list[str] | None = None,
+) -> str:
+    """Render a full-tunnel client config (private key included)."""
+    return "\n".join(
+        [
+            "[Interface]",
+            f"Address = {', '.join(addresses)}",
+            f"PrivateKey = {private_key}",
+            f"DNS = {', '.join(dns or ['1.1.1.1', '1.0.0.1'])}",
+            "",
+            "[Peer]",
+            f"PublicKey = {server_public_key}",
+            f"PresharedKey = {preshared_key}",
+            f"Endpoint = {_format_endpoint(endpoint, listen_port)}",
+            "AllowedIPs = 0.0.0.0/0, ::/0",
+            "PersistentKeepalive = 25",
+            "",
+        ]
+    )
+
+
+def client_paths(name: str) -> tuple[Path, Path]:
+    directory = clients_directory()
+    return directory / f"{name}.conf", directory / f"{name}.png"
+
+
+def _issue_tokens(name: str) -> dict:
+    config_token = secrets.token_urlsafe(32)
+    qr_token = secrets.token_urlsafe(32)
+    expires_at = time.time() + ARTIFACT_TTL_SECONDS
+    _artifacts[config_token] = (name, expires_at)
+    _artifacts[qr_token] = (name, expires_at)
+    return {
+        "config_token": config_token,
+        "qr_token": qr_token,
+        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
+    }
+
+
+def rebuild_client(name: str, record: dict, interface: str) -> dict:
+    """Rebuild <name>.conf and <name>.png from secrets stored in the JSON store."""
+    private_key = str(record.get("private_key") or "")
+    if not private_key:
+        raise ValueError(
+            f"Private key for '{name}' is not stored; cannot rebuild the config"
+        )
+    addresses = [str(item) for item in (record.get("addresses") or [])]
+    if not addresses:
+        raise ValueError(f"No addresses stored for '{name}'")
+
+    server_public_key, listen_port, _, _ = _server_settings(interface)
+    endpoint = str(record.get("endpoint") or os.environ.get("LOOMWG_ENDPOINT", "")).strip()
+    if not endpoint:
+        endpoint = _detect_endpoint()
+
+    client_config = build_client_config(
+        server_public_key,
+        listen_port,
+        addresses,
+        private_key,
+        str(record.get("preshared_key") or ""),
+        endpoint,
+    )
+    client_path, qr_path = client_paths(name)
+    _write_secret(client_path, client_config)
+    _generate_qr(client_config, qr_path)
+    return {
+        "name": name,
+        "interface": interface,
+        "public_key": str(record.get("public_key") or ""),
+        "client_config": str(client_path),
+        "qr_code": str(qr_path),
+        **_issue_tokens(name),
+    }
 
 
 def clients_directory() -> Path:
@@ -240,21 +327,13 @@ def create_client(arguments: dict) -> dict:
     if client_path.exists() or qr_path.exists():
         raise ValueError(f"Клиент '{name}' уже существует")
 
-    client_config = "\n".join(
-        [
-            "[Interface]",
-            f"Address = {', '.join(addresses)}",
-            f"PrivateKey = {keypair['private_key']}",
-            "DNS = 1.1.1.1, 1.0.0.1",
-            "",
-            "[Peer]",
-            f"PublicKey = {server_public_key}",
-            f"PresharedKey = {preshared_key}",
-            f"Endpoint = {_format_endpoint(endpoint, listen_port)}",
-            "AllowedIPs = 0.0.0.0/0, ::/0",
-            "PersistentKeepalive = 25",
-            "",
-        ]
+    client_config = build_client_config(
+        server_public_key,
+        listen_port,
+        addresses,
+        keypair["private_key"],
+        preshared_key,
+        endpoint,
     )
 
     try:
@@ -287,21 +366,18 @@ def create_client(arguments: dict) -> dict:
             remove_peer(interface, keypair["public_key"])
         raise
 
-    config_token = secrets.token_urlsafe(32)
-    qr_token = secrets.token_urlsafe(32)
-    expires_at = time.time() + ARTIFACT_TTL_SECONDS
-    _artifacts[config_token] = (name, expires_at)
-    _artifacts[qr_token] = (name, expires_at)
     return {
         "name": name,
         "interface": interface,
         "public_key": keypair["public_key"],
+        "private_key": keypair["private_key"],
+        "preshared_key": preshared_key,
+        "addresses": addresses,
+        "endpoint": endpoint,
         "client_config": str(client_path),
         "qr_code": str(qr_path),
         "secret_persisted": True,
-        "config_token": config_token,
-        "qr_token": qr_token,
-        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
+        **_issue_tokens(name),
     }
 
 
@@ -327,61 +403,85 @@ def get_artifact(arguments: dict) -> dict:
     }
 
 
-def export_client(arguments: dict) -> dict:
-    """Regenerate config/QR artifact links for an existing client.
+def store_client_record(name: str, created: dict, created_at: str | None = None) -> None:
+    """Persist a provisioned client's metadata + secrets in the JSON store."""
+    from datetime import UTC, datetime
 
-    If the saved config is missing, the private key cannot be recovered; unless
-    ``rotate=true`` is given the call fails.
+    clients_store.upsert(
+        name,
+        {
+            "public_key": created["public_key"],
+            "private_key": created["private_key"],
+            "preshared_key": created.get("preshared_key", ""),
+            "addresses": created["addresses"],
+            "endpoint": created["endpoint"],
+            "created_at": created_at or datetime.now(tz=UTC).isoformat(),
+        },
+    )
+
+
+def export_client(arguments: dict) -> dict:
+    """Ensure the client config/QR exist and return one-time download links.
+
+    Uses the private key from the JSON store to rebuild a missing config; with
+    ``rotate=true`` a peer without a stored private key is recreated with new keys.
     """
     interface = str(arguments.get("interface", "wg0"))
-    name = _safe_name(arguments.get("name"))
+    name = clients_store.validate_name(arguments.get("name"))
     kind = str(arguments.get("kind", "both")).lower()
     if kind not in {"config", "qr", "both"}:
         raise ValueError("kind must be one of: config, qr, both")
     rotate = bool(arguments.get("rotate", False))
 
-    client_path = clients_directory() / f"{name}.conf"
-    qr_path = clients_directory() / f"{name}.png"
+    record = clients_store.get(name)
+    if not record:
+        raise ValueError(f"Client '{name}' not found in the store")
+
+    client_path, qr_path = client_paths(name)
+    rotated = False
 
     if not client_path.is_file():
-        if not rotate:
-            raise ValueError(
-                f"Client config '{name}' not found; the private key cannot be "
-                "recovered. Use rotate=true to recreate the client with new keys."
+        if record.get("private_key"):
+            result = rebuild_client(name, record, interface)
+        elif rotate:
+            old_key = str(record.get("public_key") or "")
+            if old_key:
+                with contextlib.suppress(CommandError):
+                    run_command(["wg", "set", interface, "peer", old_key, "remove"])
+                with contextlib.suppress(FileNotFoundError, ValueError):
+                    remove_peer(interface, old_key)
+                clients_store.remove(name)
+            created = create_client(
+                {
+                    "interface": interface,
+                    "name": name,
+                    **({"addresses": record["addresses"]} if record.get("addresses") else {}),
+                }
             )
-        with contextlib.suppress(FileNotFoundError):
-            qr_path.unlink()
-        create_args = {"interface": interface, "name": name}
-        for key in ("addresses", "endpoint"):
-            if arguments.get(key):
-                create_args[key] = arguments[key]
-        created = create_client(create_args)
-        created["rotated"] = True
-        return created
+            store_client_record(name, created, record.get("created_at"))
+            result = {
+                key: value
+                for key, value in created.items()
+                if key not in {"private_key", "preshared_key"}
+            }
+            rotated = True
+        else:
+            raise ValueError(
+                f"Config for '{name}' is missing and no private key is stored; "
+                "pass rotate=true to recreate it with new keys"
+            )
+    else:
+        client_config = client_path.read_text(encoding="utf-8")
+        if kind == "qr" or not qr_path.is_file():
+            _generate_qr(client_config, qr_path)
+        result = {
+            "name": name,
+            "interface": interface,
+            "public_key": str(record.get("public_key") or ""),
+            "client_config": str(client_path),
+            "qr_code": str(qr_path),
+            **_issue_tokens(name),
+        }
 
-    client_config = client_path.read_text(encoding="utf-8")
-    if kind in {"qr", "both"} or not qr_path.is_file():
-        _generate_qr(client_config, qr_path)
-
-    public_key = ""
-    match = re.search(r"^\s*PrivateKey\s*=\s*(\S+)", client_config, re.MULTILINE)
-    if match:
-        with contextlib.suppress(CommandError):
-            public_key = run_command(["wg", "pubkey"], timeout=5, input_text=match.group(1))
-
-    config_token = secrets.token_urlsafe(32)
-    qr_token = secrets.token_urlsafe(32)
-    expires_at = time.time() + ARTIFACT_TTL_SECONDS
-    _artifacts[config_token] = (name, expires_at)
-    _artifacts[qr_token] = (name, expires_at)
-    return {
-        "name": name,
-        "interface": interface,
-        "public_key": public_key,
-        "client_config": str(client_path),
-        "qr_code": str(qr_path),
-        "config_token": config_token,
-        "qr_token": qr_token,
-        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
-        "rotated": False,
-    }
+    result["rotated"] = rotated
+    return result

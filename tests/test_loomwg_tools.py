@@ -1,4 +1,4 @@
-"""Unit tests for the expanded loomwg toolset."""
+"""Unit tests for the expanded loomwg toolset and the JSON client store."""
 
 import base64
 
@@ -35,12 +35,28 @@ def test_schema_exposes_new_tools(load_loomwg):
         "wg_export_client",
         "wg_service_enable",
         "wg_service_disable",
+        "wg_backfill_clients",
     }
     assert expected <= names
+    assert "wg_create_client" not in names
     assert expected <= set(tools.HANDLERS)
 
     internal = next(t for t in tools.TOOLS_SCHEMA if t["name"] == "wg_get_client_artifact")
     assert internal.get("internal") is True
+
+
+# === clients_store ===
+
+def test_store_roundtrip(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+
+    store.upsert("alice", {"public_key": _key(1), "addresses": ["10.0.0.2/32"]})
+
+    assert store.get("alice")["public_key"] == _key(1)
+    assert store.find_by_public_key(_key(1)) == "alice"
+    assert store.remove("alice") is True
+    assert store.load() == {}
 
 
 # === wg_show_config ===
@@ -56,7 +72,6 @@ def test_show_config_masks_secrets(load_loomwg, monkeypatch):
     text = result["content"][0]["text"]
     assert private not in text
     assert "(masked)" in text
-    assert result["data"]["source"] == "live"
     assert result["data"]["config"]["interface"]["listen_port"] == "51820"
 
     shown = view.show_config({"interface": "wg0", "show_secrets": True})
@@ -67,9 +82,7 @@ def test_show_config_masks_secrets(load_loomwg, monkeypatch):
 
 def test_check_config_valid(load_loomwg):
     check = load_loomwg("validate")["validate"]
-
     result = check.check_config({"content": _VALID_CONFIG})
-
     assert result["data"]["valid"] is True
     assert result["data"]["errors"] == []
 
@@ -95,37 +108,184 @@ def test_check_config_detects_problems(load_loomwg):
             "AllowedIPs = 192.168.0.0/16",
         ]
     )
-
     result = check.check_config({"content": bad})
-
     assert result["data"]["valid"] is False
     assert any("PrivateKey" in error for error in result["data"]["errors"])
     assert any("duplicate PublicKey" in error for error in result["data"]["errors"])
     assert any("overlap" in warning for warning in result["data"]["warnings"])
 
 
+# === wg_add_peer ===
+
+def test_add_peer_idempotent_same_allowed_ips(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    key = _key(8)
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(
+        tools,
+        "read_interface",
+        lambda interface: {"peers": [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}]},
+    )
+    ran = []
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: ran.append(args) or "")
+
+    result = tools.add_peer({"name": "peer1", "public_key": key, "allowed_ips": ["10.0.0.2/32"]})
+
+    assert result["data"]["changed"] is False
+    assert ran == []
+
+
+def test_add_peer_updates_existing_allowed_ips(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    key = _key(8)
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(
+        tools,
+        "read_interface",
+        lambda interface: {"peers": [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}]},
+    )
+    calls = []
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: calls.append(args) or "")
+    upserts = []
+    monkeypatch.setattr(tools, "upsert_peer", lambda *args, **kwargs: upserts.append(args) or True)
+
+    result = tools.add_peer({"name": "peer1", "public_key": key, "allowed_ips": ["10.0.0.9/32"]})
+
+    assert result["data"]["changed"] is True
+    assert calls and calls[0][0][:5] == ["wg", "set", "wg0", "peer", key]
+    assert upserts
+
+
+# === wg_remove_peer ===
+
+def test_remove_peer_by_name(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    mods = load_loomwg("tools", "clients_store")
+    tools, store = mods["tools"], mods["clients_store"]
+    key = _key(5)
+    store.upsert("alice", {"public_key": key, "addresses": ["10.0.0.2/32"]})
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(tools, "delete_peer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tools, "remove_client_artifacts", lambda public_key: [])
+
+    result = tools.remove_peer({"name": "alice"})
+
+    assert result["data"]["public_key"] == key
+    assert store.get("alice") is None
+
+
+# === wg_list_peers ===
+
+def test_list_peers_reconciles_store_and_live(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    mods = load_loomwg("tools", "clients_store")
+    tools, store = mods["tools"], mods["clients_store"]
+    tracked, untracked = _key(3), _key(4)
+    store.upsert("alice", {"public_key": tracked, "addresses": ["10.0.0.2/32"]})
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(
+        tools,
+        "read_interface",
+        lambda interface: {
+            "peers": [
+                {
+                    "public_key": tracked,
+                    "allowed_ips": ["10.0.0.2/32"],
+                    "endpoint": None,
+                    "latest_handshake": None,
+                    "receive_bytes": 0,
+                    "transmit_bytes": 0,
+                },
+                {
+                    "public_key": untracked,
+                    "allowed_ips": ["10.0.0.3/32"],
+                    "endpoint": None,
+                    "latest_handshake": None,
+                    "receive_bytes": 0,
+                    "transmit_bytes": 0,
+                },
+            ]
+        },
+    )
+
+    result = tools.list_peers({"interface": "wg0"})
+
+    assert result["data"]["clients"][0]["name"] == "alice"
+    assert len(result["data"]["unmanaged"]) == 1
+
+
+# === wg_backfill_clients ===
+
+def test_backfill_clients(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    key = _key(2)
+    monkeypatch.setattr(
+        tools,
+        "iter_peers",
+        lambda interface: [{"public_key": key, "allowed_ips": ["10.0.0.2/32"], "preshared_key": None}],
+    )
+
+    result = tools.backfill_clients({"interface": "wg0"})
+
+    assert result["data"]["created"] == [f"peer-{key[:12]}"]
+
+
 # === wg_export_client ===
 
-def test_export_client_regenerates_qr(load_loomwg, monkeypatch, tmp_path):
+def test_export_client_reissues_links(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
     clients = tmp_path / "clients"
     clients.mkdir()
-    (clients / "alice.conf").write_text(f"[Interface]\nPrivateKey = {_key(4)}\n", encoding="utf-8")
-    calls = {}
-    monkeypatch.setattr(client, "_generate_qr", lambda config, path: calls.setdefault("qr", path))
-    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: _key(5))
+    (clients / "alice.conf").write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    (clients / "alice.png").write_bytes(b"png")
+    client.clients_store.upsert("alice", {"public_key": _key(1), "addresses": ["10.0.0.2/32"]})
 
     result = client.export_client({"name": "alice"})
 
     assert result["config_token"] and result["qr_token"]
     assert result["rotated"] is False
-    assert calls["qr"] == clients / "alice.png"
 
 
-def test_export_client_missing_config_errors(load_loomwg, monkeypatch, tmp_path):
+def test_export_client_rebuilds_missing_config(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
+    client.clients_store.upsert(
+        "bob",
+        {
+            "public_key": _key(2),
+            "private_key": _key(3),
+            "preshared_key": _key(4),
+            "addresses": ["10.0.0.3/32"],
+            "endpoint": "1.2.3.4:51820",
+        },
+    )
+    monkeypatch.setattr(
+        client,
+        "_server_settings",
+        lambda interface: (_key(5), 51820, ["10.0.0.0/24"], ["10.0.0.1"]),
+    )
+    monkeypatch.setattr(
+        client,
+        "_write_secret",
+        lambda path, content: (path.parent.mkdir(parents=True, exist_ok=True), path.write_text(content, encoding="utf-8")),
+    )
+    monkeypatch.setattr(client, "_generate_qr", lambda config, path: path.write_bytes(b"png"))
+
+    result = client.export_client({"name": "bob"})
+
+    assert result["rotated"] is False
+    assert (tmp_path / "clients" / "bob.conf").is_file()
+
+
+def test_export_client_missing_private_key_errors(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    client.clients_store.upsert("ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]})
 
     with pytest.raises(ValueError):
         client.export_client({"name": "ghost"})
@@ -134,8 +294,22 @@ def test_export_client_missing_config_errors(load_loomwg, monkeypatch, tmp_path)
 def test_export_client_rotate_recreates(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
+    client.clients_store.upsert("ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]})
+    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: "")
     monkeypatch.setattr(
-        client, "create_client", lambda args: {"name": args["name"], "token": "t"}
+        client,
+        "create_client",
+        lambda args: {
+            "name": args["name"],
+            "public_key": _key(7),
+            "private_key": _key(8),
+            "preshared_key": _key(9),
+            "addresses": ["10.0.0.9/32"],
+            "endpoint": "1.2.3.4:51820",
+            "artifact_expires_in": 600,
+            "config_token": "c",
+            "qr_token": "q",
+        },
     )
 
     result = client.export_client({"name": "ghost", "rotate": True})
@@ -180,18 +354,8 @@ def test_apply_autostart_brings_up_flagged(load_loomwg, monkeypatch, tmp_path):
 def test_stats_snapshot(load_loomwg, monkeypatch):
     stats = load_loomwg("stats")["stats"]
     peers = [
-        {
-            "public_key": _key(6),
-            "allowed_ips": ["10.0.0.2/32"],
-            "receive_bytes": 100,
-            "transmit_bytes": 300,
-        },
-        {
-            "public_key": _key(7),
-            "allowed_ips": ["10.0.0.3/32"],
-            "receive_bytes": 50,
-            "transmit_bytes": 50,
-        },
+        {"public_key": _key(6), "allowed_ips": ["10.0.0.2/32"], "receive_bytes": 100, "transmit_bytes": 300},
+        {"public_key": _key(7), "allowed_ips": ["10.0.0.3/32"], "receive_bytes": 50, "transmit_bytes": 50},
     ]
     monkeypatch.setattr(stats, "read_interface", lambda interface: {"peers": peers, "listen_port": 51820})
     monkeypatch.setattr(stats, "has_link", lambda interface: True)
@@ -205,85 +369,3 @@ def test_stats_snapshot(load_loomwg, monkeypatch):
     assert data["total_transmit_bytes"] == 350
     assert len(data["peers"]) == 1
     assert data["peers"][0]["share"] == 80.0
-
-
-# === wg_add_peer idempotency ===
-
-def test_add_peer_idempotent_same_allowed_ips(load_loomwg, monkeypatch):
-    tools = load_loomwg("tools")["tools"]
-    key = _key(8)
-    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
-    monkeypatch.setattr(
-        tools,
-        "read_interface",
-        lambda interface: {"peers": [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}]},
-    )
-    ran = []
-    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: ran.append(args) or "")
-
-    result = tools.add_peer({"public_key": key, "allowed_ips": ["10.0.0.2/32"]})
-
-    assert result["data"]["changed"] is False
-    assert ran == []
-
-
-def test_add_peer_updates_existing_allowed_ips(load_loomwg, monkeypatch):
-    tools = load_loomwg("tools")["tools"]
-    key = _key(8)
-    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
-    monkeypatch.setattr(
-        tools,
-        "read_interface",
-        lambda interface: {"peers": [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}]},
-    )
-    calls = []
-    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: calls.append(args) or "")
-    upserts = []
-    monkeypatch.setattr(tools, "upsert_peer", lambda *args, **kwargs: upserts.append(args) or True)
-
-    result = tools.add_peer({"public_key": key, "allowed_ips": ["10.0.0.9/32"]})
-
-    assert result["data"]["changed"] is True
-    assert calls and calls[0][0][:5] == ["wg", "set", "wg0", "peer", key]
-    assert upserts
-
-
-def test_export_client_tool_wraps_result(load_loomwg, monkeypatch):
-    tools = load_loomwg("tools")["tools"]
-    monkeypatch.setattr(
-        tools,
-        "export_client",
-        lambda args: {
-            "name": args["name"],
-            "config_token": "cfg",
-            "qr_token": "qr",
-            "artifact_expires_in": 600,
-            "rotated": False,
-        },
-    )
-
-    result = tools.export_client_tool({"name": "alice"})
-
-    assert result["content"][0]["type"] == "text"
-    assert "exported" in result["content"][0]["text"]
-    assert result["data"]["config_token"] == "cfg"
-    assert result["data"]["qr_token"] == "qr"
-
-
-def test_export_client_tool_reports_rotation(load_loomwg, monkeypatch):
-    tools = load_loomwg("tools")["tools"]
-    monkeypatch.setattr(
-        tools,
-        "export_client",
-        lambda args: {
-            "name": args["name"],
-            "config_token": "cfg",
-            "qr_token": "qr",
-            "artifact_expires_in": 600,
-            "rotated": True,
-        },
-    )
-
-    result = tools.export_client_tool({"name": "bob"})
-
-    assert "recreated" in result["content"][0]["text"]

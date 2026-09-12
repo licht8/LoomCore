@@ -15,6 +15,44 @@ def config_path(interface: str) -> Path:
     return config_directory() / f"{interface}.conf"
 
 
+def iter_peers(interface: str) -> list[dict]:
+    """Return parsed peer blocks from the server config."""
+    path = config_path(interface)
+    if not path.is_file():
+        return []
+    peers: list[dict] = []
+    current: dict | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if current is not None:
+                peers.append(current)
+            current = (
+                {"public_key": "", "allowed_ips": [], "preshared_key": None}
+                if stripped.lower() == "[peer]"
+                else None
+            )
+            continue
+        if current is None:
+            continue
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key == "PublicKey":
+            current["public_key"] = value
+        elif key == "AllowedIPs":
+            current["allowed_ips"] = [
+                item.strip() for item in value.split(",") if item.strip()
+            ]
+        elif key == "PresharedKey":
+            current["preshared_key"] = value
+    if current is not None:
+        peers.append(current)
+    return [peer for peer in peers if peer["public_key"]]
+
+
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)

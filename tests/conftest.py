@@ -13,6 +13,7 @@ _PLUGIN_MODULES = (
     "keys",
     "config",
     "client",
+    "clients_store",
     "tools",
     "lifecycle",
     "install",
