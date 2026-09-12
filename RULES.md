@@ -1,241 +1,247 @@
 # ⚖️ Strict Rules — LoomHub
 
-Центральный свод правил ведения проекта. При нарушении любого из них —
-**не принимать изменения**, пока не исправлено. Читать перед любыми правками.
+The central set of project rules. Any violation means changes are **not
+accepted** until fixed. Read before making any edits.
 
-> ⚠️ **Перед правками: убедись, что понимаешь разницу между Ядром (Hub) и Плагинами.**
-> Ядро — это "мозг", плагины — это "руки". Не смешивать их логику.
-
----
-
-## 0. ИИ общается с разработчиком только на русском
-
-Все ответы ИИ в чате (объяснения, отчёты, вопросы, ошибки) — **строго на русском**.
-Идентификаторы кода — на английском. Комментарии и документация проекта —
-на русском. Интерфейс — ru/en через словари (п. 12).
-Коммит-месседжи — **на русском**.
+> ⚠️ **Before editing: make sure you understand the difference between the Core (Hub) and Plugins.**
+> The core is the "brain", plugins are the "hands". Do not mix their logic.
 
 ---
 
-## 0a. Координатор vs исполнитель (работа в паре)
+## 0. AI communicates with the developer in English
 
-- **Координатор** ставит задачи (по ТЗ), проверяет результат, **коммитит**.
-- **Исполнитель** (Worker) выполняет задачу по ТЗ и **не коммитит** и не
-  выходит за рамки задачи; коммитит координатор после приёмки.
-- **Все сообщения с задачей и все отчёты исполнителя — только в fenced code
-  block** (``` ```), чтобы легко копировать без потери структуры.
-- Отчёт исполнителя (в кодовом блоке) содержит: что сделано, что проверено,
-  изменённые файлы, замечания/риски, фразу «Коммит не создавал».
-- Исполнитель не берёт новую задачу, пока не сдан отчёт и не получено
-  подтверждение приёмки координатором.
-- Спорные/неоднозначные решения исполнитель не принимает молча — фиксирует
-  в отчёте, решение принимает координатор.
-- Рабочее пространство координатора проекта — `Agents/README.md`
-  (инструкции координатора).
+All AI chat messages (explanations, reports, questions, errors) are **strictly in English**.
+Code identifiers are in English. Comments and project documentation are in
+English. The UI is ru/en via dictionaries (item 12).
+Commit messages are **in English**.
 
 ---
 
-## 0c. Архитектура интерфейсов (Web & Telegram)
+## 0a. Coordinator vs. worker (pair work)
 
-**LoomHub** — это сервер с централизованным API. Интерфейсы — это клиенты.
+- **Coordinator** sets tasks (per the spec), reviews the result, and **commits**.
+- **Worker** executes the task per the spec and **does not commit** and does not
+  go beyond the task; the coordinator commits after acceptance.
+- **All task messages and all worker reports are only in fenced code
+  blocks** (``` ```) so they can be copied without losing structure.
+- The worker report (in a code block) contains: what was done, what was verified,
+  changed files, notes/risks, and the phrase "Коммит не создавал".
+- The worker does not take a new task until the report is submitted and the
+  coordinator has confirmed acceptance.
+- The worker does not silently make disputed/ambiguous decisions — they are recorded
+  in the report and the coordinator decides.
+- The coordinator's workspace is `Agents/README.md`
+  (coordinator instructions).
 
-**Таблица соответствия: интерфейс ↔ порт/протокол (для ИИ — главное!):**
+---
 
-| Интерфейс | Протокол | Порт (Dev) | Что это |
+## 0c. Interface architecture (Web & Telegram)
+
+**LoomHub** is a server with a centralized API. Interfaces are clients.
+
+**Mapping table: interface ↔ port/protocol (important for AI!):**
+
+| Interface | Protocol | Port (Dev) | What it is |
 |---|---|---|---|
-| **Web UI** | WebSocket + REST | `8000` | Основной дашборд. Чат, мониторинг, управление плагинами. |
-| **Telegram** | Bot API (Polling/Long Poll) | Внутренний | Бот-ассистент. Управление "на ходу". |
-| **API** | HTTP / REST | `8000` | Внутреннее API ядра для Web UI и плагинов. |
+| **Web UI** | WebSocket + REST | `8000` | Main dashboard. Chat, monitoring, plugin management. |
+| **Telegram** | Bot API (Polling/Long Poll) | Internal | Bot assistant. Management "on the go". |
+| **API** | HTTP / REST | `8000` | Internal core API for the Web UI and plugins. |
 
-**Правила:**
-- Код — один (Ядро LoomHub). Интерфейсы — только клиенты.
-- Web UI и Telegram работают с одним и тем же API хаба.
-- Нельзя писать логику, привязанную к типу интерфейса (кроме формата вывода).
+**Rules:**
+- There is one codebase (the LoomHub Core). Interfaces are clients only.
+- The Web UI and Telegram work with the same hub API.
+- Do not write logic tied to an interface type (except for output format).
 
-## 0d. Бизнес-логика и роль ИИ
+## 0d. Business logic and the role of AI
 
-**LoomHub** — это оркестратор инфраструктуры.
-- **Hub (Ядро)**: Оркестрация, хранение истории, маршрутизация запросов к LLM, управление сессиями.
-- **Plugins (Плагины)**: Реальная работа с железом (WireGuard, SSH, Nginx).
-- **AI (LLM)**: "Мозг". Переводит человеческий язык на язык JSON-вызовов (MCP).
-- Плагин **не должен знать**, кто его вызвал (Web или Telegram). Он получает JSON и возвращает результат.
-
----
-
-## 0e. Работаем только внутри проекта
-
-- Бот работает ТОЛЬКО в папке проекта `LoomHub/`, где лежит этот `RULES.md`, и её дочерних
-  папках. Вне проекта (рабочий стол, домашняя папка, другие проекты) файлы не читать, не создавать, не менять.
-- Все свои файлы (конфиги, доки, отчёты) бот кладёт ТОЛЬКО во внутреннюю папку `tmp/` (в `.gitignore`).
-- Действие вне проекта — только по явной просьбе владельца.
-- Переход в другой проект — только с явного разрешения владельца.
+**LoomHub** is an infrastructure orchestrator.
+- **Hub (Core)**: orchestration, history storage, routing requests to the LLM, session management.
+- **Plugins**: actual work with hardware (WireGuard, SSH, Nginx).
+- **AI (LLM)**: the "brain". Translates human language into JSON tool calls (MCP).
+- A plugin **must not know** who called it (Web or Telegram). It receives JSON and returns a result.
 
 ---
 
-## 0f. Удаление файлов — только в tmp/_trash
+## 0e. We work only inside the project
 
-- НИЧЕГО не удалять без явного разрешения владельца: даже если файл выглядит
-  как «мусор» — сначала проверить документацию. При сомнении — спросить.
-- Если владелец разрешил удаление — файл НЕ стирается физически, а переносится
-  в корзину проекта `tmp/_trash/`.
-- `tmp/` целиком в `.gitignore`.
+- The bot works ONLY in the project folder `LoomHub/` (where this `RULES.md` lives)
+  and its subfolders. Outside the project (desktop, home folder, other projects) do
+  not read, create, or modify files.
+- All bot files (configs, docs, reports) go ONLY into the internal `tmp/` folder (in `.gitignore`).
+- Acting outside the project is only allowed on the owner's explicit request.
+- Switching to another project is only allowed with the owner's explicit permission.
 
 ---
 
-## 1. LoomHub — брокер и оркестратор: ядро тонкое, всё остальное — плагины
+## 0f. Deleting files — only to tmp/_trash
 
-> **Важно:** Ядро LoomHub (в `src/`) — это только транспорт и "мозг".
-> Вся системная логика (управление сетью, файлами, сервисами) живёт в **Плагинах**.
+- Do NOT delete anything without the owner's explicit permission: even if a file
+  looks like "garbage" — check the documentation first. When in doubt, ask.
+- If the owner authorized deletion, the file is NOT physically erased but moved
+  to the project trash `tmp/_trash/`.
+- All of `tmp/` is in `.gitignore`.
 
-LoomHub — центр управления (Hub).
-- **Ядро (`src/`)**: Веб-интерфейс, API, работа с Postgres, LLM Router, Plugin Manager.
-- **Плагины (`plugins/`)**: Отдельные процессы (subprocess), общаются через **MCP (Model Context Protocol)**.
+---
 
-- Новый функционал = новый плагин (или правка существующего), а не раздувание ядра.
-- В ядро попадает только то, что нужно всем плагинам: auth, сессии, реестр плагинов, логирование.
-- Корневой `main.py` — только запуск uvicorn.
+## 1. LoomHub is a broker and orchestrator: the core is thin, everything else is plugins
 
-## 2. Изоляция плагинов: плагин — это subprocess
+> **Important:** The LoomHub Core (in `src/`) is transport and the "brain" only.
+> All system logic (network, file, service management) lives in **Plugins**.
 
-- Плагин падает — **Ядро работает**. Падение плагина (segfault, бесконечный цикл) не должно крашить FastAPI.
-- Плагин запускается как отдельный процесс (subprocess) с ограниченными ресурсами (memory limit в Docker).
-- Связь: **MCP over stdio**. Ядро пишет в `stdin` плагина JSON-запрос, читает `stdout`.
-- **Правила MCP-контракта:**
-    - Плагин должен уметь принимать `tools/call` (вызов инструмента) и `initialize`.
-    - Плагин обязан возвращать JSON-RPC ответ.
-    - Таймаут вызова: 30 секунд. Если плагин не ответил — убивать процесс и писать в лог.
-- Роуты плагинов (если они есть) всегда защищены middleware ядра (авторизация). Плагин не "открывает" себя сам.
-- Если плагин упал — Manager должен автоматически перезапустить его (reboot logic).
+LoomHub is a control center (Hub).
+- **Core (`src/`)**: web interface, API, Postgres, LLM Router, Plugin Manager.
+- **Plugins (`plugins/`)**: separate processes (subprocess) communicating via **MCP (Model Context Protocol)**.
 
-## 3. Порты и сервисы — фиксированы
+- New functionality = a new plugin (or an edit to an existing one), not core bloat.
+- Only what all plugins need goes into the core: auth, sessions, plugin registry, logging.
+- Root `main.py` is only the uvicorn launcher.
 
-- **API / Web — всегда `8000`** (`APP_PORT`).
-- **Postgres — `5432`** (внутри Docker-контейнера). Снаружи (на VDS) не публикуется напрямую, только через сеть Docker.
-- **Nginx (Reverse Proxy) — `80`/`443`** (для выхода в интернет).
-- Новые сервисы (Redis, очереди) — только с разрешения владельца. Порт выбирать свободный.
-- На чужие порты заходить нельзя.
+## 2. Plugin isolation: a plugin is a subprocess
 
-## 4. Docker-дисциплина: на машине другие проекты
+- If a plugin crashes, **the core keeps running**. A plugin crash (segfault, infinite loop)
+  must not crash FastAPI.
+- A plugin runs as a separate process (subprocess) with limited resources (memory limit in Docker).
+- Communication: **MCP over stdio**. The core writes a JSON request to the plugin's
+  `stdin` and reads `stdout`.
+- **MCP contract rules:**
+    - A plugin must handle `tools/call` (tool invocation) and `initialize`.
+    - A plugin must return a JSON-RPC response.
+    - Call timeout: 30 seconds. If the plugin does not respond — kill the process and log it.
+- Plugin routes (if any) are always protected by core middleware (authorization). A plugin does not "expose" itself.
+- If a plugin crashes, the Manager must restart it automatically (reboot logic).
 
-На хосте (VDS) могут работать другие контейнеры.
+## 3. Ports and services are fixed
 
-- **Никогда** не останавливать, не перезапускать, не удалять чужие контейнеры.
-- Все ресурсы LoomHub — с префиксом `loom_` / `loom-`:
-    - Контейнеры: `loom_hub`, `loom_worker_...`, `loom_db`.
-    - Тома: `loom_db_data`.
-    - Сеть: `loom_default`.
-- Публикация портов на VDS — только через Nginx (обратный прокси), напрямую 8000 порт наружу не открывать.
-- Перед созданием чего-либо нового: проверить `docker ps` на конфликты.
+- **API / Web — always `8000`** (`APP_PORT`).
+- **Postgres — `5432`** (inside the Docker container). It is not published directly
+  outside (on the VDS), only via the Docker network.
+- **Nginx (reverse proxy) — `80`/`443`** (for public access).
+- New services (Redis, queues) — only with the owner's permission. Pick a free port.
+- Do not touch other people's ports.
 
-## 5. Один проект — одна папка — одна база
+## 4. Docker discipline: other projects live on the machine
 
-- Единственная рабочая копия — эта папка. Не запускать код из копий (например, `LoomHub_backup/`).
-- Запуск: через `docker compose up -d` (основной способ для Dev и Prod).
-- Данные — в Postgres (`loom_db` контейнер). Код контачит БД через `DATABASE_URL`.
-- `tmp/` — черновики, в git не попадает.
+The host (VDS) may run other containers.
 
-## 6. База данных (PostgreSQL)
+- **Never** stop, restart, or remove other people's containers.
+- All LoomHub resources use the `loom_` / `loom-` prefix:
+    - Containers: `loom_hub`, `loom_worker_...`, `loom_db`.
+    - Volumes: `loom_db_data`.
+    - Network: `loom_default`.
+- On the VDS, ports are published only through Nginx (reverse proxy); never expose port 8000 directly.
+- Before creating anything new: check `docker ps` for conflicts.
 
-- Основная СУБД — **PostgreSQL в Docker**.
-- Схема БД управляется через **SQLAlchemy** + **Alembic** (миграции).
-- **Таблица `plugins`**: хранит статус (running/stopped), версии, логи.
-- **Таблица `sessions`**: хранит контекст чата (ID сессии, ID юзера).
-- **Таблица `messages`**: история переписки (role: user/ai/tool).
-- **Таблица `tool_logs`**: (опционально) журнал вызовов MCP-инструментов (кто, что вызвал, результат).
-- Все даты — UTC.
+## 5. One project — one folder — one database
 
-## 7. Контракт плагина (MCP)
+- The single working copy is this folder. Do not run code from copies (e.g. `LoomHub_backup/`).
+- Launch: via `docker compose up -d` (the main method for Dev and Prod).
+- Data lives in Postgres (`loom_db` container). Code reaches the DB via `DATABASE_URL`.
+- `tmp/` — drafts, not tracked by git.
 
-Каждый плагин — это отдельный проект в папке `plugins/<id>/`.
-Главный файл: `main.py`.
+## 6. Database (PostgreSQL)
 
-- **Старт:** Скрипт запускается хабом -> читает `stdin`.
-- **Инициализация:** Отправляет JSON `{"method": "initialize", ...}`.
-- **Tools Schema:** Плагин сообщает хабу свои инструменты (JSON Schema) через `tools/list`.
-  Пример схемы:
+- The primary DBMS is **PostgreSQL in Docker**.
+- The schema is managed via **SQLAlchemy** + **Alembic** (migrations).
+- **`plugins` table**: stores status (running/stopped), versions, logs.
+- **`sessions` table**: stores chat context (session ID, user ID).
+- **`messages` table**: conversation history (role: user/ai/tool).
+- **`tool_logs` table**: (optional) log of MCP tool calls (who, what, result).
+- All dates are UTC.
+
+## 7. Plugin contract (MCP)
+
+Each plugin is a separate project in `plugins/<id>/`.
+Main file: `main.py`.
+
+- **Start:** the script is launched by the hub -> reads `stdin`.
+- **Initialization:** it sends JSON `{"method": "initialize", ...}`.
+- **Tools Schema:** the plugin reports its tools (JSON Schema) to the hub via `tools/list`.
+  Example schema:
   ```json
   {
     "name": "wg_status",
-    "description": "Показать статус WireGuard",
+    "description": "Show WireGuard status",
     "inputSchema": {"type": "object", "properties": {}, "required": []}
   }
   ```
-- **Вызов:** Хаб пишет в `stdin`: `{"method": "tools/call", "params": {"name": "wg_status"}}`.
-- **Результат:** Плагин пишет в `stdout`: `{"result": {"content": [{"type": "text", "text": "Peers: ..."}]}}`.
-- **Правило безопасности:** Плагин **не должен** иметь прав root на хосте без крайней нужды. Предпочтительно запускать плагин от обычного пользователя (или в контейнере с нужными mount-ами).
+- **Call:** the hub writes to `stdin`: `{"method": "tools/call", "params": {"name": "wg_status"}}`.
+- **Result:** the plugin writes to `stdout`: `{"result": {"content": [{"type": "text", "text": "Peers: ..."}]}}`.
+- **Security rule:** a plugin must **not** have root on the host unless strictly
+  necessary. Prefer running the plugin as a regular user (or in a container with the required mounts).
 
-## 8. Виртуальное окружение
+## 8. Virtual environment
 
-- Только `.venv` в корне.
-- Все зависимости в `requirements.txt` (или `pyproject.toml`).
-- Docker-образ (`Dockerfile`) должен устанавливать зависимости изолированно.
+- Only `.venv` in the root.
+- All dependencies in `requirements.txt` (or `pyproject.toml`).
+- The Docker image (`Dockerfile`) must install dependencies in isolation.
 
-## 9. Тесты обязательны
+## 9. Tests are mandatory
 
-- **Smoke-test:** Скрипт, который проверяет: "Порт 8000 отвечает" и "Postgres доступен".
-- **Unit-тесты:** Тесты для `src/core/router.py` (проверка логики LLM).
-- **Plugin-test:** Минимальный тест для каждого плагина: "Запустить процесс -> отослать JSON -> получить ответ".
-- Результаты тестов в файл `tmp/tests_*.log`.
+- **Smoke test:** a script that checks: "port 8000 responds" and "Postgres is reachable".
+- **Unit tests:** tests for `src/core/router.py` (LLM logic).
+- **Plugin test:** a minimal test for each plugin: "start the process -> send JSON -> get a response".
+- Test results in `tmp/tests_*.log`.
 
-## 10. Один файл = одна ответственность
+## 10. One file = one responsibility
 
-- `src/api/` — роуты.
-- `src/core/` — логика.
-- `src/llm/` — провайдеры (Hetzner, OpenRouter).
-- `src/plugins/` — менеджмент процессов.
-- Никакого кода в `main.py` кроме `app = FastAPI(...)`.
+- `src/api/` — routes.
+- `src/core/` — logic.
+- `src/llm/` — providers (Hetzner, OpenRouter).
+- `src/plugins/` — process management.
+- No code in `main.py` except `app = FastAPI(...)`.
 
-## 11. Интерфейс (Web UI & Telegram)
+## 11. Interface (Web UI & Telegram)
 
-- **UI:** Современный, тёмная тема (админ-панель), акцент на чат.
-- **Mobile-first:** Веб-морда должна нормально работать на телефоне (как Telegram Web).
-- **Отсутствие "мертвых" зон:** Если команда не может быть выполнена (нет прав, плагин спит) — явная ошибка.
+- **UI:** modern, dark theme (admin panel), chat-focused.
+- **Mobile-first:** the web UI must work well on a phone (like Telegram Web).
+- **No "dead zones":** if a command cannot be executed (no permissions, plugin asleep) — show an explicit error.
 
-## 12. i18n (Локализация)
+## 12. i18n (Localization)
 
-- Все строки интерфейса — ru/en.
-- В базе данных (таблица `messages`) сообщения хранятся в том виде, в котором их писал пользователь.
-- Ответы LLM — также как есть.
-- Локализация применяется к UI компонентам (кнопки "Запустить", "Статус").
+- All interface strings — ru/en.
+- In the database (`messages` table), messages are stored exactly as the user wrote them.
+- LLM responses are also stored as-is.
+- Localization applies to UI components ("Start", "Status" buttons).
 
-## 13. Безопасность и AI Guardrails (Критично!)
+## 13. Security and AI Guardrails (Critical!)
 
-Это самое важное в LoomHub. ИИ имеет доступ к управлению сервером.
+This is the most important part of LoomHub. AI has access to server management.
 
-- **Approvals (Согласование):**
-    - Операции "Read" (статус, логи) -> ИИ делает сам.
-    - Операции "Write" (перезагрузка, изменение конфигов) -> ИИ формирует запрос, но **ждёт подтверждения юзера** (кнопка "Approve" в чате/Web).
+- **Approvals:**
+    - "Read" operations (status, logs) -> AI performs them itself.
+    - "Write" operations (reboot, config changes) -> AI forms the request but **waits for
+      the user's confirmation** ("Approve" button in chat/Web).
 - **Rate Limiting:**
-    - Ограничить частоту запросов к плагинам (чтобы ИИ не зациклился).
-    - Лимит запросов к LLM API (Hetzner/OpenRouter).
+    - Limit the frequency of requests to plugins (so AI does not loop).
+    - Limit requests to the LLM API (Hetzner/OpenRouter).
 - **API Keys:**
-    - Ключи от Hetzner/OpenRouter — только в `.env` (docker secrets). Не в коде.
-    - Ключи от Telegram Bot — только в конфиге.
+    - Keys for Hetzner/OpenRouter — only in `.env` (docker secrets). Not in code.
+    - Telegram Bot keys — only in config.
 - **Network Isolation:**
-    - Плагин LoomWG (если рулит сетью) может требовать привилегий. Остальные плагины — минимум прав.
+    - The LoomWG plugin (if it manages the network) may require privileges. Other plugins get minimum rights.
 
-## 14. Ченджлог — коротко
+## 14. Changelog — keep it short
 
-`CHANGELOG.md` — дата + суть. Детали — в доках.
+`CHANGELOG.md` — date + summary. Details — in the docs.
 
-## 15. Документация
+## 15. Documentation
 
-- Корень закрыт (`README.md`, `RULES.md`, `docker-compose.yml`, `Dockerfile`).
-- Документация в `docs/`:
-    - `docs/architecture/` — схемы, описание протокола MCP.
-    - `docs/plugins/` — ТЗ на плагины.
-    - `docs/setup/` — инструкция для деплоя на VDS.
+- The root is closed (`README.md`, `RULES.md`, `docker-compose.yml`, `Dockerfile`).
+- Documentation lives in `docs/`:
+    - `docs/architecture/` — diagrams, MCP protocol description.
+    - `docs/plugins/` — plugin specs.
+    - `docs/setup/` — VDS deployment instructions.
 
-## 16. Задачи: ТЗ и отчёты
+## 16. Tasks: specs and reports
 
-- Крупные задачи начинаются с ТЗ (`docs/tasks/<name>/TZ_RU.md`).
-- По факту — Отчёт (`docs/tasks/<name>/REPORT_RU.md`).
-- **Порядок разработки:**
-    1. Прототип (Mock API) — чтобы проверить UI.
-    2. Интеграция с LLM.
-    3. Подключение Плагина (реальная логика).
+- Large tasks start with a spec (`docs/tasks/<name>/TZ_RU.md`).
+- On completion — a report (`docs/tasks/<name>/REPORT_RU.md`).
+- **Development order:**
+    1. Prototype (Mock API) — to validate the UI.
+    2. LLM integration.
+    3. Plugin connection (real logic).
 
 ---
 
-*Последнее обновление: 2026-02-14 (LoomHub Architecture: FastAPI + Postgres + MCP Plugins + Hetzner LLM)*
-*Хранить в корне проекта.*
+*Last updated: 2026-09-12 (LoomHub Architecture: FastAPI + Postgres + MCP Plugins + Hetzner LLM)*
+*Keep in the project root.*

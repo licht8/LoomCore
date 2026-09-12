@@ -105,6 +105,52 @@ def test_add_peer_rejects_bad_key(load_loomwg, monkeypatch, tmp_path):
         config.add_peer("wg0", "not-a-key", ["10.0.0.2/32"], None)
 
 
+# === install.py: LOOMWG_SKIP_FIREWALL ===
+
+def _patch_setup_server(install, monkeypatch, tmp_path):
+    monkeypatch.setattr(install, "config_path", lambda interface: tmp_path / f"{interface}.conf")
+    monkeypatch.setattr(install, "run_command", lambda *args, **kwargs: "ok")
+    monkeypatch.setattr(
+        install, "generate_keypair", lambda: {"private_key": "priv", "public_key": "pub"}
+    )
+    monkeypatch.setattr(
+        install,
+        "_detect_host",
+        lambda: {"os": "rocky 10", "external_interface": "eth0", "firewall": "firewalld"},
+    )
+    monkeypatch.setattr(install, "_enable_forwarding", lambda: None)
+
+
+def test_setup_server_skips_firewall(load_loomwg, monkeypatch, tmp_path):
+    install = load_loomwg("install")["install"]
+    _patch_setup_server(install, monkeypatch, tmp_path)
+    monkeypatch.setenv("LOOMWG_SKIP_FIREWALL", "1")
+    called = {"firewall": False}
+
+    def fake_configure(*args, **kwargs):
+        called["firewall"] = True
+        return "firewalld"
+
+    monkeypatch.setattr(install, "_configure_firewall", fake_configure)
+
+    result = install.setup_server({"interface": "wgtest"})
+
+    assert result["firewall"] == "skipped"
+    assert called["firewall"] is False
+    assert (tmp_path / "wgtest.conf").is_file()
+
+
+def test_setup_server_configures_firewall_by_default(load_loomwg, monkeypatch, tmp_path):
+    install = load_loomwg("install")["install"]
+    _patch_setup_server(install, monkeypatch, tmp_path)
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(install, "_configure_firewall", lambda *args, **kwargs: "firewalld")
+
+    result = install.setup_server({"interface": "wgtest"})
+
+    assert result["firewall"] == "firewalld"
+
+
 # === wireguard.py: парсеры ===
 
 def test_parse_transfer_bytes(load_loomwg):

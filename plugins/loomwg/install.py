@@ -3,8 +3,11 @@
 Package installation is done on the host via deploy/install.sh before
 starting the container.
 
-setup_server() runs entirely inside the container using
-cap_add NET_ADMIN for firewall/NAT and sysctl configuration.
+setup_server() runs entirely inside the container using cap_add NET_ADMIN
+for firewall/NAT and sysctl configuration.
+
+Set LOOMWG_SKIP_FIREWALL=1 on firewalld hosts (RHEL/Rocky) to skip automatic
+firewall/NAT setup and configure it manually instead.
 """
 
 from __future__ import annotations
@@ -179,13 +182,29 @@ def setup_server(arguments: dict) -> dict:
         raise
 
     _enable_forwarding()
-    firewall = _configure_firewall(
-        host["firewall"],
-        interface,
-        external_interface,
-        listen_port,
-        str(v4),
+    if os.environ.get("LOOMWG_SKIP_FIREWALL") == "1":
+        # firewalld hosts (RHEL/Rocky): the container cannot talk to host
+        # firewalld, so open the UDP port and NAT manually (see VDS_RUNBOOK.md).
+        firewall = "skipped"
+    else:
+        firewall = _configure_firewall(
+            host["firewall"],
+            interface,
+            external_interface,
+            listen_port,
+            str(v4),
+        )
+
+    message = (
+        f"Server configuration {interface} created. The interface has not been started yet. "
+        f"Firewall: {firewall}."
     )
+    if firewall == "skipped":
+        message += (
+            f" Configure it manually: open UDP {listen_port} and enable masquerade "
+            f"for {external_interface} (e.g. firewall-cmd --permanent "
+            f"--add-port={listen_port}/udp --add-masquerade && firewall-cmd --reload)."
+        )
 
     return {
         "interface": interface,
@@ -198,5 +217,5 @@ def setup_server(arguments: dict) -> dict:
         "external_interface": external_interface,
         "firewall": firewall,
         "forwarding_enabled": True,
-        "message": f"Серверная конфигурация {interface} создана. Интерфейс ещё не запускался.",
+        "message": message,
     }

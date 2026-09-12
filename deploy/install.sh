@@ -22,36 +22,50 @@ cd /opt/loomhub
 if [[ ! -f .env ]]; then
   cp .env.vds.example .env
   chmod 600 .env
-  echo "Created /opt/loomhub/.env. Fill in HETZNER_API_KEY and POSTGRES_PASSWORD, then rerun."
+  echo "Created /opt/loomhub/.env. Fill in HETZNER_API_KEY, POSTGRES_PASSWORD and ADMIN_TOKEN, then rerun."
   exit 0
 fi
 
-# === Установка пакетов на хосте (выполняется на хосте, не в контейнере) ===
+# === Host packages (run on the host, not inside the container) ===
 
-echo "=== Установка WireGuard-пакетов ==="
+echo "=== Installing WireGuard packages ==="
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update && apt-get install -y wireguard-tools iproute2 qrencode iptables nftables
-  echo "Установлено через apt"
+  echo "Installed via apt"
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y wireguard-tools iproute iptables-nft nftables
-  echo "Установлено через dnf"
+  # On RHEL/Rocky, wireguard-tools and qrencode live in EPEL.
+  dnf install -y epel-release
+  dnf install -y wireguard-tools iproute qrencode iptables-nft nftables
+  echo "Installed via dnf"
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y wireguard-tools iproute iptables nftables
-  echo "Установлено через yum"
+  yum install -y epel-release
+  yum install -y wireguard-tools iproute qrencode iptables nftables
+  echo "Installed via yum"
 elif command -v apk >/dev/null 2>&1; then
-  apk add --no-cache wireguard-tools iproute2 iptables nftables
-  echo "Установлено через apk"
+  apk add --no-cache wireguard-tools iproute2 qrencode iptables nftables
+  echo "Installed via apk"
 else
-  echo "Не найден поддерживаемый пакетный менеджер. Установите wireguard-tools вручную."
+  echo "No supported package manager found. Install wireguard-tools manually."
   exit 1
 fi
 
-# === Сборка и запуск Docker-контейнеров ===
-echo "=== Сборка и запуск LoomHub ==="
+# WireGuard is in-tree on modern kernels; kmod-wireguard is only needed on
+# older RHEL/Rocky kernels.
+if command -v modprobe >/dev/null 2>&1; then
+  if modprobe wireguard 2>/dev/null; then
+    echo "wireguard kernel module available"
+  else
+    echo "WARNING: 'wireguard' kernel module not loaded. Install the EPEL kmod-wireguard package if wg-quick fails."
+  fi
+fi
+
+# === Build and start containers ===
+
+echo "=== Building and starting LoomHub ==="
 docker compose up -d --build
 docker compose ps
 echo "LoomHub is available on port 80."
 echo ""
-echo "Для настройки WireGuard-сервера используйте инструмент wg_setup_server"
-echo "в чате LoomHub (или через API /api/chat)."
+echo "Apply DB migrations once: docker compose exec hub alembic upgrade head"
+echo "Then configure WireGuard via the wg_setup_server tool in the LoomHub UI/chat."

@@ -7,6 +7,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-loomuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret_password}
       POSTGRES_DB: ${POSTGRES_DB:-loomhub}
+    # Postgres is reachable from the host-networked hub via loopback only.
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -27,7 +30,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Безопасность: минимум привилегий
+    # Host networking is required so the WireGuard interface and firewall/NAT
+    # live in the host network namespace and external peers can connect.
+    network_mode: host
+    # Least privilege: only what WireGuard needs.
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -35,22 +41,23 @@ services:
     security_opt:
       - no-new-privileges:false
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@db:5432/${POSTGRES_DB:-loomhub}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@127.0.0.1:5432/${POSTGRES_DB:-loomhub}
       HETZNER_API_KEY: ${HETZNER_API_KEY:-}
       DEBUG: ${DEBUG:-false}
       LOOMHUB_MODE: self-hosted
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
+      # On firewalld hosts (RHEL/Rocky) set to 1 and open UDP/NAT manually.
+      LOOMWG_SKIP_FIREWALL: ${LOOMWG_SKIP_FIREWALL:-0}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       ADMIN_TOTP_SECRET: ${ADMIN_TOTP_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
-    expose:
-      - "8000"
-    # Только нужные тома
+    # API binds to loopback only; nginx is the single public entrypoint.
+    command: uvicorn src.main:app --host 127.0.0.1 --port 8000
     volumes:
-      - /etc/wireguard:/etc/wireguard
+      # :z relabels for SELinux (RHEL/Rocky); harmless on other distros.
+      - /etc/wireguard:/etc/wireguard:z
       - /lib/modules:/lib/modules:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
@@ -72,10 +79,11 @@ services:
     depends_on:
       hub:
         condition: service_healthy
+    network_mode: host
     environment:
       NODE_ENV: production
-    expose:
-      - "3000"
+      HOSTNAME: 127.0.0.1
+      PORT: "3000"
     logging:
       driver: json-file
       options:
@@ -91,8 +99,8 @@ services:
         condition: service_started
       hub:
         condition: service_healthy
-    ports:
-      - "80:80"
+    # Host mode binds :80 directly; keep it the only public port.
+    network_mode: host
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     logging:

@@ -1,159 +1,151 @@
-# Деплой LoomHub на VDS
+# Deploying LoomHub on a VDS
 
-## Требования
+For a Rocky Linux 10 walkthrough (EPEL, firewalld, SELinux), see
+[VDS_RUNBOOK.md](VDS_RUNBOOK.md).
 
-- Linux-сервер с Docker Engine и Docker Compose Plugin
-- DNS-запись домена на IP сервера
-- Открытые порты `80` и `443`
-- Не менее 1 GB RAM; для сборки frontend желательно добавить 1-2 GB swap
+## Requirements
 
-## Первый запуск
+- Linux server with Docker Engine and the Docker Compose plugin
+- DNS record pointing a domain at the server IP (optional; an IP works too)
+- Open ports `80` and `443`
+- At least 1 GB RAM; add 1-2 GB swap to build the frontend comfortably
+
+## First run
 
 ```bash
-git clone git@github.com:USER/REPOSITORY.git
-cd LoomCore
+git clone https://github.com/licht8/LoomCore.git /opt/loomhub
+cd /opt/loomhub
 cp .env.vds.example .env
 chmod 600 .env
 nano .env
 ```
 
-### Шаг 1: Установка пакетов на хосте
+Fill in at least `POSTGRES_PASSWORD`, `ADMIN_TOKEN`, and `HETZNER_API_KEY`.
+
+### Step 1: Install host packages
 
 ```bash
 sudo bash deploy/install.sh
 ```
 
-Этот скрипт:
-- Устанавливает `wireguard-tools`, `iproute2`, `qrencode`, `iptables`, `nftables` на хосте
-- Создает `.env` если его нет
-- Собирает и запускает Docker-контейнеры через `docker compose up -d --build`
-- Показывает статус контейнеров
+The script:
+- installs `wireguard-tools`, `iproute2`/`iproute`, `qrencode`, `iptables`, `nftables`
+  (on RHEL/Rocky it enables EPEL first);
+- creates `.env` if missing;
+- builds and starts the containers via `docker compose up -d --build`;
+- prints the container status.
 
-После выполнения контейнеры запускаются, но WireGuard-сервер ещё не настроен.
+If `.env` did not exist yet, the script creates it and exits — fill it in and
+rerun.
 
-### Альтернативный ручной запуск
+### Step 2: Apply database migrations
 
-```bash
-sudo mkdir -p /opt/loomhub
-sudo git clone git@github.com:USER/REPOSITORY.git /opt/loomhub
-cd /opt/loomhub
-# Установите пакеты вручную:
-# apt-get update && apt-get install -y wireguard-tools iproute2 qrencode iptables nftables
-cp .env.vds.example .env
-chmod 600 .env
-docker compose up -d --build
-```
-
-### Шаг 1.5: Применение миграций БД
-
-Схема БД управляется только через Alembic. `docker-compose.yml` **не запускает
-миграции автоматически**, поэтому после первого старта БД выполните:
+The schema is managed by Alembic only. `docker-compose.yml` does **not** run
+migrations, so do this once after the first start (and after every update that
+adds a migration):
 
 ```bash
 docker compose exec hub alembic upgrade head
 ```
 
-Повторяйте этот шаг после каждого обновления, добавляющего миграции.
+### Step 3: Configure WireGuard
 
-### Шаг 2: Настройка WireGuard-сервера
+1. Open the Web UI at `http://SERVER_IP/` and log in with the admin token.
+2. Call the `wg_setup_server` tool (it asks for admin approval). It creates
+   `/etc/wireguard/wg0.conf`, enables IPv4/IPv6 forwarding, and configures
+   firewall/NAT.
+3. On firewalld hosts (RHEL/Rocky), set `LOOMWG_SKIP_FIREWALL=1` and open the
+   port/NAT manually — see [VDS_RUNBOOK.md](VDS_RUNBOOK.md).
 
-После запуска хаб подключает плагин loomwg. Для настройки сервера:
+## Networking model
 
-1. Откройте Web UI на `http://SERVER_IP/` или используйте API `/api/chat`
-2. Вызовите инструмент `wg_setup_server` — это создаст конфигурацию `/etc/wireguard/wg0.conf`, включит IPv4/IPv6 forwarding и настроит firewall/NAT **внутри контейнера**
-3. Инструмент требует подтверждения администратора (approval)
+`hub`, `frontend`, and `nginx` run with `network_mode: host`, because the
+WireGuard interface and firewall/NAT must live in the host network namespace so
+external peers can connect.
 
-## Управление сервером через плагины
+- `nginx` binds `:80` — the only public port.
+- `hub` (API/WS) binds `127.0.0.1:8000`; `frontend` binds `127.0.0.1:3000`.
+- Postgres is published on `127.0.0.1:5432` only.
 
-Backend автоматически запускает каждый плагин, у которого есть файл
-`plugins/<name>/main.py`. Инструменты всех таких плагинов передаются в LLM и
-маршрутизируются обратно владельцу инструмента.
+The `hub` container keeps least privilege: only `NET_ADMIN`, `NET_RAW`,
+`SYS_MODULE`, and two mounts:
 
-Self-hosted compose использует принцип минимальных привилегий:
+- `/etc/wireguard:/etc/wireguard:z` (rw) — WireGuard configs (`:z` relabels for SELinux)
+- `/lib/modules:/lib/modules:ro` — kernel modules
 
-- Контейнер `hub` работает **без `privileged: true`**
-- Контейнер имеет только необходимые capabilities: `NET_ADMIN`, `NET_RAW`, `SYS_MODULE`
-- Монтируются только нужные тома:
-  - `/etc/wireguard:/etc/wireguard` (rw) — конфиги WireGuard
-  - `/lib/modules:/lib/modules:ro` — модули ядра
-- **Не монтируется:** `/:/host`, `/var/run/docker.sock`, `/sys`, `pid: host`
-- **Не используется:** `nsenter`, `chroot`
+**Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`; **not used:**
+`nsenter`, `chroot`, `pid: host`.
 
-Это означает, что даже при компрометации плагина или LLM-инъекции, доступ к хосту ограничен управлением WireGuard.
+`wg_create_client` stores the client config and a protected QR file under
+`/etc/wireguard/clients` with mode `600`; the private key is never returned to
+the chat or stored in message history. `qrencode` is included in the image.
 
-Read-only-инструменты и создание клиентов `loomwg` выполняются внутри
-контейнера с ограниченными правами. `wg_create_client` сохраняет client config и
-защищённый QR-файл в `/etc/wireguard/clients` с правами `600`; private key не
-возвращается в чат и не сохраняется в истории сообщений. Для QR-генерации в
-образ включён `qrencode`.
-Для создания клиента достаточно передать имя: адрес выбирается автоматически
-из свободных адресов сети интерфейса, а публичный IP сервер определяется
-автоматически. Если нужен домен или внешний IP нельзя определить из контейнера,
-задайте в `.env` `LOOMWG_ENDPOINT` (например, `vpn.example.com`) или передайте
-endpoint в отдельном вызове инструмента.
+To create a client, only a name is required: the address is allocated from free
+addresses in the interface network and the server's public IP is detected
+automatically. If you need a domain or the external IP cannot be detected, set
+`LOOMWG_ENDPOINT` in `.env` (e.g. `vpn.example.com`) or pass `endpoint` in the
+tool call.
 
-Настройка серверной конфигурации в full-tunnel режиме (инструмент `wg_setup_server`)
-определяет ОС, внешний интерфейс по default route и доступный firewall
-(`firewalld`, `ufw`, `nftables` или `iptables`) **внутри контейнера**. После
-подтверждения администратора она включает IPv4/IPv6 forwarding через
-`/etc/sysctl.d/99-loomwg-forwarding.conf`, открывает UDP-порт WireGuard и
-настраивает NAT с помощью `iptables`/`nftables` внутри контейнера.
-Если firewall не поддерживается, операция завершается ошибкой с требованием
-настроить его вручную.
+`wg_setup_server` detects the OS, the external interface from the default route,
+and the available firewall (`firewalld`, `ufw`, `nftables`, `iptables`) **inside
+the container** (which shares the host network namespace). For firewalld hosts
+the plugin cannot drive the host firewall, so use `LOOMWG_SKIP_FIREWALL=1` and
+open UDP/NAT manually.
 
-Доступ к Hub защищён административной авторизацией. Поддерживаются два режима
-(`src/core/security.py:require_admin_token`):
+## Admin authentication
 
-1. **Bearer-токен:** задайте в `.env` `ADMIN_TOKEN` длинным случайным значением.
-   Токен передаётся в query-параметре `access_token` или заголовке
-   `Authorization: Bearer <token>`. В UI на странице входа переключитесь на
-   вкладку «Токен» и введите его — он сохранится в `localStorage` браузера.
-2. **JWT-cookie (рекомендуется):** задайте одновременно `ADMIN_PASSWORD_HASH`,
-   `ADMIN_TOTP_SECRET` и `SESSION_SECRET`. В UI используется вкладка
-   «Логин и TOTP». Хеш пароля генерируется командой:
+Two modes are supported (`src/core/security.py:require_admin_token`):
+
+1. **Bearer token:** set a long random `ADMIN_TOKEN` in `.env`. The token is
+   passed via the `access_token` query parameter or the `Authorization: Bearer
+   <token>` header. In the UI, use the "Token" tab on the login page — it is
+   stored in browser `localStorage`.
+2. **JWT cookie:** set `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET`, and
+   `SESSION_SECRET` together. The UI uses the "Login and TOTP" tab. Generate the
+   password hash with:
    ```bash
-   python -m src.auth 'ваш-пароль'
+   python -m src.auth 'your-password'
    ```
 
-Не публикуйте токены и не оставляйте доступ не настроенным. WebSocket, чат,
-список инструментов и скачивание клиентских файлов (`/api/artifacts/...`) требуют
-авторизации.
+Never publish tokens and never leave access unconfigured. WebSocket, chat, the
+tool list, and artifact downloads (`/api/artifacts/...`) all require auth.
 
-## Обновление
+## Update
 
 ```bash
-cd /opt/loomhub  # или ваша рабочая директория
+cd /opt/loomhub
 git pull
 docker compose up -d --build
+docker compose exec hub alembic upgrade head
 docker image prune -f
 ```
 
 ## HTTPS
 
-Текущий Nginx-конфиг поднимает HTTP и корректно проксирует WebSocket. Для
-production нужно добавить TLS-сертификат (например, Certbot) и перевести
-серверный блок на `listen 443 ssl`, а HTTP перенаправить на HTTPS. После этого
-frontend автоматически использует `wss://`.
+The current Nginx config serves HTTP and proxies WebSocket correctly. For
+production, add a TLS certificate (e.g. Certbot), switch the server block to
+`listen 443 ssl`, and redirect HTTP to HTTPS. The frontend then uses `wss://`
+automatically.
 
-## Резервное копирование
+## Backups
 
-Данные PostgreSQL находятся в Docker volume `pgdata`:
+PostgreSQL data lives in the `pgdata` Docker volume:
 
 ```bash
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sql
 ```
 
-Файл `.env` и `backup.sql` не должны попадать в Git.
+`.env` and `backup.sql` must never be committed to Git.
 
-## Безопасность контейнера
+## Container security
 
-| Действие | Было | Стало |
+| Action | Before | Now |
 |---|---|---|
 | `wg show/add-peer` | `privileged: true` | `NET_ADMIN` capability |
 | `wg-quick up/down` | `privileged` | `NET_ADMIN` + `SYS_MODULE` |
-| `/etc/wireguard` | через `/:/host` | прямой mount volume |
-| Установка пакетов | `chroot /host` | только `deploy/install.sh` на хосте |
-| Firewall/NAT | `chroot /host` | внутри контейнера (iptables/nft) |
-| Полный root к хосту | ✅ | ❌ УБРАНО |
-| Docker socket | ✅ | ❌ УБРАНО |
-| PID namespace | ✅ | ❌ УБРАНО |
+| `/etc/wireguard` | via `/:/host` | direct bind mount |
+| Package install | `chroot /host` | `deploy/install.sh` on the host only |
+| Firewall/NAT | inside container namespace | host namespace (`network_mode: host`) |
+| Full root to the host | ✅ | ❌ removed |
+| Docker socket | ✅ | ❌ removed |
+| Host PID namespace | ✅ | ❌ removed |

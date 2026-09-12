@@ -1,35 +1,40 @@
 # LoomHub
 
-**AI-Driven Infrastructure Hub** — оркестратор серверной инфраструктуры с AI-ассистентом.
+**AI-Driven Infrastructure Hub** — an infrastructure orchestrator with an AI assistant.
 
-## Стек
+## Stack
 
 - Python / FastAPI
 - PostgreSQL (Docker)
-- MCP (Model Context Protocol) для плагинов
+- MCP (Model Context Protocol) for plugins
 - Hetzner Inference API (Qwen3.6-35B)
 
-## Self-hosted запуск на Linux VDS
+## Self-hosted on a Linux VDS
 
 ```bash
 cp .env.vds.example .env
 chmod 600 .env
-# Заполнить HETZNER_API_KEY и POSTGRES_PASSWORD
+# Fill in POSTGRES_PASSWORD, ADMIN_TOKEN, HETZNER_API_KEY
 nano .env
-docker compose up -d --build
+sudo bash deploy/install.sh          # or: docker compose up -d --build
+docker compose exec hub alembic upgrade head
 ```
 
-После запуска UI доступен по `http://IP_СЕРВЕРА/`. Backend и PostgreSQL наружу
-не публикуются, а WebSocket проксируется через Nginx.
+After that the UI is available at `http://SERVER_IP/`. Log in on the **Token**
+tab with `ADMIN_TOKEN`. The backend and PostgreSQL are not published publicly;
+Nginx is the only public entrypoint, and it also proxies the WebSocket.
 
-LoomHub автоматически загружает плагины из `plugins/<name>/main.py`. Плагин
-выполняется на том же Linux-сервере в host-enabled контейнере и может
-использовать предоставленные host-интеграции. `loomwg` пока содержит mock
-реализацию инструментов WireGuard.
+LoomHub loads plugins from `plugins/<name>/main.py` automatically. A plugin runs
+on the same Linux host in a host-networked container and can use the provided
+host integrations. `plugins/loomwg` manages WireGuard (server setup, peers,
+client configs/QR).
 
-Подробная инструкция: [Деплой на VDS](docs/setup/DEPLOY.md).
+Detailed instructions: [VDS deploy](docs/setup/DEPLOY.md) and the
+[Rocky Linux 10 runbook](docs/setup/VDS_RUNBOOK.md).
 
-## Документация
+## Documentation
 
-- [Правила проекта](RULES.md)
-- [Деплой на VDS](docs/setup/DEPLOY.md)
+- [Project rules](RULES.md)
+- [VDS deploy](docs/setup/DEPLOY.md)
+- [Rocky Linux 10 runbook](docs/setup/VDS_RUNBOOK.md)
+- [Testing](docs/setup/TESTING.md)
