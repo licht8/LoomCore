@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from client import create_client, get_artifact, remove_client_artifacts
+import service_mode
+from client import create_client, export_client, get_artifact, remove_client_artifacts
+from config_view import show_config
 from install import setup_server
 from keys import validate_public_key
 from lifecycle import format_lifecycle, restart, start, stop
+from results import text_result
+from stats import stats as stats_tool
+from validate import check_config
 from wireguard import (
     CommandError,
     active_interfaces,
@@ -20,15 +25,8 @@ from wireguard import (
     validate_interface,
 )
 
-from config import add_peer as save_peer
 from config import remove_peer as delete_peer
-
-
-def text_result(content: str, **data: Any) -> dict[str, Any]:
-    return {
-        "content": [{"type": "text", "text": content}],
-        "data": data,
-    }
+from config import upsert_peer
 
 
 def list_interfaces(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -187,6 +185,23 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         preshared_key = validate_public_key(str(preshared_key))
     if interface not in set(active_interfaces()):
         raise CommandError(f"Интерфейс {interface} не активен")
+
+    existing = None
+    for peer in read_interface(interface)["peers"]:
+        if peer["public_key"] == public_key:
+            existing = peer
+            break
+
+    # Idempotent: same peer with the same allowed IPs is a no-op.
+    if existing is not None and set(existing["allowed_ips"]) == set(allowed_ips):
+        return text_result(
+            f"Peer {public_key[:12]}... already present in {interface} with the same allowed IPs",
+            interface=interface,
+            public_key=public_key,
+            allowed_ips=allowed_ips,
+            changed=False,
+        )
+
     command = [
         "wg",
         "set",
@@ -200,15 +215,18 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         command.extend(["preshared-key", "/dev/stdin"])
     run_command(command, input_text=preshared_key)
     try:
-        save_peer(interface, public_key, allowed_ips, preshared_key)
+        changed = upsert_peer(interface, public_key, allowed_ips, preshared_key)
     except Exception:
-        run_command(["wg", "set", interface, "peer", public_key, "remove"])
+        if existing is None:
+            run_command(["wg", "set", interface, "peer", public_key, "remove"])
         raise
+    action = "updated" if existing is not None else "added"
     return text_result(
-        f"Пир {public_key[:12]}... добавлен в {interface}",
+        f"Peer {public_key[:12]}... {action} in {interface}",
         interface=interface,
         public_key=public_key,
         allowed_ips=allowed_ips,
+        changed=changed,
     )
 
 
@@ -256,12 +274,18 @@ HANDLERS = {
     "wg_status": status,
     "wg_list_peers": list_peers,
     "wg_diagnostics": diagnostics,
+    "wg_show_config": show_config,
+    "wg_check_config": check_config,
+    "wg_stats": stats_tool,
     "wg_add_peer": add_peer,
     "wg_remove_peer": remove_peer,
     "wg_start": lambda args: lifecycle_tool(start, args),
     "wg_stop": lambda args: lifecycle_tool(stop, args),
     "wg_restart": lambda args: lifecycle_tool(restart, args),
+    "wg_service_enable": service_mode.enable,
+    "wg_service_disable": service_mode.disable,
     "wg_create_client": create_client_tool,
+    "wg_export_client": export_client,
     "wg_setup_server": setup_server,
     "wg_get_client_artifact": get_artifact_tool,
 }
@@ -413,4 +437,106 @@ TOOLS_SCHEMA.append(
             "required": ["token", "kind"],
         },
     }
+)
+
+TOOLS_SCHEMA.extend(
+    [
+        {
+            "name": "wg_show_config",
+            "description": (
+                "Show the interface configuration (live, or the saved file if the "
+                "interface is down). Keys are masked unless show_secrets is true."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "interface": {"type": "string", "default": "wg0"},
+                    "show_secrets": {"type": "boolean", "default": False},
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "wg_check_config",
+            "description": (
+                "Validate a WireGuard config without starting it: sections, keys, "
+                "CIDRs, duplicate peers, and subnet overlaps."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "interface": {"type": "string", "default": "wg0"},
+                    "path": {
+                        "type": "string",
+                        "description": "Optional: validate this config file instead of the interface file",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Optional: validate this config text instead of a file",
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "wg_stats",
+            "description": (
+                "Snapshot statistics: total traffic, per-peer share, and the top "
+                "peers by traffic (no history)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "interface": {"type": "string", "default": "wg0"},
+                    "top": {"type": "integer", "default": 5, "minimum": 1},
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "wg_export_client",
+            "description": (
+                "Regenerate the config/QR artifact links for an existing client. "
+                "If the saved config is missing, pass rotate=true to recreate the "
+                "client with new keys."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "interface": {"type": "string", "default": "wg0"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["config", "qr", "both"],
+                        "default": "both",
+                    },
+                    "rotate": {"type": "boolean", "default": False},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "wg_service_enable",
+            "description": (
+                "Enable autostart: bring the interface up now and on plugin start "
+                "(app-managed; no host systemd)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"interface": {"type": "string", "default": "wg0"}},
+                "required": [],
+            },
+        },
+        {
+            "name": "wg_service_disable",
+            "description": (
+                "Disable autostart for the interface (does not stop it; use wg_stop)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"interface": {"type": "string", "default": "wg0"}},
+                "required": [],
+            },
+        },
+    ]
 )

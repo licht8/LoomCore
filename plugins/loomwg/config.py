@@ -53,6 +53,75 @@ def add_peer(
     _write(path, updated)
 
 
+def _blocks(content: str) -> list[list[str]]:
+    """Split config text into section blocks (starting at each [Section])."""
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if current:
+                blocks.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def upsert_peer(
+    interface: str,
+    public_key: str,
+    allowed_ips: list[str],
+    preshared_key: str | None = None,
+) -> bool:
+    """Add or update a peer block. Returns True if the config changed."""
+    path = config_path(interface)
+    if not path.is_file():
+        raise FileNotFoundError(f"Конфигурация {path} не найдена")
+    validate_public_key(public_key)
+
+    blocks = _blocks(path.read_text(encoding="utf-8"))
+    found = False
+    updated_blocks: list[list[str]] = []
+    for block in blocks:
+        is_peer = block and block[0].strip().lower() == "[peer]"
+        is_target = is_peer and any(
+            line.strip() == f"PublicKey = {public_key}" for line in block
+        )
+        if not is_target:
+            updated_blocks.append(block)
+            continue
+
+        found = True
+        current_allowed: list[str] = []
+        current_psk: str | None = None
+        for line in block[1:]:
+            key, separator, value = line.partition("=")
+            if not separator:
+                continue
+            key = key.strip().lower()
+            if key == "allowedips":
+                current_allowed = [item.strip() for item in value.split(",") if item.strip()]
+            elif key == "presharedkey":
+                current_psk = value.strip()
+
+        if current_allowed == allowed_ips and (
+            preshared_key is None or preshared_key == current_psk
+        ):
+            return False
+
+        effective_psk = preshared_key if preshared_key is not None else current_psk
+        updated_blocks.append(_peer_block(public_key, allowed_ips, effective_psk).splitlines())
+
+    if not found:
+        updated_blocks.append(_peer_block(public_key, allowed_ips, preshared_key).splitlines())
+
+    _write(path, "\n\n".join("\n".join(block) for block in updated_blocks))
+    return True
+
+
 def remove_peer(interface: str, public_key: str) -> None:
     path = config_path(interface)
     if not path.is_file():

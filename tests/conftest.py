@@ -18,6 +18,11 @@ _PLUGIN_MODULES = (
     "install",
     "protocol",
     "server",
+    "results",
+    "validate",
+    "config_view",
+    "service_mode",
+    "stats",
 )
 
 

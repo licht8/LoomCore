@@ -15,11 +15,11 @@ from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
 from keys import generate_keypair
-from wireguard import CommandError, run_command
+from wireguard import CommandError, config_directory, run_command
 
 from config import add_peer, config_path
 
-CLIENTS_DIR = Path("/etc/wireguard/clients")
+CLIENTS_DIR = config_directory() / "clients"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ARTIFACT_TTL_SECONDS = 600
 _artifacts: dict[str, tuple[str, float]] = {}
@@ -35,6 +35,21 @@ def _format_endpoint(endpoint: str, port: int) -> str:
         if ":" in endpoint:
             endpoint = f"[{endpoint}]"
     return f"{endpoint}:{port}"
+
+
+def _generate_qr(client_config: str, qr_path: Path) -> None:
+    """Render a client config to a PNG QR code (mode 600)."""
+    qrencode = subprocess.run(
+        ["qrencode", "-o", str(qr_path), "-t", "png"],
+        input=client_config,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if qrencode.returncode != 0:
+        raise CommandError(qrencode.stderr.strip() or "qrencode failed")
+    os.chmod(qr_path, 0o600)
 
 
 def clients_directory() -> Path:
@@ -259,17 +274,7 @@ def create_client(arguments: dict) -> dict:
             input_text=preshared_key,
         )
         _write_secret(client_path, client_config)
-        qrencode = subprocess.run(
-            ["qrencode", "-o", str(qr_path), "-t", "png"],
-            input=client_config,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-        if qrencode.returncode != 0:
-            raise CommandError(qrencode.stderr.strip() or "qrencode завершился с ошибкой")
-        os.chmod(qr_path, 0o600)
+        _generate_qr(client_config, qr_path)
     except BaseException:
         with contextlib.suppress(CommandError):
             run_command(["wg", "set", interface, "peer", keypair["public_key"], "remove"])
@@ -319,4 +324,64 @@ def get_artifact(arguments: dict) -> dict:
         "filename": path.name,
         "media_type": "text/plain" if kind == "config" else "image/png",
         "content_base64": base64.b64encode(raw).decode("ascii"),
+    }
+
+
+def export_client(arguments: dict) -> dict:
+    """Regenerate config/QR artifact links for an existing client.
+
+    If the saved config is missing, the private key cannot be recovered; unless
+    ``rotate=true`` is given the call fails.
+    """
+    interface = str(arguments.get("interface", "wg0"))
+    name = _safe_name(arguments.get("name"))
+    kind = str(arguments.get("kind", "both")).lower()
+    if kind not in {"config", "qr", "both"}:
+        raise ValueError("kind must be one of: config, qr, both")
+    rotate = bool(arguments.get("rotate", False))
+
+    client_path = clients_directory() / f"{name}.conf"
+    qr_path = clients_directory() / f"{name}.png"
+
+    if not client_path.is_file():
+        if not rotate:
+            raise ValueError(
+                f"Client config '{name}' not found; the private key cannot be "
+                "recovered. Use rotate=true to recreate the client with new keys."
+            )
+        with contextlib.suppress(FileNotFoundError):
+            qr_path.unlink()
+        create_args = {"interface": interface, "name": name}
+        for key in ("addresses", "endpoint"):
+            if arguments.get(key):
+                create_args[key] = arguments[key]
+        created = create_client(create_args)
+        created["rotated"] = True
+        return created
+
+    client_config = client_path.read_text(encoding="utf-8")
+    if kind in {"qr", "both"} or not qr_path.is_file():
+        _generate_qr(client_config, qr_path)
+
+    public_key = ""
+    match = re.search(r"^\s*PrivateKey\s*=\s*(\S+)", client_config, re.MULTILINE)
+    if match:
+        with contextlib.suppress(CommandError):
+            public_key = run_command(["wg", "pubkey"], timeout=5, input_text=match.group(1))
+
+    config_token = secrets.token_urlsafe(32)
+    qr_token = secrets.token_urlsafe(32)
+    expires_at = time.time() + ARTIFACT_TTL_SECONDS
+    _artifacts[config_token] = (name, expires_at)
+    _artifacts[qr_token] = (name, expires_at)
+    return {
+        "name": name,
+        "interface": interface,
+        "public_key": public_key,
+        "client_config": str(client_path),
+        "qr_code": str(qr_path),
+        "config_token": config_token,
+        "qr_token": qr_token,
+        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
+        "rotated": False,
     }
