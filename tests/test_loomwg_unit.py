@@ -172,3 +172,45 @@ def test_validate_interface(load_loomwg):
     assert wg.validate_interface({"interface": "wg0"}) == "wg0"
     with pytest.raises(ValueError):
         wg.validate_interface({"interface": "bad iface!"})
+
+
+# === wireguard.py: read_interface (wg show dump, 8 fields per peer) ===
+
+def _dump_output(handshake_ts: int) -> str:
+    interface = "wPrivKey== wServerPub== 51820 off"
+    peer = (
+        "wPeerPub== (none) 91.90.160.72:51361 "
+        "10.66.66.4/32,fd42:42:42::4/128 "
+        f"{handshake_ts} 6438256 96416563 25"
+    )
+    return f"{interface}\n{peer}"
+
+
+def test_read_interface_parses_dump(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(wg, "run_command", lambda *args, **kwargs: _dump_output(int(time.time())))
+
+    details = wg.read_interface("wg0")
+
+    assert details["public_key"] == "wServerPub=="
+    assert details["listen_port"] == 51820
+    assert len(details["peers"]) == 1
+
+    peer = details["peers"][0]
+    assert peer["endpoint"] == "91.90.160.72:51361"
+    assert peer["allowed_ips"] == ["10.66.66.4/32", "fd42:42:42::4/128"]
+    assert peer["latest_handshake"] is not None
+    assert peer["receive_bytes"] == 6438256
+    assert peer["transmit_bytes"] == 96416563
+    assert peer["persistent_keepalive"] == 25
+    assert wg.peer_is_online(peer) is True
+
+
+def test_read_interface_offline_without_handshake(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(wg, "run_command", lambda *args, **kwargs: _dump_output(0))
+
+    peer = wg.read_interface("wg0")["peers"][0]
+
+    assert peer["latest_handshake"] is None
+    assert wg.peer_is_online(peer) is False

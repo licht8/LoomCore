@@ -96,7 +96,7 @@ def read_interface(interface: str) -> dict[str, Any]:
         # `wg show dump` normally uses tabs, but some wrappers normalize
         # whitespace before returning command output.
         parts = line.split()
-        if len(parts) < 9:
+        if len(parts) < 8:
             continue
         peers.append(
             {
@@ -106,7 +106,7 @@ def read_interface(interface: str) -> dict[str, Any]:
                 "latest_handshake": _parse_timestamp(parts[4]),
                 "receive_bytes": int(parts[5]),
                 "transmit_bytes": int(parts[6]),
-                "persistent_keepalive": int(parts[8]),
+                "persistent_keepalive": int(parts[7]),
             }
         )
 
