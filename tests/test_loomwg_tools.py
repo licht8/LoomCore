@@ -32,13 +32,14 @@ def test_schema_exposes_new_tools(load_loomwg):
         "wg_show_config",
         "wg_check_config",
         "wg_stats",
-        "wg_export_client",
+        "wg_export_existing_clients",
         "wg_service_enable",
         "wg_service_disable",
-        "wg_backfill_clients",
     }
     assert expected <= names
     assert "wg_create_client" not in names
+    assert "wg_export_client" not in names
+    assert "wg_backfill_clients" not in names
     assert expected <= set(tools.HANDLERS)
 
     internal = next(t for t in tools.TOOLS_SCHEMA if t["name"] == "wg_get_client_artifact")
@@ -247,24 +248,114 @@ def test_list_peers_reconciles_store_and_live(load_loomwg, monkeypatch, tmp_path
     assert len(result["data"]["unmanaged"]) == 1
 
 
-# === wg_backfill_clients ===
+# === wg_export_existing_clients ===
 
-def test_backfill_clients(load_loomwg, monkeypatch, tmp_path):
+def test_canonical_name_is_filesystem_safe(load_loomwg):
+    store = load_loomwg("clients_store")["clients_store"]
+    name = store.canonical_name(_key(2))
+    assert name.startswith("peer-")
+    assert store.NAME_RE.fullmatch(name)
+    assert name == store.canonical_name(_key(2))
+
+
+def test_migrate_legacy_peer_names(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
-    tools = load_loomwg("tools")["tools"]
+    store = load_loomwg("clients_store")["clients_store"]
+    key = _key(2)
+    store.upsert("china", {"public_key": _key(9), "addresses": []})
+    store.upsert("peer-AAAA1111", {"public_key": key, "addresses": ["10.0.0.2/32"]})
+
+    renamed = store.migrate_legacy_names()
+
+    canonical = store.canonical_name(key)
+    assert renamed == {"peer-AAAA1111": canonical}
+    assert store.get(canonical)["public_key"] == key
+    assert store.get("peer-AAAA1111") is None
+    assert store.get("china") is not None
+
+
+def test_export_existing_clients_imports_and_issues(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
     key = _key(2)
     monkeypatch.setattr(
-        tools,
+        client,
         "iter_peers",
-        lambda interface: [{"public_key": key, "allowed_ips": ["10.0.0.2/32"], "preshared_key": None}],
+        lambda interface: [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}],
+    )
+    calls = []
+
+    def fake_export(args):
+        calls.append(args)
+        return {
+            "name": args["name"],
+            "rotated": True,
+            "config_token": "c",
+            "qr_token": "q",
+            "artifact_expires_in": 600,
+        }
+
+    monkeypatch.setattr(client, "export_client", fake_export)
+
+    result = client.export_existing_clients(
+        {"interface": "wg0", "endpoint": "1.2.3.4"}
     )
 
-    result = tools.backfill_clients({"interface": "wg0"})
+    canonical = client.clients_store.canonical_name(key)
+    assert result["imported"] == [canonical]
+    assert result["rotated"] == [canonical]
+    assert result["clients"][0]["config_token"] == "c"
+    assert calls[0]["name"] == canonical
+    assert calls[0]["rotate"] is True
 
-    assert result["data"]["created"] == [f"peer-{key[:12]}"]
+
+def test_export_existing_clients_rotate_false_skips_keyless(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    key = _key(2)
+    monkeypatch.setattr(
+        client,
+        "iter_peers",
+        lambda interface: [{"public_key": key, "allowed_ips": []}],
+    )
+    monkeypatch.setattr(
+        client,
+        "export_client",
+        lambda args: pytest.fail("export_client should not run for a keyless peer"),
+    )
+
+    result = client.export_existing_clients({"interface": "wg0", "rotate": False})
+
+    assert result["imported"] == [client.clients_store.canonical_name(key)]
+    assert result["clients"] == []
+    assert len(result["failed"]) == 1
 
 
-# === wg_export_client ===
+def test_export_existing_clients_tool_formats(load_loomwg, monkeypatch):
+    tools = load_loomwg("tools")["tools"]
+    monkeypatch.setattr(
+        tools,
+        "export_existing_clients",
+        lambda args: {
+            "interface": "wg0",
+            "clients": [{"name": "peer-abc", "config_token": "c", "qr_token": "q"}],
+            "imported": ["peer-abc"],
+            "rotated": ["peer-abc"],
+            "reissued": [],
+            "failed": [],
+            "artifact_expires_in": 600,
+        },
+    )
+
+    result = tools.export_existing_clients_tool({"interface": "wg0"})
+
+    assert result["data"]["imported"] == ["peer-abc"]
+    assert "peer-abc" in result["content"][0]["text"]
+
+
+# === client.export_client ===
 
 def test_export_client_reissues_links(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))

@@ -11,7 +11,7 @@ import service_mode
 from client import (
     client_paths,
     create_client,
-    export_client,
+    export_existing_clients,
     get_artifact,
     remove_client_artifacts,
     store_client_record,
@@ -35,8 +35,8 @@ from wireguard import (
     validate_interface,
 )
 
-from config import iter_peers, upsert_peer
 from config import remove_peer as delete_peer
+from config import upsert_peer
 
 
 def _now() -> str:
@@ -148,7 +148,7 @@ def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
     ]
     if unmanaged:
         rows.append(
-            f"Unmanaged peers: {len(unmanaged)} — run wg_backfill_clients to import"
+            f"Unmanaged peers: {len(unmanaged)} — run wg_export_existing_clients to import"
         )
     if not store and not unmanaged:
         rows.append("No clients")
@@ -241,7 +241,7 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     if not public_key_arg:
         if existing:
             raise ValueError(
-                f"Client '{name}' already exists; use wg_export_client to reissue its config"
+                f"Client '{name}' already exists; use wg_export_existing_clients to reissue its config"
             )
         provision_args: dict[str, Any] = {"interface": interface, "name": name}
         if addresses_arg:
@@ -363,51 +363,20 @@ def lifecycle_tool(operation, arguments: dict[str, Any]) -> dict[str, Any]:
     return text_result(format_lifecycle(result), **result)
 
 
-def export_client_tool(arguments: dict[str, Any]) -> dict[str, Any]:
-    result = export_client(arguments)
-    action = "recreated with new keys" if result.get("rotated") else "exported"
-    return text_result(
-        f"Client '{result['name']}' {action}. One-time config and QR links are "
-        f"ready (valid for {result['artifact_expires_in']}s).",
-        **result,
-    )
-
-
-def backfill_clients(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Import untracked peers from the server config into the JSON store."""
-    interface = validate_interface(arguments)
-    store = clients_store.load()
-    tracked = {record.get("public_key") for record in store.values()}
-
-    created: list[str] = []
-    skipped: list[str] = []
-    for peer in iter_peers(interface):
-        public_key = peer["public_key"]
-        if public_key in tracked:
-            skipped.append(public_key[:12])
-            continue
-        name = f"peer-{public_key[:12]}"
-        clients_store.upsert(
-            name,
-            {
-                "public_key": public_key,
-                "addresses": peer["allowed_ips"],
-                "created_at": _now(),
-            },
-        )
-        created.append(name)
-        tracked.add(public_key)
-
+def export_existing_clients_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    result = export_existing_clients(arguments)
+    clients = result["clients"]
     lines = [
-        f"Backfill on {interface}: imported {len(created)}, skipped {len(skipped)}",
+        f"Exported {len(clients)} client(s) on {result['interface']}: "
+        f"{len(result['rotated'])} rekeyed, {len(result['reissued'])} reissued, "
+        f"{len(result['imported'])} imported, {len(result['failed'])} failed "
+        f"(links valid for {result['artifact_expires_in']}s)."
     ]
-    lines.extend(f"  + {name}" for name in created)
-    return text_result(
-        "\n".join(lines),
-        interface=interface,
-        created=created,
-        skipped=skipped,
+    lines.extend(f"  + imported {name}" for name in result["imported"])
+    lines.extend(
+        f"  ! {item['name']}: {item['error']}" for item in result["failed"]
     )
+    return text_result("\n".join(lines), **result)
 
 
 def get_artifact_tool(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -429,8 +398,7 @@ HANDLERS = {
     "wg_restart": lambda args: lifecycle_tool(restart, args),
     "wg_service_enable": service_mode.enable,
     "wg_service_disable": service_mode.disable,
-    "wg_export_client": export_client_tool,
-    "wg_backfill_clients": backfill_clients,
+    "wg_export_existing_clients": export_existing_clients_tool,
     "wg_setup_server": setup_server,
     "wg_get_client_artifact": get_artifact_tool,
 }
@@ -623,26 +591,31 @@ TOOLS_SCHEMA.extend(
             },
         },
         {
-            "name": "wg_export_client",
+            "name": "wg_export_existing_clients",
             "description": (
-                "Regenerate the config/QR artifact links for an existing client. "
-                "If the saved config is missing, pass rotate=true to recreate the "
-                "client with new keys. Backfilled peer-<shortkey> clients have no "
-                "stored private key and therefore require rotate=true."
+                "Import untracked peers and (re)issue config + QR links for the "
+                "clients on an interface. Backfilled peers have no stored private "
+                "key, so rotate (default true) recreates them with new keys. "
+                "Re-running is safe: clients with stored keys are only reissued. "
+                "Requires admin approval."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
                     "interface": {"type": "string", "default": "wg0"},
+                    "rotate": {"type": "boolean", "default": True},
                     "kind": {
                         "type": "string",
                         "enum": ["config", "qr", "both"],
                         "default": "both",
                     },
-                    "rotate": {"type": "boolean", "default": False},
+                    "names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional subset of client names to process",
+                    },
                 },
-                "required": ["name"],
+                "required": [],
             },
         },
         {
@@ -661,19 +634,6 @@ TOOLS_SCHEMA.extend(
             "name": "wg_service_disable",
             "description": (
                 "Disable autostart for the interface (does not stop it; use wg_stop)."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {"interface": {"type": "string", "default": "wg0"}},
-                "required": [],
-            },
-        },
-        {
-            "name": "wg_backfill_clients",
-            "description": (
-                "Import untracked peers from the server config into the JSON store "
-                "(names them peer-<shortkey>). Requires admin approval. Imported "
-                "peers have no private key, so exporting them needs rotate=true."
             ),
             "inputSchema": {
                 "type": "object",

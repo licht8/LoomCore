@@ -50,13 +50,12 @@ Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
 | `wg_list_peers` | safe | Clients from the store merged with live peers (unmanaged/stale reported). |
 | `wg_start` / `wg_stop` / `wg_restart` | dangerous | Interface lifecycle. |
 | `wg_service_enable` / `wg_service_disable` | dangerous | App-managed autostart flag. |
-| `wg_export_client` | dangerous | Ensure config + QR exist and return one-time links. |
-| `wg_backfill_clients` | dangerous | Import untracked peers from the server config. |
+| `wg_export_existing_clients` | dangerous | Import untracked peers and (re)issue config + QR links for all clients. |
 | `wg_get_client_artifact` | internal | One-time artifact download (not exposed to the LLM). |
 
 Risk is enforced by the core (`src/core/security.py:classify_tool_risk`);
 `dangerous` tools require explicit admin approval. `wg_create_client` no longer
-exists — use `wg_add_peer` + `wg_export_client`.
+exists — use `wg_add_peer` + `wg_export_existing_clients`.
 
 ## Parameters
 
@@ -64,8 +63,8 @@ exists — use `wg_add_peer` + `wg_export_client`.
   generated), `addresses` (optional → auto-allocated), `preshared_key`, `allowed_ips`.
 - `wg_remove_peer`: `name` or `public_key`.
 - `wg_list_peers`: `interface`.
-- `wg_export_client`: `name`, `interface`, `kind` (`config`/`qr`/`both`), `rotate`.
-- `wg_backfill_clients`: `interface`.
+- `wg_export_existing_clients`: `interface`, `rotate` (default `true`),
+  `kind` (`config`/`qr`/`both`), `names` (optional subset).
 - `wg_show_config`: `interface`, `show_secrets`.
 - `wg_check_config`: `interface` or `path` or `content`.
 - `wg_stats`: `interface`, `top`.
@@ -74,14 +73,18 @@ exists — use `wg_add_peer` + `wg_export_client`.
 ## Flows
 
 - **New client:** `wg_add_peer {name}` → generates keys, adds the peer, and writes
-  `clients/<name>.conf` + `.png`, returning links. `wg_export_client` re-issues
-  links later.
-- **Lost config/QR:** `wg_export_client {name}` rebuilds files from the stored
-  private key. If the peer has no stored private key (external/backfilled), it
-  errors; `rotate=true` recreates it with new keys. Names are resolved leniently
-  (exact key, a doubled `peer-` prefix, or a unique public-key prefix).
-- **First run:** existing peers in `wg0.conf` are not tracked until you approve
-  `wg_backfill_clients` (names them `peer-<shortkey>`).
+  `clients/<name>.conf` + `.png`, returning links. `wg_export_existing_clients`
+  re-issues links later.
+- **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored
+  private key. Peers without a stored key (external/backfilled) are rekeyed when
+  `rotate=true` (the default); with `rotate=false` they are reported as failed.
+  Re-running is safe: clients with stored keys are only reissued.
+- **First run:** existing peers in `wg0.conf` are imported by
+  `wg_export_existing_clients`, which names them `peer-<hex>` and, since no
+  private key is known, recreates each with new keys. Names are resolved leniently
+  (exact key, a doubled `peer-` prefix, canonical hex, or a unique public-key
+  prefix); legacy `peer-<base64>` records are renamed to canonical hex on the next
+  run.
 
 ## Autostart semantics
 

@@ -39,6 +39,32 @@ def _build_artifacts(raw_result: dict) -> list[dict] | None:
     data = raw_result.get("data")
     if not isinstance(data, dict):
         return None
+
+    clients = data.get("clients")
+    if isinstance(clients, list):
+        artifacts: list[dict] = []
+        for entry in clients:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name") or "client"
+            config_token = entry.get("config_token")
+            qr_token = entry.get("qr_token")
+            if config_token:
+                artifacts.append(
+                    {
+                        "label": f"Конфигурация: {name}",
+                        "url": f"/api/artifacts/{config_token}/config",
+                    }
+                )
+            if qr_token:
+                artifacts.append(
+                    {
+                        "label": f"QR-код: {name}",
+                        "url": f"/api/artifacts/{qr_token}/qr",
+                    }
+                )
+        return artifacts or None
+
     config_token = data.get("config_token")
     qr_token = data.get("qr_token")
     if not (config_token and qr_token):

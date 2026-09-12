@@ -11,6 +11,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
@@ -18,7 +19,7 @@ import clients_store
 from keys import generate_keypair
 from wireguard import CommandError, config_directory, run_command
 
-from config import add_peer, config_path, remove_peer
+from config import add_peer, config_path, iter_peers, remove_peer
 
 CLIENTS_DIR = config_directory() / "clients"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -405,8 +406,6 @@ def get_artifact(arguments: dict) -> dict:
 
 def store_client_record(name: str, created: dict, created_at: str | None = None) -> None:
     """Persist a provisioned client's metadata + secrets in the JSON store."""
-    from datetime import UTC, datetime
-
     clients_store.upsert(
         name,
         {
@@ -432,6 +431,9 @@ def export_client(arguments: dict) -> dict:
     if kind not in {"config", "qr", "both"}:
         raise ValueError("kind must be one of: config, qr, both")
     rotate = bool(arguments.get("rotate", False))
+    endpoint = str(
+        arguments.get("endpoint") or os.environ.get("LOOMWG_ENDPOINT", "")
+    ).strip()
 
     record = clients_store.get(name)
     if not record:
@@ -451,13 +453,18 @@ def export_client(arguments: dict) -> dict:
                 with contextlib.suppress(FileNotFoundError, ValueError):
                     remove_peer(interface, old_key)
                 clients_store.remove(name)
-            created = create_client(
-                {
-                    "interface": interface,
-                    "name": name,
-                    **({"addresses": record["addresses"]} if record.get("addresses") else {}),
-                }
-            )
+            recreate: dict = {
+                "interface": interface,
+                "name": name,
+                **(
+                    {"addresses": record["addresses"]}
+                    if record.get("addresses")
+                    else {}
+                ),
+            }
+            if endpoint:
+                recreate["endpoint"] = endpoint
+            created = create_client(recreate)
             store_client_record(name, created, record.get("created_at"))
             result = {
                 key: value
@@ -486,3 +493,118 @@ def export_client(arguments: dict) -> dict:
 
     result["rotated"] = rotated
     return result
+
+
+def _drop_client_files(name: str) -> None:
+    """Delete generated config/QR files and pending tokens for a client name."""
+    for path in client_paths(name):
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+    for token, (artifact_name, _) in list(_artifacts.items()):
+        if artifact_name == name:
+            _artifacts.pop(token, None)
+
+
+def export_existing_clients(arguments: dict) -> dict:
+    """Import untracked peers and (re)issue config/QR artifacts for every peer.
+
+    Backfilled peers have no private key, so ``rotate`` defaults to true and
+    recreates them with a fresh keypair. Clients with a stored private key are
+    only reissued. Returns a per-client list carrying one-time tokens.
+    """
+    interface = str(arguments.get("interface", "wg0"))
+    kind = str(arguments.get("kind", "both")).lower()
+    if kind not in {"config", "qr", "both"}:
+        raise ValueError("kind must be one of: config, qr, both")
+    rotate = bool(arguments.get("rotate", True))
+    endpoint = str(
+        arguments.get("endpoint") or os.environ.get("LOOMWG_ENDPOINT", "")
+    ).strip()
+    if rotate and not endpoint:
+        with contextlib.suppress(ValueError):
+            endpoint = _detect_endpoint()
+
+    for old_name in clients_store.migrate_legacy_names():
+        _drop_client_files(old_name)
+
+    imported: list[str] = []
+    targets: list[dict] = []
+    for peer in iter_peers(interface):
+        public_key = str(peer.get("public_key") or "")
+        if not public_key:
+            continue
+        name = clients_store.find_by_public_key(public_key)
+        if not name:
+            name = clients_store.canonical_name(public_key)
+            clients_store.upsert(
+                name,
+                {
+                    "public_key": public_key,
+                    "addresses": peer.get("allowed_ips") or [],
+                    "created_at": datetime.now(tz=UTC).isoformat(),
+                },
+            )
+            imported.append(name)
+        targets.append({"name": name, "public_key": public_key})
+
+    selected: set[str] | None = None
+    if arguments.get("names") is not None:
+        raw_names = arguments.get("names")
+        if not isinstance(raw_names, list) or not raw_names:
+            raise ValueError("names must be a non-empty array")
+        selected = {clients_store.resolve_name(item) for item in raw_names}
+
+    rotated: list[str] = []
+    reissued: list[str] = []
+    failed: list[dict] = []
+    clients: list[dict] = []
+
+    for entry in targets:
+        name = entry["name"]
+        if selected is not None and name not in selected:
+            continue
+        record = clients_store.get(name) or {}
+        needs_key = (
+            not client_paths(name)[0].is_file() and not record.get("private_key")
+        )
+        if needs_key and not rotate:
+            failed.append(
+                {**entry, "error": "no stored private key; retry with rotate=true"}
+            )
+            continue
+        try:
+            exported = export_client(
+                {
+                    "interface": interface,
+                    "name": name,
+                    "kind": kind,
+                    "rotate": rotate,
+                    "endpoint": endpoint,
+                }
+            )
+        except (ValueError, FileNotFoundError, CommandError, OSError) as exc:
+            failed.append({**entry, "error": str(exc)})
+            continue
+
+        if exported.get("rotated"):
+            rotated.append(name)
+        else:
+            reissued.append(name)
+        clients.append(
+            {
+                **entry,
+                "rotated": bool(exported.get("rotated")),
+                "config_token": exported.get("config_token"),
+                "qr_token": exported.get("qr_token"),
+            }
+        )
+
+    return {
+        "interface": interface,
+        "clients": clients,
+        "imported": imported,
+        "rotated": rotated,
+        "reissued": reissued,
+        "failed": failed,
+        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
+    }
