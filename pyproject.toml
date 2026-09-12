@@ -31,9 +31,12 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Ensure the repo root is importable when pytest runs as a console script
+# (CI runs `uv run pytest`; cf. `python -m pytest` which adds the CWD).
+pythonpath = ["."]
 markers = [
-    "integration: требует внешних сервисов (Postgres)",
-    "e2e: требует Linux и WireGuard (wg-quick)",
+    "integration: requires external services (Postgres)",
+    "e2e: requires Linux and WireGuard (wg-quick)",
 ]
 
 [tool.ruff.lint]

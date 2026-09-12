@@ -8,16 +8,18 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: "."
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Установка зависимостей
+      - name: Install dependencies
         run: uv sync --extra dev
-      - name: Линтер
+      - name: Lint
         run: uv run ruff check .
-      - name: Тесты
+      - name: Tests
         run: uv run pytest -q
 
   frontend:
@@ -32,11 +34,11 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Установка зависимостей
+      - name: Install dependencies
         run: npm ci
-      - name: Проверка типов
+      - name: Type check
         run: npx tsc --noEmit
-      - name: Сборка
+      - name: Build
         run: npm run build
 
   integration:
@@ -56,12 +58,13 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      PYTHONPATH: "."
       DATABASE_URL: postgresql+asyncpg://loomuser:secret_password@localhost:5432/loomcore
       LOOMCORE_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: Установка зависимостей
+      - name: Install dependencies
         run: uv sync --extra dev
-      - name: Интеграционные тесты
+      - name: Integration tests
         run: uv run pytest -q tests/test_smoke_integration.py
