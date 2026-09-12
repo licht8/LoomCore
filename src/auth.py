@@ -89,6 +89,6 @@ def generate_password_hash(password: str) -> str:
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Использование: python -m src.auth <пароль>", file=sys.stderr)
+        print("Usage: python -m src.auth <password>", file=sys.stderr)
         raise SystemExit(2)
     print(generate_password_hash(sys.argv[1]))

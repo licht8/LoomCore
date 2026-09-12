@@ -82,11 +82,11 @@ def add_peer(
 ) -> None:
     path = config_path(interface)
     if not path.is_file():
-        raise FileNotFoundError(f"Конфигурация {path} не найдена")
+        raise FileNotFoundError(f"Configuration {path} not found")
     content = path.read_text(encoding="utf-8")
     validate_public_key(public_key)
     if f"PublicKey = {public_key}" in content:
-        raise ValueError("Пир с таким public key уже существует")
+        raise ValueError("A peer with this public key already exists")
     updated = content.rstrip() + "\n\n" + _peer_block(public_key, allowed_ips, preshared_key) + "\n"
     _write(path, updated)
 
@@ -117,7 +117,7 @@ def upsert_peer(
     """Add or update a peer block. Returns True if the config changed."""
     path = config_path(interface)
     if not path.is_file():
-        raise FileNotFoundError(f"Конфигурация {path} не найдена")
+        raise FileNotFoundError(f"Configuration {path} not found")
     validate_public_key(public_key)
 
     blocks = _blocks(path.read_text(encoding="utf-8"))
@@ -163,7 +163,7 @@ def upsert_peer(
 def remove_peer(interface: str, public_key: str) -> None:
     path = config_path(interface)
     if not path.is_file():
-        raise FileNotFoundError(f"Конфигурация {path} не найдена")
+        raise FileNotFoundError(f"Configuration {path} not found")
     lines = path.read_text(encoding="utf-8").splitlines()
     blocks: list[list[str]] = []
     current: list[str] = []
@@ -185,5 +185,5 @@ def remove_peer(interface: str, public_key: str) -> None:
         else:
             retained.extend(block)
     if not removed:
-        raise ValueError("Пир с таким public key не найден в конфигурации")
+        raise ValueError("No peer with this public key found in the configuration")
     _write(path, "\n".join(retained))

@@ -9,8 +9,9 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 - Client QR codes: `LOOMWG_CONFIG_DIR/clients/qr_code/<name>.png`
 - Client/user store: `LOOMWG_CONFIG_DIR/.loomwg/clients.json`
 - Autostart state: `LOOMWG_CONFIG_DIR/.loomwg/autostart.json`
-- Private keys are never returned in chat; configs/QR are served as one-time
-  artifact links (`/api/artifacts/<token>/{config,qr}`).
+- Private keys are never returned in chat; configs/QR are served as durable,
+  admin-only links (`/api/artifacts/<name>/{config,qr}`) and rebuilt from the
+  stored key when missing.
 
 ## Client store (`clients.json`)
 
@@ -52,7 +53,7 @@ Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
 | `wg_start` / `wg_stop` / `wg_restart` | dangerous | Interface lifecycle. |
 | `wg_service_enable` / `wg_service_disable` | dangerous | App-managed autostart flag. |
 | `wg_export_existing_clients` | dangerous | Import untracked peers and (re)issue config + QR links for all clients. |
-| `wg_get_client_artifact` | internal | One-time artifact download (not exposed to the LLM). |
+| `wg_get_client_artifact` | internal | Artifact download by client name (not exposed to the LLM). |
 
 Risk is enforced by the core (`src/core/security.py:classify_tool_risk`);
 `dangerous` tools require explicit admin approval. `wg_create_client` no longer

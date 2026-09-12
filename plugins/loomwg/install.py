@@ -26,10 +26,10 @@ from config import config_path
 
 
 def _container_shell(command: str, timeout: int = 300) -> str:
-    """Выполнить команду внутри контейнера (без nsenter/chroot).
+    """Run a command inside the container (no nsenter/chroot).
 
-    Контейнер имеет NET_ADMIN capability, поэтому команды
-    iptables/nft/sysctl выполняются напрямую.
+    The container has the NET_ADMIN capability, so iptables/nft/sysctl
+    commands run directly.
     """
     result = subprocess.run(
         ["/bin/sh", "-c", command],
@@ -39,15 +39,15 @@ def _container_shell(command: str, timeout: int = 300) -> str:
         check=False,
     )
     if result.returncode:
-        details = result.stderr.strip() or result.stdout.strip() or "нет деталей"
+        details = result.stderr.strip() or result.stdout.strip() or "no details"
         raise RuntimeError(
-            f"Команда завершилась с кодом {result.returncode}: {details}"
+            f"Command exited with code {result.returncode}: {details}"
         )
     return result.stdout.strip()
 
 
 def _detect_host() -> dict[str, str]:
-    """Определить ОС, внешний интерфейс и firewall внутри контейнера."""
+    """Detect the OS, external interface, and firewall inside the container."""
     return {
         "os": _container_shell(
             "test -r /etc/os-release && . /etc/os-release && "
@@ -73,7 +73,7 @@ def _configure_firewall(
     listen_port: int,
     ipv4_network: str,
 ) -> str:
-    """Настроить firewall внутри контейнера (без nsenter/chroot)."""
+    """Configure the firewall inside the container (no nsenter/chroot)."""
     if firewall == "firewalld":
         _container_shell(
             f"firewall-cmd --permanent --add-port={listen_port}/udp && "
@@ -99,29 +99,29 @@ def _configure_firewall(
         )
     else:
         raise RuntimeError(
-            "Не найден поддерживаемый firewall. Откройте UDP-порт и настройте NAT вручную."
+            "No supported firewall found. Open the UDP port and configure NAT manually."
         )
     return firewall
 
 
 def _enable_forwarding() -> None:
-    """Включить forwarding через sysctl напрямую (без файловой системы)."""
+    """Enable forwarding via sysctl directly (no filesystem access)."""
     _container_shell(
         "sysctl -w net.ipv4.ip_forward=1 net.ipv6.conf.all.forwarding=1"
     )
 
 
 def setup_server(arguments: dict) -> dict:
-    """Настроить WireGuard-сервер внутри контейнера.
+    """Configure the WireGuard server inside the container.
 
-    Работает полностью внутри контейнера:
-    - Конфиг записывается в /etc/wireguard (смонтирован rw)
-    - Firewall/NAT настраивается через iptables/nft (cap_add NET_ADMIN)
-    - Forwarding включается через /etc/sysctl.d
+    Runs entirely inside the container:
+    - Config is written to /etc/wireguard (mounted rw)
+    - Firewall/NAT is configured via iptables/nft (cap_add NET_ADMIN)
+    - Forwarding is enabled via /etc/sysctl.d
     """
     interface = str(arguments.get("interface", "wg0")).strip()
     if not re.fullmatch(r"[A-Za-z0-9]{1,15}", interface):
-        raise ValueError("Некорректное имя WireGuard-интерфейса")
+        raise ValueError("Invalid WireGuard interface name")
 
     ipv4_network = str(arguments.get("ipv4_network", "10.66.66.0/24")).strip()
     ipv6_network = str(arguments.get("ipv6_network", "fd42:42:42::/64")).strip()
@@ -129,20 +129,20 @@ def setup_server(arguments: dict) -> dict:
         v4 = ip_network(ipv4_network)
         v6 = ip_network(ipv6_network)
     except ValueError as exc:
-        raise ValueError("Некорректная IPv4 или IPv6 сеть") from exc
+        raise ValueError("Invalid IPv4 or IPv6 network") from exc
     if v4.version != 4 or v6.version != 6:
-        raise ValueError("Нужно указать IPv4-сеть и IPv6-сеть")
+        raise ValueError("An IPv4 network and an IPv6 network are required")
 
     listen_port = int(arguments.get("listen_port", 51820))
     if not 1 <= listen_port <= 65535:
-        raise ValueError("Порт должен быть в диапазоне 1-65535")
+        raise ValueError("Port must be in the range 1-65535")
     dns = arguments.get("dns", ["1.1.1.1", "1.0.0.1"])
     if not isinstance(dns, list) or not dns or any(not str(item).strip() for item in dns):
-        raise ValueError("dns должен быть непустым массивом адресов")
+        raise ValueError("dns must be a non-empty array of addresses")
 
     path = config_path(interface)
     if path.exists():
-        raise ValueError(f"Конфигурация {path} уже существует")
+        raise ValueError(f"Configuration {path} already exists")
 
     run_command(["wg", "--version"])
 
@@ -152,7 +152,7 @@ def setup_server(arguments: dict) -> dict:
     host = _detect_host()
     external_interface = str(arguments.get("external_interface") or host["external_interface"]).strip()
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,32}", external_interface):
-        raise ValueError("Не удалось определить внешний сетевой интерфейс")
+        raise ValueError("Could not determine the external network interface")
     content = "\n".join(
         [
             "[Interface]",

@@ -1,12 +1,12 @@
 const TOKEN_KEY = "loomcore_admin_token"
 
-/** Получить сохранённый административный bearer-токен. */
+/** Get the stored admin bearer token. */
 export function getAdminToken(): string {
   if (typeof window === "undefined") return ""
   return localStorage.getItem(TOKEN_KEY) || ""
 }
 
-/** Сохранить или очистить административный bearer-токен. */
+/** Save or clear the admin bearer token. */
 export function setAdminToken(token: string): void {
   if (typeof window === "undefined") return
   const value = token.trim()
@@ -14,7 +14,7 @@ export function setAdminToken(token: string): void {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
-/** Добавить access_token к URL, если токен сохранён. */
+/** Append access_token to the URL if a token is stored. */
 export function withAdminToken(url: string): string {
   const token = getAdminToken()
   if (!token) return url

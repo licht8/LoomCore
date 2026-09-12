@@ -12,9 +12,9 @@ def validate_public_key(value: str) -> str:
     try:
         decoded = base64.b64decode(key, validate=True)
     except (ValueError, base64.binascii.Error) as exc:
-        raise ValueError("Некорректный WireGuard public key") from exc
+        raise ValueError("Invalid WireGuard public key") from exc
     if len(decoded) != 32:
-        raise ValueError("WireGuard public key должен кодировать 32 байта")
+        raise ValueError("WireGuard public key must encode 32 bytes")
     return key
 
 
@@ -22,5 +22,5 @@ def generate_keypair() -> dict[str, str]:
     private_key = run_command(["wg", "genkey"])
     public_key = run_command(["wg", "pubkey"], timeout=5, input_text=private_key)
     if not private_key or not public_key:
-        raise CommandError("WireGuard не вернул ключи")
+        raise CommandError("WireGuard did not return keys")
     return {"private_key": private_key, "public_key": public_key}

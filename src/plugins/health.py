@@ -1,4 +1,4 @@
-"""Фоновая проверка здоровья плагинов и автоперезапуск."""
+"""Background plugin health check and auto-restart."""
 
 import asyncio
 import logging
@@ -11,14 +11,14 @@ HEALTHCHECK_INTERVAL_SECONDS = 30
 
 
 async def healthcheck_loop() -> None:
-    """Периодически проверять плагины и перезапускать мёртвые."""
+    """Periodically check plugins and restart the dead ones."""
     while True:
         await asyncio.sleep(HEALTHCHECK_INTERVAL_SECONDS)
         for name in plugin_manager.plugin_names():
             if not plugin_manager.is_healthy(name):
-                logger.warning(f"Плагин '{name}' не здоров — перезапуск")
+                logger.warning(f"Plugin '{name}' is unhealthy — restarting")
                 try:
                     await plugin_manager.restart_plugin(name)
-                    logger.info(f"Плагин '{name}' успешно перезапущен")
+                    logger.info(f"Plugin '{name}' restarted successfully")
                 except Exception as exc:
-                    logger.error(f"Не удалось перезапустить '{name}': {exc}")
+                    logger.error(f"Failed to restart '{name}': {exc}")

@@ -1,4 +1,4 @@
-"""Plugin-test: JSON-RPC контракт плагина loomwg (без вызовов wg)."""
+"""Plugin test: loomwg JSON-RPC contract (without calling wg)."""
 
 import json
 import subprocess
@@ -10,7 +10,7 @@ PLUGIN = PROJECT_ROOT / "plugins" / "loomwg" / "main.py"
 
 
 def _run_requests(*requests: dict) -> list[dict]:
-    """Запустить плагин, отправить запросы в stdin и собрать JSON-ответы."""
+    """Run the plugin, send requests to stdin, and collect the JSON responses."""
     payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests)
     proc = subprocess.run(
         [sys.executable, str(PLUGIN)],

@@ -1,4 +1,4 @@
-"""Unit-тесты PluginManager: разделение internal/публичных инструментов."""
+"""Unit tests for PluginManager: internal vs public tool separation."""
 
 import pytest
 
@@ -42,14 +42,14 @@ async def test_execute_internal_tool_routes_to_owner(monkeypatch):
     monkeypatch.setattr(manager, "execute_tool", fake_execute)
 
     result = await manager.execute_internal_tool(
-        "wg_get_client_artifact", {"token": "t", "kind": "config"}
+        "wg_get_client_artifact", {"name": "peer-abc", "kind": "config"}
     )
 
     assert result == {"ok": True}
     assert calls == {
         "plugin": "loomwg",
         "tool": "wg_get_client_artifact",
-        "args": {"token": "t", "kind": "config"},
+        "args": {"name": "peer-abc", "kind": "config"},
     }
 
 

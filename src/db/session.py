@@ -15,7 +15,7 @@ async def add_message(
     tool_calls: list | None = None,
     tool_result: str | None = None,
 ) -> Message:
-    """Записать сообщение в историю сессии."""
+    """Append a message to the session history."""
     message = Message(
         id=str(uuid4()),
         session_id=session_id,
@@ -36,7 +36,7 @@ async def add_user_message(
     session_id: str,
     content: str,
 ) -> Message:
-    """Записать пользовательское сообщение в историю."""
+    """Append a user message to the history."""
     message = Message(
         id=str(uuid4()),
         session_id=session_id,
@@ -56,7 +56,7 @@ async def add_assistant_message(
     content: str,
     tool_calls: list | None = None,
 ) -> Message:
-    """Записать ответ ассистента в историю."""
+    """Append an assistant message to the history."""
     message = Message(
         id=str(uuid4()),
         session_id=session_id,
@@ -76,16 +76,16 @@ async def ensure_session(
     session_id: str,
     user_identifier: str = "default",
 ) -> str:
-    """Убедиться, что сессия существует.
+    """Ensure the session exists.
 
-    1. Найти пользователя по identifier (или создать).
-    2. Найти сессию по id (или создать).
-    3. Вернуть session_id.
+    1. Find the user by identifier (or create them).
+    2. Find the session by id (or create it).
+    3. Return session_id.
 
-    Если сессия уже существует — вернуть её id без изменений.
-    Если пользователь не существует — создать с дефолтными параметрами.
+    If the session already exists — return its id unchanged.
+    If the user does not exist — create them with default parameters.
     """
-    # 1. Найти или создать пользователя
+    # 1. Find or create the user
     result = await session_db.execute(
         select(User).where(User.identifier == user_identifier)
     )
@@ -102,7 +102,7 @@ async def ensure_session(
         await session_db.commit()
         await session_db.refresh(user)
 
-    # 2. Найти или создать сессию
+    # 2. Find or create the session
     session_result = await session_db.execute(
         select(Session).where(Session.id == session_id)
     )
@@ -119,7 +119,7 @@ async def ensure_session(
             await session_db.commit()
         except Exception:
             await session_db.rollback()
-            # Сессия уже существует — вернуть её
+            # The session already exists — return it
             session_result = await session_db.execute(
                 select(Session).where(Session.id == session_id)
             )
@@ -133,7 +133,7 @@ async def get_session_history(
     session_id: str,
     limit: int = 50,
 ) -> list[Message]:
-    """Читать последние N сообщений сессии."""
+    """Read the last N messages of a session."""
     stmt = (
         select(Message)
         .where(Message.session_id == session_id)

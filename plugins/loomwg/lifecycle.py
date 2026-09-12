@@ -31,10 +31,10 @@ def restart(arguments: dict) -> dict:
 
 def format_lifecycle(result: dict) -> str:
     labels = {
-        "started": "запущен",
-        "stopped": "остановлен",
-        "restarted": "перезапущен",
-        "already_running": "уже запущен",
-        "already_stopped": "уже остановлен",
+        "started": "started",
+        "stopped": "stopped",
+        "restarted": "restarted",
+        "already_running": "already running",
+        "already_stopped": "already stopped",
     }
     return f"{result['interface']}: {labels.get(result['status'], result['status'])}"

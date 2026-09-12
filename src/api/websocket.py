@@ -1,4 +1,4 @@
-"""WebSocket-роут с авторизацией."""
+"""WebSocket route with authorization."""
 
 import logging
 import secrets
@@ -20,7 +20,7 @@ async def ws_proxy(
     session_id: str,
     access_token: str | None = Query(default=None),
 ):
-    """Прокси-роут: проверка доступа и передача управления в интерфейс чата."""
+    """Proxy route: verify access, then hand off to the chat interface."""
     cookie = websocket.cookies.get(SESSION_COOKIE)
     authorized = (
         decode_jwt_token(cookie, settings.session_secret) is not None
@@ -32,6 +32,6 @@ async def ws_proxy(
         )
     )
     if not authorized:
-        await websocket.close(code=1008, reason="Требуется административный токен")
+        await websocket.close(code=1008, reason="Admin token required")
         return
     await websocket_endpoint(websocket, session_id)

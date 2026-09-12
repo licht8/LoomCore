@@ -1,4 +1,4 @@
-"""Smoke-тест ядра: приложение отвечает без БД и плагинов."""
+"""Core smoke test: the app responds without a DB or plugins."""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -24,5 +24,5 @@ async def test_admin_routes_require_auth():
     ) as client:
         response = await client.get("/api/plugins/status")
 
-    # 401 — задан токен/JWT и не передан; 503 — доступ не настроен
+    # 401 — token/JWT configured but not sent; 503 — access not configured
     assert response.status_code in {401, 503}

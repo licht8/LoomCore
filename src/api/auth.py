@@ -1,4 +1,4 @@
-"""Роуты авторизации администратора."""
+"""Admin authentication routes."""
 
 import secrets
 
@@ -30,9 +30,9 @@ async def login(request: Request):
         and verify_totp(str(data.get("totp", "")), settings.admin_totp_secret)
     )
     if not valid:
-        raise HTTPException(status_code=401, detail="Неверные данные входа")
+        raise HTTPException(status_code=401, detail="Invalid login credentials")
     if not settings.session_secret:
-        raise HTTPException(status_code=503, detail="SESSION_SECRET не настроен")
+        raise HTTPException(status_code=503, detail="SESSION_SECRET is not configured")
     token = create_jwt_token(
         {"username": settings.admin_username, "jti": secrets.token_urlsafe(32)},
         settings.session_secret,
@@ -63,5 +63,5 @@ async def logout(request: Request):
 async def auth_session(request: Request):
     payload = decode_jwt_token(request.cookies.get(SESSION_COOKIE), settings.session_secret)
     if not payload:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        raise HTTPException(status_code=401, detail="Not authenticated")
     return {"authenticated": True}

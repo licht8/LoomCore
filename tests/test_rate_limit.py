@@ -1,7 +1,7 @@
-"""Тесты rate limiting для LoomCore.
+"""Rate limiting tests for LoomCore.
 
-Каждый тест создаёт изолированное мини-приложение с малыми лимитами,
-чтобы не «перетекать» между тестами.
+Each test builds an isolated mini-app with small limits so state does not
+leak between tests.
 """
 
 from __future__ import annotations
@@ -14,24 +14,24 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-# === Утилиты ===
+# === Utilities ===
 
 def make_limiter() -> Limiter:
-    """Создать новый Limiter для изоляции между тестами."""
+    """Create a fresh Limiter to isolate tests from each other."""
     return Limiter(key_func=get_remote_address)
 
 
 async def rate_limit_handler(req: Request, exc: RateLimitExceeded) -> JSONResponse:
     return JSONResponse(
         status_code=429,
-        content={"detail": "Слишком много запросов. Попробуйте позже."},
+        content={"detail": "Too many requests. Please try again later."},
     )
 
 
 def build_app(limiter: Limiter, rate_limit: str, key_func=None, endpoint="test"):
-    """Собрать мини-FastAPI с эндпоинтом и лимитом.
+    """Build a mini FastAPI app with one endpoint and a limit.
 
-    slowapi требует, чтобы декорируемая функция имела параметр «request».
+    slowapi requires the decorated function to have a ``request`` parameter.
     """
     app = FastAPI()
     app.state.limiter = limiter
@@ -45,10 +45,10 @@ def build_app(limiter: Limiter, rate_limit: str, key_func=None, endpoint="test")
     return app
 
 
-# === Задача 1: _chat_key_func через query-параметр ===
+# === Task 1: _chat_key_func via the query parameter ===
 
 def _chat_query_key(request: Request) -> str:
-    """Ключ: session_id из query, fallback — IP."""
+    """Key: session_id from the query, falling back to IP."""
     session_id = request.query_params.get("session_id")
     if session_id:
         return session_id
@@ -57,35 +57,35 @@ def _chat_query_key(request: Request) -> str:
 
 @pytest.fixture
 def chat_app():
-    # Лимит 2 запроса на 60 секунд на ключ session_id
+    # Limit: 2 requests per 60 seconds per session_id key
     return build_app(make_limiter(), "2 per 60 seconds", key_func=_chat_query_key)
 
 
 @pytest.mark.asyncio
 async def test_chat_key_func_via_query(chat_app):
-    """Ключ берётся из query_params, не читается body.
+    """The key comes from query_params; the body is not read.
 
-    Два запроса с session_id=sess1 исчерпывают лимит → 429 на 3-м.
-    Запрос с session_id=sess3 — отдельный ключ → 200.
+    Two requests with session_id=sess1 exhaust the limit → 429 on the third.
+    A request with session_id=sess3 is a separate key → 200.
     """
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as client:
-        # 2 запроса с sess1 → исчерпывают лимит (2/2)
+        # 2 requests with sess1 → exhaust the limit (2/2)
         r1 = await client.get("/test?session_id=sess1")
         r2 = await client.get("/test?session_id=sess1")
         assert r1.status_code == 200
         assert r2.status_code == 200
 
-        # 3-й с sess1 → лимит исчерпан
+        # 3rd with sess1 → limit exhausted
         r3 = await client.get("/test?session_id=sess1")
         assert r3.status_code == 429
-        assert r3.json()["detail"] == "Слишком много запросов. Попробуйте позже."
+        assert r3.json()["detail"] == "Too many requests. Please try again later."
 
-        # Запрос с sess3 → отдельный ключ, лимит не тронут
+        # A request with sess3 → separate key, limit untouched
         r4 = await client.get("/test?session_id=sess3")
         assert r4.status_code == 200
 
 
-# === Задача 3: кастомный 429 на русском ===
+# === Task 3: custom 429 body ===
 
 @pytest.fixture
 def limit_app():
@@ -94,17 +94,17 @@ def limit_app():
 
 @pytest.mark.asyncio
 async def test_rate_limit_429_response_body(limit_app):
-    """Тело 429 содержит русский текст."""
+    """The 429 body contains the custom message."""
     async with AsyncClient(transport=ASGITransport(app=limit_app), base_url="http://test") as client:
         await client.get("/test")
         resp = await client.get("/test")
         assert resp.status_code == 429
         data = resp.json()
         assert "detail" in data
-        assert "Слишком много запросов" in data["detail"]
+        assert "Too many requests" in data["detail"]
 
 
-# === Задача 4: /api/auth/login — 5/min ===
+# === Task 4: /api/auth/login — 5/min ===
 
 @pytest.fixture
 def auth_app():
@@ -123,16 +123,16 @@ def auth_app():
 
 @pytest.mark.asyncio
 async def test_auth_login_rate_limit(auth_app):
-    """5 запросов OK, 6-й — 429."""
+    """5 requests OK, the 6th — 429."""
     async with AsyncClient(transport=ASGITransport(app=auth_app), base_url="http://test") as client:
         for i in range(5):
             r = await client.post("/login")
-            assert r.status_code == 200, f"Запрос {i+1}: ожидал 200, получил {r.status_code}"
+            assert r.status_code == 200, f"Request {i+1}: expected 200, got {r.status_code}"
         r = await client.post("/login")
         assert r.status_code == 429
 
 
-# === Задача 4: /health — работает ===
+# === Task 4: /health — works ===
 
 @pytest.fixture
 def health_app():
@@ -151,14 +151,14 @@ def health_app():
 
 @pytest.mark.asyncio
 async def test_health_rate_limit(health_app):
-    """Лимит 60/min — запросы работают (проверено через 3/60s)."""
+    """The limit works (verified with 3/60s)."""
     async with AsyncClient(transport=ASGITransport(app=health_app), base_url="http://test") as client:
         r1 = await client.get("/health")
         assert r1.status_code == 200
         assert r1.json() == {"status": "ok"}
 
 
-# === Задача 4: /api/plugins/status — 10/min ===
+# === Task 4: /api/plugins/status — 10/min ===
 
 @pytest.fixture
 def plugins_app():
@@ -167,7 +167,7 @@ def plugins_app():
 
 @pytest.mark.asyncio
 async def test_plugins_status_rate_limit(plugins_app):
-    """Лимит 10/min — проверен через 2/60s."""
+    """The limit (verified with 2/60s) is enforced."""
     async with AsyncClient(transport=ASGITransport(app=plugins_app), base_url="http://test") as client:
         r1 = await client.get("/plugins_status")
         assert r1.status_code == 200
@@ -177,7 +177,7 @@ async def test_plugins_status_rate_limit(plugins_app):
         assert r3.status_code == 429
 
 
-# === Задача 4: /api/tools — 10/min ===
+# === Task 4: /api/tools — 10/min ===
 
 @pytest.fixture
 def tools_app():
@@ -186,7 +186,7 @@ def tools_app():
 
 @pytest.mark.asyncio
 async def test_tools_rate_limit(tools_app):
-    """Лимит 10/min — проверен через 2/60s."""
+    """The limit (verified with 2/60s) is enforced."""
     async with AsyncClient(transport=ASGITransport(app=tools_app), base_url="http://test") as client:
         r1 = await client.get("/tools")
         assert r1.status_code == 200
@@ -196,30 +196,30 @@ async def test_tools_rate_limit(tools_app):
         assert r3.status_code == 429
 
 
-# === Задача 4: WebSocket — не ограничен ===
+# === Task 4: WebSocket — not limited ===
 
 @pytest.mark.asyncio
 async def test_websocket_not_limited():
-    """WebSocket не имеет @limiter.limit."""
+    """The WebSocket has no @limiter.limit."""
     from src.api.websocket import router as ws_router
 
     route = next(
         (r for r in ws_router.routes if getattr(r, "path", None) == "/ws/{session_id}"),
         None,
     )
-    assert route is not None, "WebSocket route /ws/{session_id} не найден"
+    assert route is not None, "WebSocket route /ws/{session_id} not found"
 
     handler = route.endpoint
-    # Если slowapi декорировал, у handler будет attr _slowapi_limits
+    # If slowapi decorated it, the handler would have a _slowapi_limits attr
     has_limits = getattr(handler, "_slowapi_limits", None) is not None
-    assert not has_limits, "WebSocket имеет slowapi лимит — не должно быть"
+    assert not has_limits, "WebSocket has a slowapi limit — it should not"
 
 
-# === Задача 2: src/core/rate_limit.py — единственный источник ===
+# === Task 2: src/core/rate_limit.py — single source ===
 
 @pytest.mark.asyncio
 async def test_limiter_from_core_module():
-    """src.core.rate_limit.limiter — реальный экземпляр."""
+    """src.core.rate_limit.limiter is a real instance."""
     from src.core.rate_limit import limiter as core_limiter
 
     assert core_limiter is not None

@@ -1,4 +1,4 @@
-"""Роут проверки здоровья ядра."""
+"""Core health check route."""
 
 from fastapi import APIRouter, Request
 

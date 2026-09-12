@@ -4,12 +4,12 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import type { ChatMessage, WsMessage, ApprovalRequest, UseChatState } from "@/lib/chat-types"
 import { withAdminToken } from "@/lib/admin-token"
 
-/** Генерация случайного ID сессии */
+/** Generate a random session ID */
 function generateSessionId(): string {
   return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 }
 
-/** Получить или создать ID сессии (из localStorage) */
+/** Get or create the session ID (from localStorage) */
 function getSessionId(): string {
   if (typeof window === "undefined") return generateSessionId()
   let sid = localStorage.getItem("loomcore_session_id")
@@ -20,14 +20,14 @@ function getSessionId(): string {
   return sid
 }
 
-/** Форматирование текущей отметки времени */
+/** Format the current timestamp */
 function formatTimestamp(): string {
-  return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+  return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
 }
 
 /**
- * Кастомный хук для управления WebSocket-соединением и состоянием чата.
- * Заменяет статические mock-данные на реальное соединение с FastAPI.
+ * Custom hook managing the WebSocket connection and chat state.
+ * Replaces static mock data with a real connection to FastAPI.
  */
 export function useChat(onApprovalResponse?: (action: "approve" | "deny") => void) {
   const [state, setState] = useState<UseChatState>({
@@ -43,12 +43,12 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
   const sessionId = useRef<string>(getSessionId())
   const onApprovalRef = useRef(onApprovalResponse)
 
-  // Синхронизация ref callback
+  // Sync the callback ref
   useEffect(() => {
     onApprovalRef.current = onApprovalResponse
   }, [onApprovalResponse])
 
-  // === Открытие WebSocket-соединения ===
+  // === Open the WebSocket connection ===
   useEffect(() => {
     const configuredWsUrl = process.env.NEXT_PUBLIC_WS_URL
     const protocol = window.location.protocol === "https:" ? "wss" : "ws"
@@ -77,10 +77,10 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
         const msg: WsMessage = JSON.parse(event.data)
         handleWsMessage(msg)
       } catch (err) {
-        console.error("Ошибка парсинга WS-сообщения:", err)
+        console.error("Failed to parse WS message:", err)
         setState((prev) => ({
           ...prev,
-          error: `Ошибка обработки ответа сервера`,
+          error: `Failed to process the server response`,
           isThinking: false,
         }))
       }
@@ -90,10 +90,10 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       // React Strict Mode can close the first development connection during
       // effect cleanup before its handshake completes.
       if (!isActive || wsRef.current !== ws) return
-      console.error("WebSocket ошибка:", error)
+      console.error("WebSocket error:", error)
       setState((prev) => ({
         ...prev,
-        error: "Ошибка соединения с сервером. Проверьте, запущен ли бэкенд.",
+        error: "Could not connect to the server. Check that the backend is running.",
         isThinking: false,
       }))
     }
@@ -103,7 +103,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       setState((prev) => ({ ...prev, wsReady: false }))
     }
 
-    // Очистка при размонтировании
+    // Cleanup on unmount
     return () => {
       isActive = false
       if (wsRef.current === ws) {
@@ -116,7 +116,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // === Обработка входящих WS-событий ===
+  // === Handle incoming WS events ===
   const handleWsMessage = useCallback((msg: WsMessage) => {
     switch (msg.type) {
       case "thinking": {
@@ -125,7 +125,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       }
 
       case "response": {
-        // Добавляем ответ ассистента
+        // Append the assistant response
         setState((prev) => ({
           ...prev,
           isThinking: false,
@@ -145,7 +145,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       }
 
       case "tool_call": {
-        // Инструмент вызван, показываем pending
+        // A tool was called; show it as pending
         setState((prev) => ({
           ...prev,
           isThinking: true,
@@ -154,11 +154,11 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
             {
               id: `msg_${Date.now()}`,
               role: "tool",
-              content: msg.content || msg.text || `Вызов инструмента: ${msg.tool}`,
+              content: msg.content || msg.text || `Calling tool: ${msg.tool}`,
               timestamp: formatTimestamp(),
               tool: msg.tool || "unknown",
               toolStatus: "pending",
-              toolSummary: msg.summary || "ожидание ответа…",
+              toolSummary: msg.summary || "awaiting response…",
               toolCode: msg.code || "",
               artifacts: msg.artifacts,
             },
@@ -169,7 +169,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       }
 
       case "tool_response": {
-        // Обновляем последний pending tool-сообщение
+        // Update the last pending tool message
         setState((prev) => {
           const updated = [...prev.messages]
           for (let i = updated.length - 1; i >= 0; i--) {
@@ -190,21 +190,21 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
             isThinking: false,
             isSending: false,
             messages: updated,
-            error: msg.status === "error" ? (msg.error || msg.text || "Ошибка выполнения инструмента") : null,
+            error: msg.status === "error" ? (msg.error || msg.text || "Tool execution failed") : null,
           }
         })
         break
       }
 
       case "approval_request": {
-        // Запрос на подтверждение — показываем UI
+        // Confirmation request — show the UI
         setState((prev) => ({
           ...prev,
           isThinking: true,
           approvalRequest: {
             id: `approval_${Date.now()}`,
             action: msg.action || msg.tool || "unknown_action",
-            message: msg.content || msg.text || `Подтвердите выполнение инструмента ${msg.tool || ""}`,
+            message: msg.content || msg.text || `Confirm running tool ${msg.tool || ""}`,
             tool: msg.tool,
             args: msg.args,
           },
@@ -218,24 +218,24 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
           ...prev,
           isThinking: false,
           isSending: false,
-          error: msg.error || msg.text || "Неизвестная ошибка сервера",
+          error: msg.error || msg.text || "Unknown server error",
         }))
         break
       }
 
       default:
-        console.warn("Неизвестный тип WS-сообщения:", msg.type)
+        console.warn("Unknown WS message type:", msg.type)
     }
   }, [])
 
   /**
-   * Отправка сообщения пользователе через WebSocket.
-   * Добавляет пользовательское сообщение в ленту и шлёт JSON на бэкенд.
+   * Send a user message over the WebSocket.
+   * Appends the user message to the feed and sends JSON to the backend.
    */
   const sendMessage = useCallback((text: string) => {
     if (!text.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
 
-    // Добавляем сообщение пользователя в ленту
+    // Append the user message to the feed
     setState((prev) => ({
       ...prev,
       isSending: true,
@@ -250,11 +250,11 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       ],
     }))
 
-    // Шлём на бэкенд
+    // Send it to the backend
     wsRef.current.send(JSON.stringify({ message: text.trim() }))
   }, [])
 
-  /** Отправка ответа на approval-запрос */
+  /** Send a response to an approval request */
   const sendApprovalResponse = useCallback(
     (action: "approve" | "deny") => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return

@@ -6,9 +6,7 @@ import base64
 import contextlib
 import os
 import re
-import secrets
 import subprocess
-import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -25,8 +23,6 @@ CLIENTS_DIR = config_directory() / "clients"
 CONF_DIR_NAME = "conf"
 QR_DIR_NAME = "qr_code"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-ARTIFACT_TTL_SECONDS = 600
-_artifacts: dict[str, tuple[str, float]] = {}
 
 
 def _format_endpoint(endpoint: str, port: int) -> str:
@@ -96,19 +92,6 @@ def client_paths(name: str) -> tuple[Path, Path]:
     )
 
 
-def _issue_tokens(name: str) -> dict:
-    config_token = secrets.token_urlsafe(32)
-    qr_token = secrets.token_urlsafe(32)
-    expires_at = time.time() + ARTIFACT_TTL_SECONDS
-    _artifacts[config_token] = (name, expires_at)
-    _artifacts[qr_token] = (name, expires_at)
-    return {
-        "config_token": config_token,
-        "qr_token": qr_token,
-        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
-    }
-
-
 def rebuild_client(name: str, record: dict, interface: str) -> dict:
     """Rebuild <name>.conf and <name>.png from secrets stored in the JSON store."""
     private_key = str(record.get("private_key") or "")
@@ -142,7 +125,6 @@ def rebuild_client(name: str, record: dict, interface: str) -> dict:
         "public_key": str(record.get("public_key") or ""),
         "client_config": str(client_path),
         "qr_code": str(qr_path),
-        **_issue_tokens(name),
     }
 
 
@@ -173,7 +155,7 @@ def migrate_client_layout() -> dict[str, int]:
 def _safe_name(value: object) -> str:
     name = str(value or "").strip()
     if not NAME_RE.fullmatch(name):
-        raise ValueError("Имя клиента содержит недопустимые символы")
+        raise ValueError("Client name contains invalid characters")
     return name
 
 
@@ -188,15 +170,15 @@ def _detect_endpoint() -> str:
         except (OSError, ValueError, urllib.error.URLError):
             continue
     raise ValueError(
-        "Не удалось определить публичный адрес сервера. "
-        "Укажите endpoint или настройте LOOMWG_ENDPOINT."
+        "Could not detect the server's public address. "
+        "Set endpoint or configure LOOMWG_ENDPOINT."
     )
 
 
 def _server_settings(interface: str) -> tuple[str, int, list[str], list[str]]:
     path = config_path(interface)
     if not path.is_file():
-        raise FileNotFoundError(f"Конфигурация {path} не найдена")
+        raise FileNotFoundError(f"Configuration {path} not found")
     private_key = ""
     listen_port = 51820
     server_networks: list[str] = []
@@ -215,7 +197,7 @@ def _server_settings(interface: str) -> tuple[str, int, list[str], list[str]]:
                 server_networks.append(str(address.network))
                 server_addresses.append(str(address.ip))
     if not private_key:
-        raise ValueError("В конфигурации сервера отсутствует PrivateKey")
+        raise ValueError("Server configuration is missing PrivateKey")
     public_key = run_command(["wg", "pubkey"], input_text=private_key)
     return public_key, listen_port, server_networks, server_addresses
 
@@ -266,7 +248,7 @@ def _allocate_addresses(
                     return [f"{ipv4}/32", f"{ipv6}/128"]
             if not ipv6_networks:
                 return [f"{ipv4}/32"]
-    raise ValueError("В WireGuard-сетях нет свободной пары IPv4/IPv6 для нового клиента")
+    raise ValueError("No free IPv4/IPv6 pair available in the WireGuard networks")
 
 
 def _client_addresses(arguments: dict, interface: str, server_networks: list[str], server_addresses: list[str]) -> list[str]:
@@ -274,20 +256,20 @@ def _client_addresses(arguments: dict, interface: str, server_networks: list[str
     if raw is None:
         return _allocate_addresses(interface, server_networks, server_addresses)
     if not isinstance(raw, list) or not raw:
-        raise ValueError("addresses должен быть непустым массивом адресов")
+        raise ValueError("addresses must be a non-empty array")
     result = []
     for value in raw:
         try:
             address = ip_interface(str(value))
         except ValueError as exc:
-            raise ValueError(f"Некорректный адрес клиента: {value}") from exc
+            raise ValueError(f"Invalid client address: {value}") from exc
         if address.network.prefixlen == 0:
-            raise ValueError("Адрес клиента не может быть маршрутом по умолчанию")
+            raise ValueError("Client address cannot be the default route")
         if address.network.prefixlen not in (32, 128):
-            raise ValueError("Адрес клиента должен быть /32 или /128")
+            raise ValueError("Client address must be /32 or /128")
         result.append(str(address))
     if len(result) != len(set(result)):
-        raise ValueError("addresses содержит дубликаты")
+        raise ValueError("addresses contains duplicates")
     return result
 
 
@@ -323,9 +305,6 @@ def remove_client_artifacts(public_key: str) -> list[str]:
         qr_path = qr_dir / f"{name}.png"
         if qr_path.exists():
             qr_path.unlink()
-        for token, (artifact_name, _) in list(_artifacts.items()):
-            if artifact_name == name:
-                _artifacts.pop(token, None)
         removed.append(name)
     return removed
 
@@ -337,22 +316,22 @@ def create_client(arguments: dict) -> dict:
     if not endpoint:
         endpoint = _detect_endpoint()
     if any(char.isspace() for char in endpoint):
-        raise ValueError("endpoint не должен содержать пробелы")
+        raise ValueError("endpoint must not contain whitespace")
     server_public_key, listen_port, server_networks, server_addresses = _server_settings(interface)
     addresses = _client_addresses(arguments, interface, server_networks, server_addresses)
     used_addresses = _used_addresses(interface)
     for address in addresses:
         if not any(ip_interface(address).ip in ip_network(network) for network in server_networks):
-            raise ValueError(f"Адрес клиента {address} не входит в сеть WireGuard")
+            raise ValueError(f"Client address {address} is outside the WireGuard network")
         if ip_interface(address).ip in used_addresses or ip_interface(address).ip in {
             ip_address(value) for value in server_addresses
         }:
-            raise ValueError(f"Адрес клиента {address} уже занят")
+            raise ValueError(f"Client address {address} is already in use")
     keypair = generate_keypair()
     preshared_key = run_command(["wg", "genpsk"])
     client_path, qr_path = client_paths(name)
     if client_path.exists() or qr_path.exists():
-        raise ValueError(f"Клиент '{name}' уже существует")
+        raise ValueError(f"Client '{name}' already exists")
 
     client_config = build_client_config(
         server_public_key,
@@ -404,24 +383,39 @@ def create_client(arguments: dict) -> dict:
         "client_config": str(client_path),
         "qr_code": str(qr_path),
         "secret_persisted": True,
-        **_issue_tokens(name),
     }
 
 
 def get_artifact(arguments: dict) -> dict:
-    token = str(arguments.get("token", ""))
+    """Return a stored client's config or QR as base64.
+
+    Resolves the client by name and rebuilds the artifact from the stored
+    private key when the file is missing, so links survive plugin restarts.
+    """
+    interface = str(arguments.get("interface", "wg0"))
+    name = clients_store.resolve_name(arguments.get("name"))
     kind = str(arguments.get("kind", ""))
-    record = _artifacts.pop(token, None)
-    if record is None:
-        raise ValueError("Ссылка на артефакт недействительна или уже использована")
-    name, expires_at = record
-    if time.time() >= expires_at:
-        raise ValueError("Срок действия ссылки истёк")
     if kind not in {"config", "qr"}:
-        raise ValueError("Недопустимый тип артефакта")
-    path = client_paths(name)[0 if kind == "config" else 1]
+        raise ValueError("kind must be one of: config, qr")
+
+    record = clients_store.get(name)
+    if not record:
+        raise ValueError(f"Client '{name}' not found")
+
+    client_path, qr_path = client_paths(name)
+    if not client_path.is_file():
+        if not record.get("private_key"):
+            raise ValueError(
+                f"Config for '{name}' is not available; run "
+                "wg_export_existing_clients with rotate=true to recreate it"
+            )
+        rebuild_client(name, record, interface)
+    elif kind == "qr" and not qr_path.is_file():
+        _generate_qr(client_path.read_text(encoding="utf-8"), qr_path)
+
+    path = client_path if kind == "config" else qr_path
     if not path.is_file():
-        raise FileNotFoundError("Файл артефакта не найден")
+        raise FileNotFoundError(f"{kind} artifact for '{name}' not found")
     raw = path.read_bytes()
     return {
         "filename": path.name,
@@ -446,7 +440,7 @@ def store_client_record(name: str, created: dict, created_at: str | None = None)
 
 
 def export_client(arguments: dict) -> dict:
-    """Ensure the client config/QR exist and return one-time download links.
+    """Ensure the client config/QR exist and report their paths.
 
     Uses the private key from the JSON store to rebuild a missing config; with
     ``rotate=true`` a peer without a stored private key is recreated with new keys.
@@ -514,7 +508,6 @@ def export_client(arguments: dict) -> dict:
             "public_key": str(record.get("public_key") or ""),
             "client_config": str(client_path),
             "qr_code": str(qr_path),
-            **_issue_tokens(name),
         }
 
     result["rotated"] = rotated
@@ -522,13 +515,10 @@ def export_client(arguments: dict) -> dict:
 
 
 def _drop_client_files(name: str) -> None:
-    """Delete generated config/QR files and pending tokens for a client name."""
+    """Delete generated config/QR files for a client name."""
     for path in client_paths(name):
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
-    for token, (artifact_name, _) in list(_artifacts.items()):
-        if artifact_name == name:
-            _artifacts.pop(token, None)
 
 
 def export_existing_clients(arguments: dict) -> dict:
@@ -536,7 +526,7 @@ def export_existing_clients(arguments: dict) -> dict:
 
     Backfilled peers have no private key, so ``rotate`` defaults to true and
     recreates them with a fresh keypair. Clients with a stored private key are
-    only reissued. Returns a per-client list carrying one-time tokens.
+    only reissued. Returns a per-client list reporting artifact availability.
     """
     interface = str(arguments.get("interface", "wg0"))
     kind = str(arguments.get("kind", "both")).lower()
@@ -617,12 +607,13 @@ def export_existing_clients(arguments: dict) -> dict:
             rotated.append(name)
         else:
             reissued.append(name)
+        client_path, qr_path = client_paths(name)
         clients.append(
             {
                 **entry,
                 "rotated": bool(exported.get("rotated")),
-                "config_token": exported.get("config_token"),
-                "qr_token": exported.get("qr_token"),
+                "config_ready": client_path.is_file(),
+                "qr_ready": qr_path.is_file(),
             }
         )
 
@@ -633,5 +624,4 @@ def export_existing_clients(arguments: dict) -> dict:
         "rotated": rotated,
         "reissued": reissued,
         "failed": failed,
-        "artifact_expires_in": ARTIFACT_TTL_SECONDS,
     }

@@ -1,7 +1,7 @@
-"""Модуль rate limiting для FastAPI-приложения.
+"""Rate limiting module for the FastAPI application.
 
-Создаёт единственный экземпляр Limiter с ключом по IP-адресу.
-Ниной бизнес-логики — только конфигурация.
+Creates a single Limiter instance keyed by IP address.
+No business logic — configuration only.
 """
 
 from slowapi import Limiter

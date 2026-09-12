@@ -1,5 +1,6 @@
 import contextlib
 import logging
+from urllib.parse import quote
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -17,12 +18,12 @@ airouter_with_plugins = AIRouter(plugin_manager=plugin_manager)
 
 
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
-    """Выполнить инструмент через плагин, которому он принадлежит."""
+    """Run a tool through the plugin that owns it."""
     return await plugin_manager.execute_tool_by_name(tool_name, arguments)
 
 
 def _extract_text(raw_result: dict) -> str:
-    """Извлечь текст из MCP-результата ({"content": [{"type": "text", ...}]})."""
+    """Extract text from an MCP result ({"content": [{"type": "text", ...}]})."""
     if isinstance(raw_result, dict) and "content" in raw_result:
         return "".join(
             item.get("text", "")
@@ -33,52 +34,47 @@ def _extract_text(raw_result: dict) -> str:
 
 
 def _build_artifacts(raw_result: dict) -> list[dict] | None:
-    """Build one-time download links for any tool result exposing client artifacts."""
+    """Build durable download links for any tool result exposing client artifacts.
+
+    Links are keyed by client name (``/api/artifacts/<name>/<kind>``), so they
+    survive plugin restarts and browser reloads.
+    """
     if not isinstance(raw_result, dict):
         return None
     data = raw_result.get("data")
     if not isinstance(data, dict):
         return None
 
+    entries: list[dict] = []
     clients = data.get("clients")
     if isinstance(clients, list):
-        artifacts: list[dict] = []
-        for entry in clients:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("name") or "client"
-            config_token = entry.get("config_token")
-            qr_token = entry.get("qr_token")
-            if config_token:
-                artifacts.append(
-                    {
-                        "label": f"Конфигурация: {name}",
-                        "url": f"/api/artifacts/{config_token}/config",
-                    }
-                )
-            if qr_token:
-                artifacts.append(
-                    {
-                        "label": f"QR-код: {name}",
-                        "url": f"/api/artifacts/{qr_token}/qr",
-                    }
-                )
-        return artifacts or None
+        entries.extend(entry for entry in clients if isinstance(entry, dict))
+    elif data.get("name"):
+        entries.append(data)
 
-    config_token = data.get("config_token")
-    qr_token = data.get("qr_token")
-    if not (config_token and qr_token):
-        return None
-    return [
-        {
-            "label": "Скачать конфигурацию",
-            "url": f"/api/artifacts/{config_token}/config",
-        },
-        {
-            "label": "Скачать QR-код",
-            "url": f"/api/artifacts/{qr_token}/qr",
-        },
-    ]
+    artifacts: list[dict] = []
+    for entry in entries:
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        quoted = quote(name, safe="")
+        config_ready = bool(entry.get("config_ready") or entry.get("client_config"))
+        qr_ready = bool(entry.get("qr_ready") or entry.get("qr_code"))
+        if config_ready:
+            artifacts.append(
+                {
+                    "label": f"Configuration: {name}",
+                    "url": f"/api/artifacts/{quoted}/config",
+                }
+            )
+        if qr_ready:
+            artifacts.append(
+                {
+                    "label": f"QR code: {name}",
+                    "url": f"/api/artifacts/{quoted}/qr",
+                }
+            )
+    return artifacts or None
 
 
 async def _save_tool_message(
@@ -87,7 +83,7 @@ async def _save_tool_message(
     arguments: dict | None,
     content: str,
 ) -> None:
-    """Сохранить результат вызова инструмента в историю сессии."""
+    """Save a tool call result to the session history."""
     async with async_session_factory() as db:
         await add_message(
             db,
@@ -105,7 +101,7 @@ async def _run_tool_and_notify(
     arguments: dict | None,
     risk: str | None = None,
 ) -> None:
-    """Выполнить инструмент, сохранить результат и отправить его в UI."""
+    """Run a tool, save the result, and send it to the UI."""
     raw_result = await _execute_tool(tool_name, arguments)
     content_text = _extract_text(raw_result)
     artifacts = _build_artifacts(raw_result)
@@ -118,7 +114,7 @@ async def _run_tool_and_notify(
         "content": content_text,
         "result": content_text,
         "status": "success",
-        "summary": "Выполнено",
+        "summary": "Done",
         "artifacts": artifacts,
     }
     if risk:
@@ -127,32 +123,32 @@ async def _run_tool_and_notify(
 
 
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    """WebSocket endpoint для живого чата с AI.
+    """WebSocket endpoint for live chat with the AI.
 
-    Логика:
-      1. Принять соединение.
-      2. В цикле читать JSON от клиента (сообщения или команды approve/deny).
-      3. Если это текст — отправить thinking → вызвать AIRouter.route → тип ответа.
-      4. Если action=approve — выполнить плагин через MCP.
-      5. Если action=deny — отправить tool_denied.
-      6. Safe/Moderate инструменты — выполнить автоматически.
-      7. Dangerous — отправить approval_request.
-      8. Обработать закрытие соединения — логировать.
-      9. Обработать исключения — отправить {"type": "error", ...}.
+    Logic:
+      1. Accept the connection.
+      2. Loop reading JSON from the client (messages or approve/deny commands).
+      3. For text — send thinking → call AIRouter.route → response type.
+      4. For action=approve — run the plugin via MCP.
+      5. For action=deny — send tool_denied.
+      6. Safe/Moderate tools — run automatically.
+      7. Dangerous — send approval_request.
+      8. Handle connection close — log it.
+      9. Handle exceptions — send {"type": "error", ...}.
     """
     await websocket.accept()
 
-    # Убедиться, что сессия существует (создать пользователя и сессию если нет)
+    # Ensure the session exists (create the user and session if needed)
     async with async_session_factory() as ws_db:
         await ensure_session(ws_db, session_id)
 
     try:
         while True:
-            # Читаем JSON от клиента
+            # Read JSON from the client
             data = await websocket.receive_json()
-            logger.info(f"📥 Получено сообщение от клиента: {data}")
+            logger.info(f"📥 Received client message: {data}")
 
-            # Проверяем, это команда approve/deny или обычное сообщение?
+            # Is this an approve/deny command or a regular message?
             action = data.get("action")
 
             if action == "approve":
@@ -165,7 +161,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 except Exception as exc:
                     await websocket.send_json({
                         "type": "error",
-                        "error": f"Ошибка выполнения '{tool}': {exc}",
+                        "error": f"Failed to run '{tool}': {exc}",
                     })
                 continue
 
@@ -173,23 +169,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_json({"type": "tool_denied"})
                 continue
 
-            # Обычное текстовое сообщение от пользователя
+            # Regular text message from the user
             user_text = data if isinstance(data, str) else data.get("message", "")
             if not user_text:
                 continue
 
-            # Отправляем "печатает..."
+            # Send "typing..."
             await websocket.send_json(
                 {"type": "thinking", "status": "processing"}
             )
-            logger.info(f"🧠 Отправка запроса в LLM для session={session_id}...")
+            logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
 
-            # Отправляем к LLM
+            # Send to the LLM
             try:
                 result = await airouter_with_plugins.route(user_text, session_id)
-                logger.info(f"✅ LLM вернула ответ, type={result.get('type')}, session={session_id}")
+                logger.info(f"✅ LLM responded, type={result.get('type')}, session={session_id}")
 
-                # Уведомление UI о недоступных плагинах
+                # Notify the UI about unavailable plugins
                 unavailable = result.get("tool_schema_warning")
                 if unavailable:
                     await websocket.send_json({
@@ -207,7 +203,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 )
                 continue
 
-            # Обрабатываем тип ответа
+            # Handle the response type
             answer_type = result.get("type")
 
             if answer_type == "text":
@@ -220,15 +216,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 tool_name = result.get("tool_name", "unknown")
                 tool_args = result.get("tool_args")
 
-                # Классифицируем риск
+                # Classify the risk
                 risk = classify_tool_risk(tool_name)
                 await websocket.send_json({
                     "type": "tool_call",
                     "tool": tool_name,
                     "args": tool_args,
-                    "content": f"Вызов инструмента: {tool_name}",
+                    "content": f"Calling tool: {tool_name}",
                     "status": "running",
-                    "summary": "Выполняется…",
+                    "summary": "Running…",
                 })
 
                 if risk == "dangerous":
@@ -238,19 +234,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         "args": tool_args,
                         "risk": "dangerous",
                         "action": tool_name,
-                        "content": f"Подтвердите выполнение инструмента: {tool_name}",
+                        "content": f"Confirm running tool: {tool_name}",
                     })
                 else:
-                    # Safe/Moderate — выполняем автоматически через плагин
+                    # Safe/Moderate — run automatically through the plugin
                     try:
                         await _run_tool_and_notify(
                             websocket, session_id, tool_name, tool_args, risk=risk
                         )
                     except Exception as exc:
-                        logger.error(f"Ошибка выполнения инструмента '{tool_name}': {exc}")
+                        logger.error(f"Failed to run tool '{tool_name}': {exc}")
                         await websocket.send_json({
                             "type": "error",
-                            "error": f"Ошибка вызова '{tool_name}': {exc}",
+                            "error": f"Failed to call '{tool_name}': {exc}",
                         })
                         continue
 
@@ -259,6 +255,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     except Exception as exc:
         with contextlib.suppress(Exception):
             await websocket.send_json({"type": "error", "error": str(exc)})
-        logger.error(f"❌ Фатальная ошибка WebSocket для session {session_id}: {exc}")
+        logger.error(f"❌ Fatal WebSocket error for session {session_id}: {exc}")
         import traceback
         logger.error(traceback.format_exc())

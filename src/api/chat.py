@@ -1,4 +1,4 @@
-"""REST-роут чата с AI."""
+"""REST chat route with the AI."""
 
 import logging
 import uuid
@@ -34,7 +34,7 @@ async def chat_endpoint(
     authorization: str | None = Header(default=None),
     access_token: str | None = Query(default=None),
 ):
-    """Отправить сообщение AI и получить ответ (REST)."""
+    """Send a message to the AI and get a response (REST)."""
     require_admin_token(extract_admin_token(request, authorization, access_token))
     try:
         return await airouter.route(payload.message, payload.session_id)

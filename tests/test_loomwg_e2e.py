@@ -1,6 +1,6 @@
-"""E2E-тест плагина loomwg: реальный WireGuard (Linux + root).
+"""E2E test for the loomwg plugin: real WireGuard (Linux + root).
 
-По умолчанию пропускается. Запуск:
+Skipped by default. Run with:
     sudo LOOMWG_E2E=1 pytest -m e2e
 """
 
@@ -21,7 +21,7 @@ pytestmark = [
             and shutil.which("wg-quick")
             and os.geteuid() == 0
         ),
-        reason="Задайте LOOMWG_E2E=1 на Linux с wg-quick и правами root",
+        reason="Set LOOMWG_E2E=1 on Linux with wg-quick and root privileges",
     ),
 ]
 

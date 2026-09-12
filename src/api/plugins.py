@@ -1,4 +1,4 @@
-"""Роуты состояния плагинов и их инструментов."""
+"""Routes for plugin and tool status."""
 
 from fastapi import APIRouter, Header, Query, Request
 
@@ -17,7 +17,7 @@ async def get_plugins_status(
     authorization: str | None = Header(default=None),
     access_token: str | None = Query(default=None),
 ):
-    """Вернуть состояние всех плагинов."""
+    """Return the status of all plugins."""
     require_admin_token(extract_admin_token(request, authorization, access_token))
     return {
         "plugins": {
@@ -34,7 +34,7 @@ async def list_plugins_tools(
     authorization: str | None = Header(default=None),
     access_token: str | None = Query(default=None),
 ):
-    """Вернуть схемы инструментов всех плагинов (для Swagger/UI)."""
+    """Return the tool schemas of all plugins (for Swagger/UI)."""
     require_admin_token(extract_admin_token(request, authorization, access_token))
     result: dict = {}
     try:

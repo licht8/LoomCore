@@ -49,7 +49,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
       body: JSON.stringify({ username, password, totp }),
     })
     if (!response.ok) {
-      setError("Неверный логин, пароль или TOTP-код")
+      setError("Invalid username, password, or TOTP code")
       return
     }
     setAuthenticated(true)
@@ -59,11 +59,11 @@ export function AdminGate({ children }: { children: ReactNode }) {
     event.preventDefault()
     const value = token.trim()
     if (!value) {
-      setError("Введите административный токен")
+      setError("Enter the admin token")
       return
     }
     if (!(await validateToken(value))) {
-      setError("Неверный административный токен")
+      setError("Invalid admin token")
       return
     }
     setAdminToken(value)
@@ -82,14 +82,14 @@ export function AdminGate({ children }: { children: ReactNode }) {
             onClick={() => { setMode("password"); setError("") }}
             type="button"
           >
-            Логин и TOTP
+            Login and TOTP
           </button>
           <button
             className={`flex-1 rounded-md px-3 py-1.5 ${mode === "token" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
             onClick={() => { setMode("token"); setError("") }}
             type="button"
           >
-            Токен
+            Token
           </button>
         </div>
 
@@ -97,23 +97,23 @@ export function AdminGate({ children }: { children: ReactNode }) {
           <form onSubmit={login} className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-xl">
             <div>
               <h1 className="text-xl font-semibold">LoomCore Admin</h1>
-              <p className="mt-1 text-sm text-muted-foreground">Войдите для управления сервером</p>
+              <p className="mt-1 text-sm text-muted-foreground">Sign in to manage the server</p>
             </div>
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Логин" autoComplete="username" />
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Пароль" type="password" autoComplete="current-password" />
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={totp} onChange={(event) => setTotp(event.target.value)} placeholder="Код из приложения-аутентификатора" inputMode="numeric" />
+            <input className="w-full rounded-lg border bg-background px-3 py-2" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" />
+            <input className="w-full rounded-lg border bg-background px-3 py-2" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete="current-password" />
+            <input className="w-full rounded-lg border bg-background px-3 py-2" value={totp} onChange={(event) => setTotp(event.target.value)} placeholder="Authenticator app code" inputMode="numeric" />
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <button className="w-full rounded-lg bg-primary px-3 py-2 text-primary-foreground" type="submit">Войти</button>
+            <button className="w-full rounded-lg bg-primary px-3 py-2 text-primary-foreground" type="submit">Sign in</button>
           </form>
         ) : (
           <form onSubmit={loginWithToken} className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-xl">
             <div>
               <h1 className="text-xl font-semibold">LoomCore Admin</h1>
-              <p className="mt-1 text-sm text-muted-foreground">Введите административный токен</p>
+              <p className="mt-1 text-sm text-muted-foreground">Enter the admin token</p>
             </div>
             <input className="w-full rounded-lg border bg-background px-3 py-2" value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_TOKEN" type="password" autoComplete="off" />
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <button className="w-full rounded-lg bg-primary px-3 py-2 text-primary-foreground" type="submit">Войти</button>
+            <button className="w-full rounded-lg bg-primary px-3 py-2 text-primary-foreground" type="submit">Sign in</button>
           </form>
         )}
       </div>

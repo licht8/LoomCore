@@ -222,7 +222,7 @@ Run this after sections 1-6. It exercises the product the way an end user would.
 
 ### 11.1 Login (token mode)
 1. Open `http://SERVER_IP/`.
-2. Switch to the **Token** tab, paste `ADMIN_TOKEN`, click **Войти**.
+2. Switch to the **Token** tab, paste `ADMIN_TOKEN`, click **Sign in**.
 3. Expected: chat dashboard appears; sidebar shows the LoomWG plugin; no error banner.
 - Wrong token -> login rejected. Empty `ADMIN_TOKEN` -> 503 "Admin access not configured".
 

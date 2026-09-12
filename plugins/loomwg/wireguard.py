@@ -22,7 +22,7 @@ def run_command(
     timeout: int = 15,
     input_text: str | None = None,
 ) -> str:
-    # Выполняем напрямую — контейнер имеет NET_ADMIN capability
+    # Run directly — the container has the NET_ADMIN capability
     try:
         result = subprocess.run(
             command,
@@ -33,12 +33,12 @@ def run_command(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CommandError(f"Не удалось выполнить {' '.join(command)}: {exc}") from exc
+        raise CommandError(f"Failed to run {' '.join(command)}: {exc}") from exc
 
     if result.returncode != 0:
-        details = result.stderr.strip() or result.stdout.strip() or "нет деталей"
+        details = result.stderr.strip() or result.stdout.strip() or "no details"
         raise CommandError(
-            f"Команда {' '.join(command)} завершилась с кодом "
+            f"Command {' '.join(command)} exited with code "
             f"{result.returncode}: {details}"
         )
     return result.stdout.strip()
@@ -47,7 +47,7 @@ def run_command(
 def validate_interface(arguments: dict[str, Any]) -> str:
     interface = str(arguments.get("interface", "wg0"))
     if not INTERFACE_RE.fullmatch(interface):
-        raise ValueError("Некорректное имя WireGuard-интерфейса")
+        raise ValueError("Invalid WireGuard interface name")
     return interface
 
 
@@ -85,11 +85,11 @@ def read_interface(interface: str) -> dict[str, Any]:
     dump_output = run_command(["wg", "show", interface, "dump"])
     lines = dump_output.splitlines()
     if not lines:
-        raise CommandError(f"Интерфейс {interface} не вернул данные")
+        raise CommandError(f"Interface {interface} returned no data")
 
     interface_parts = lines[0].split()
     if len(interface_parts) < 3:
-        raise CommandError(f"Неожиданный формат вывода wg для {interface}")
+        raise CommandError(f"Unexpected wg output format for {interface}")
 
     peers: list[dict[str, Any]] = []
     for line in lines[1:]:

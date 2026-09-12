@@ -19,7 +19,7 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_db() -> AsyncSession:
-    """FastAPI-зависимость для получения асинхронной сессии БД."""
+    """FastAPI dependency returning an async DB session."""
     async with async_session_factory() as session:
         try:
             yield session

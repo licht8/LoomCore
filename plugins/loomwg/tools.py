@@ -54,7 +54,7 @@ def list_interfaces(arguments: dict[str, Any]) -> dict[str, Any]:
             f"{'yes' if name in configured else 'no'}"
         )
     return text_result(
-        "\n".join(rows) if names else "WireGuard-интерфейсы не найдены",
+        "\n".join(rows) if names else "No WireGuard interfaces found",
         interfaces=[
             {
                 "name": name,
@@ -73,7 +73,7 @@ def status(arguments: dict[str, Any]) -> dict[str, Any]:
             run_command(["wg-quick", "up", interface], timeout=60)
         except CommandError:
             return text_result(
-                f"{interface}: DOWN\nПиров: 0\nАктивных: 0\nНеактивных: 0",
+                f"{interface}: DOWN\nPeers: 0\nOnline: 0\nOffline: 0",
                 interface=interface,
                 active=False,
                 peer_count=0,
@@ -85,10 +85,10 @@ def status(arguments: dict[str, Any]) -> dict[str, Any]:
     peer_count = len(details["peers"])
     return text_result(
         f"{interface}: UP\n"
-        f"Порт: {details['listen_port']}\n"
-        f"Пиров: {peer_count}\n"
-        f"Активных: {online}\n"
-        f"Неактивных: {peer_count - online}",
+        f"Port: {details['listen_port']}\n"
+        f"Peers: {peer_count}\n"
+        f"Online: {online}\n"
+        f"Offline: {peer_count - online}",
         **details,
         active=True,
         online_peers=online,
@@ -177,7 +177,7 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         checks["active"] = False
         checks["interfaces_error"] = str(exc)
 
-    # Пробуем запустить, если конфиг есть, но интерфейс не активен
+    # Try to bring it up if a config exists but the interface is not active
     config_exists = (config_directory() / f"{interface}.conf").is_file()
     if config_exists and not checks["active"]:
         try:
@@ -193,17 +193,17 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         checks["wg_installed"] and checks["active"] and checks["link_present"]
     )
     lines = [
-        f"WireGuard установлен: {'yes' if checks['wg_installed'] else 'no'}",
-        f"{interface} активен: {'yes' if checks['active'] else 'no'}",
-        f"Сетевой link существует: {'yes' if checks['link_present'] else 'no'}",
-        f"Конфигурация найдена: {'yes' if checks['config_present'] else 'no'}",
+        f"WireGuard installed: {'yes' if checks['wg_installed'] else 'no'}",
+        f"{interface} active: {'yes' if checks['active'] else 'no'}",
+        f"Network link present: {'yes' if checks['link_present'] else 'no'}",
+        f"Configuration found: {'yes' if checks['config_present'] else 'no'}",
         (
-            "Требуется настройка сервера: используйте wg_setup_server "
-            "с параметрами по умолчанию или укажите свои"
+            "Server setup required: use wg_setup_server "
+            "with defaults or provide your own"
             if checks["setup_required"]
             else ""
         ),
-        f"Итог: {'OK' if checks['healthy'] else 'ПРОБЛЕМА'}",
+        f"Result: {'OK' if checks['healthy'] else 'PROBLEM'}",
     ]
     return text_result("\n".join(lines), **checks)
 
@@ -211,7 +211,7 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
 def _allowed_ips(arguments: dict[str, Any]) -> list[str]:
     values = arguments.get("allowed_ips")
     if not isinstance(values, list) or not values:
-        raise ValueError("allowed_ips должен быть непустым массивом CIDR")
+        raise ValueError("allowed_ips must be a non-empty array of CIDRs")
     normalized = []
     for value in values:
         from ipaddress import ip_network
@@ -219,10 +219,10 @@ def _allowed_ips(arguments: dict[str, Any]) -> list[str]:
         try:
             network = ip_network(str(value), strict=False)
         except ValueError as exc:
-            raise ValueError(f"Некорректный AllowedIP: {value}") from exc
+            raise ValueError(f"Invalid AllowedIP: {value}") from exc
         normalized.append(str(network))
     if len(normalized) != len(set(normalized)):
-        raise ValueError("allowed_ips содержит дубликаты")
+        raise ValueError("allowed_ips contains duplicates")
     return normalized
 
 
@@ -254,8 +254,7 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
             if key not in {"private_key", "preshared_key"}
         }
         return text_result(
-            f"Client '{name}' created. One-time config and QR links are ready "
-            f"(valid for {created['artifact_expires_in']}s).",
+            f"Client '{name}' created. Config and QR are ready to download.",
             **safe,
             changed=True,
         )
@@ -263,7 +262,7 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     public_key = validate_public_key(str(public_key_arg))
     allowed_ips = _allowed_ips(arguments)
     if interface not in set(active_interfaces()):
-        raise CommandError(f"Интерфейс {interface} не активен")
+        raise CommandError(f"Interface {interface} is not active")
 
     existing_peer = None
     for peer in read_interface(interface)["peers"]:
@@ -336,7 +335,7 @@ def remove_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Provide 'name' or 'public_key'")
 
     if interface not in set(active_interfaces()):
-        raise CommandError(f"Интерфейс {interface} не активен")
+        raise CommandError(f"Interface {interface} is not active")
     run_command(["wg", "set", interface, "peer", public_key, "remove"])
     with contextlib.suppress(FileNotFoundError, ValueError):
         delete_peer(interface, public_key)
@@ -369,8 +368,7 @@ def export_existing_clients_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     lines = [
         f"Exported {len(clients)} client(s) on {result['interface']}: "
         f"{len(result['rotated'])} rekeyed, {len(result['reissued'])} reissued, "
-        f"{len(result['imported'])} imported, {len(result['failed'])} failed "
-        f"(links valid for {result['artifact_expires_in']}s)."
+        f"{len(result['imported'])} imported, {len(result['failed'])} failed."
     ]
     lines.extend(f"  + imported {name}" for name in result["imported"])
     lines.extend(
@@ -406,16 +404,16 @@ HANDLERS = {
 TOOLS_SCHEMA = [
     {
         "name": "wg_list_interfaces",
-        "description": "Показать WireGuard-интерфейсы, их активность и наличие конфигурации",
+        "description": "List WireGuard interfaces with activity and config presence",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "wg_setup_server",
         "description": (
-            "Создать серверную WireGuard-конфигурацию после подтверждения администратора. "
-            "Параметры имеют безопасные значения по умолчанию: wg0, 10.66.66.0/24, "
-            "fd42:42:42::/64, порт 51820, DNS 1.1.1.1 и 1.0.0.1. "
-            "Для full-tunnel также включает forwarding, NAT и правило firewall."
+            "Create the WireGuard server configuration after admin approval. "
+            "Defaults are safe: wg0, 10.66.66.0/24, fd42:42:42::/64, port 51820, "
+            "DNS 1.1.1.1 and 1.0.0.1. For full-tunnel it also enables forwarding, "
+            "NAT, and a firewall rule."
         ),
         "inputSchema": {
             "type": "object",
@@ -431,7 +429,7 @@ TOOLS_SCHEMA = [
                 },
                 "external_interface": {
                     "type": "string",
-                    "description": "Необязательно: внешний интерфейс; иначе определяется по default route",
+                    "description": "Optional external interface; otherwise detected via default route",
                 },
             },
             "required": [],
@@ -439,7 +437,7 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "wg_status",
-        "description": "Показать реальный статус WireGuard-интерфейса и активность пиров",
+        "description": "Show the WireGuard interface status and peer activity",
         "inputSchema": {
             "type": "object",
             "properties": {"interface": {"type": "string", "default": "wg0"}},
@@ -448,7 +446,7 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "wg_list_peers",
-        "description": "Показать реальных WireGuard-пиров, handshake и трафик",
+        "description": "List WireGuard peers with handshake and traffic",
         "inputSchema": {
             "type": "object",
             "properties": {"interface": {"type": "string", "default": "wg0"}},
@@ -457,7 +455,7 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "wg_diagnostics",
-        "description": "Проверить установку WireGuard, интерфейс, link и конфигурацию",
+        "description": "Check WireGuard installation, interface, link, and configuration",
         "inputSchema": {
             "type": "object",
             "properties": {"interface": {"type": "string", "default": "wg0"}},
@@ -504,9 +502,9 @@ TOOLS_SCHEMA = [
 ]
 
 for _name, _description in (
-    ("wg_start", "Запустить WireGuard-интерфейс"),
-    ("wg_stop", "Остановить WireGuard-интерфейс"),
-    ("wg_restart", "Перезапустить WireGuard-интерфейс"),
+    ("wg_start", "Start the WireGuard interface"),
+    ("wg_stop", "Stop the WireGuard interface"),
+    ("wg_restart", "Restart the WireGuard interface"),
 ):
     TOOLS_SCHEMA.append(
         {
@@ -523,15 +521,15 @@ for _name, _description in (
 TOOLS_SCHEMA.append(
     {
         "name": "wg_get_client_artifact",
-        "description": "Внутренний одноразовый доступ к созданному client config или QR",
+        "description": "Internal access to a stored client's config or QR code",
         "internal": True,
         "inputSchema": {
             "type": "object",
             "properties": {
-                "token": {"type": "string"},
+                "name": {"type": "string"},
                 "kind": {"type": "string", "enum": ["config", "qr"]},
             },
-            "required": ["token", "kind"],
+            "required": ["name", "kind"],
         },
     }
 )
@@ -593,11 +591,11 @@ TOOLS_SCHEMA.extend(
         {
             "name": "wg_export_existing_clients",
             "description": (
-                "Import untracked peers and (re)issue config + QR links for the "
-                "clients on an interface. Backfilled peers have no stored private "
-                "key, so rotate (default true) recreates them with new keys. "
-                "Re-running is safe: clients with stored keys are only reissued. "
-                "Requires admin approval."
+                "Import untracked peers and (re)issue config + QR for the clients "
+                "on an interface. Backfilled peers have no stored private key, so "
+                "rotate (default true) recreates them with new keys. Re-running is "
+                "safe: clients with stored keys are only reissued. Requires admin "
+                "approval."
             ),
             "inputSchema": {
                 "type": "object",

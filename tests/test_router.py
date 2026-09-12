@@ -1,4 +1,4 @@
-"""Unit-тесты маршрутизатора AIRouter без БД и сети."""
+"""Unit tests for the AIRouter without DB or network."""
 
 import pytest
 
@@ -7,7 +7,7 @@ from src.llm.router import AIRouter
 
 
 class _FakeSession:
-    """Заглушка async-сессии SQLAlchemy."""
+    """Stub for an async SQLAlchemy session."""
 
     async def __aenter__(self):
         return self
@@ -18,9 +18,9 @@ class _FakeSession:
 
 @pytest.fixture
 def patched_router(monkeypatch):
-    """AIRouter с заглушками БД; возвращает (router, state).
+    """AIRouter with DB stubs; returns (router, state).
 
-    state["response"] подменяет ответ HetznerClient.chat_completion.
+    state["response"] replaces the HetznerClient.chat_completion response.
     """
 
     async def fake_history(*args, **kwargs):
@@ -54,12 +54,12 @@ def patched_router(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_text_response(patched_router):
     router, state = patched_router
-    state["response"] = {"choices": [{"message": {"content": "привет"}}]}
+    state["response"] = {"choices": [{"message": {"content": "hello"}}]}
 
     result = await router.route("hi", "sess-1")
 
     assert result["type"] == "text"
-    assert result["content"] == "привет"
+    assert result["content"] == "hello"
     assert result["tool_name"] is None
 
 
@@ -98,7 +98,7 @@ async def test_route_no_choices(patched_router):
     result = await router.route("hi", "sess-1")
 
     assert result["type"] == "text"
-    assert result["content"] == "Нет ответа от LLM"
+    assert result["content"] == "No response from the LLM"
 
 
 @pytest.mark.asyncio

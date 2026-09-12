@@ -1,6 +1,6 @@
-// ===== Типы для WebSocket-интеграции =====
+// ===== Types for the WebSocket integration =====
 
-/** Событие, приходящее от бэкенда через WebSocket */
+/** Event arriving from the backend over WebSocket */
 export interface WsMessage {
   type: "thinking" | "response" | "tool_call" | "tool_response" | "approval_request" | "error"
   content?: string
@@ -18,7 +18,7 @@ export interface WsMessage {
   artifacts?: Array<{ label: string; url: string }>
 }
 
-/** Тип сообщения в UI-ленте чата */
+/** Chat message type in the UI feed */
 export type ChatMessageRole = "user" | "assistant" | "tool"
 
 export interface ChatMessage {
@@ -26,7 +26,7 @@ export interface ChatMessage {
   role: ChatMessageRole
   content: string
   timestamp: string
-  // Для tool-сообщений:
+  // For tool messages:
   tool?: string
   toolStatus?: "pending" | "success" | "error"
   toolSummary?: string
@@ -34,7 +34,7 @@ export interface ChatMessage {
   artifacts?: Array<{ label: string; url: string }>
 }
 
-/** Внутреннее состояние хука useChat (не экспортируется в UI) */
+/** Internal state of the useChat hook (not exported to the UI) */
 export interface UseChatState {
   messages: ChatMessage[]
   isThinking: boolean
@@ -44,11 +44,11 @@ export interface UseChatState {
   wsReady: boolean
 }
 
-/** Запрос на подтверждение действия пользователем */
+/** Request for the user to confirm an action */
 export interface ApprovalRequest {
   id: string
-  action: string // команда, которую нужно подтвердить
-  message: string // текст запроса
+  action: string // command to confirm
+  message: string // request text
   tool?: string
   args?: Record<string, unknown>
 }

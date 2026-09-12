@@ -1,4 +1,4 @@
-"""Общие фикстуры тестов LoomCore."""
+"""Shared fixtures for the LoomCore test suite."""
 
 import importlib
 import sys
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-# Каталог плагина loomwg: модули используют bare-импорты (from wireguard import ...)
+# loomwg plugin directory: its modules use bare imports (from wireguard import ...)
 PLUGIN_DIR = Path(__file__).resolve().parents[1] / "plugins" / "loomwg"
 _PLUGIN_MODULES = (
     "wireguard",
@@ -29,10 +29,10 @@ _PLUGIN_MODULES = (
 
 @pytest.fixture
 def load_loomwg(monkeypatch):
-    """Вернуть функцию импорта модулей плагина loomwg в текущий процесс.
+    """Return a loader that imports loomwg plugin modules into the current process.
 
-    Временно добавляет каталог плагина в sys.path и очищает sys.modules
-    после теста, чтобы bare-импорты не затеняли другие пакеты.
+    Temporarily prepends the plugin directory to sys.path and clears sys.modules
+    after the test so bare imports do not shadow other packages.
     """
     monkeypatch.syspath_prepend(str(PLUGIN_DIR))
 

@@ -290,9 +290,8 @@ def test_export_existing_clients_imports_and_issues(load_loomwg, monkeypatch, tm
         return {
             "name": args["name"],
             "rotated": True,
-            "config_token": "c",
-            "qr_token": "q",
-            "artifact_expires_in": 600,
+            "client_config": str(tmp_path / "clients" / "conf" / f"{args['name']}.conf"),
+            "qr_code": str(tmp_path / "clients" / "qr_code" / f"{args['name']}.png"),
         }
 
     monkeypatch.setattr(client, "export_client", fake_export)
@@ -304,7 +303,7 @@ def test_export_existing_clients_imports_and_issues(load_loomwg, monkeypatch, tm
     canonical = client.clients_store.canonical_name(key)
     assert result["imported"] == [canonical]
     assert result["rotated"] == [canonical]
-    assert result["clients"][0]["config_token"] == "c"
+    assert result["clients"][0]["name"] == canonical
     assert calls[0]["name"] == canonical
     assert calls[0]["rotate"] is True
 
@@ -340,12 +339,11 @@ def test_export_existing_clients_tool_formats(load_loomwg, monkeypatch):
         "export_existing_clients",
         lambda args: {
             "interface": "wg0",
-            "clients": [{"name": "peer-abc", "config_token": "c", "qr_token": "q"}],
+            "clients": [{"name": "peer-abc", "config_ready": True, "qr_ready": True}],
             "imported": ["peer-abc"],
             "rotated": ["peer-abc"],
             "reissued": [],
             "failed": [],
-            "artifact_expires_in": 600,
         },
     )
 
@@ -357,7 +355,7 @@ def test_export_existing_clients_tool_formats(load_loomwg, monkeypatch):
 
 # === client.export_client ===
 
-def test_export_client_reissues_links(load_loomwg, monkeypatch, tmp_path):
+def test_export_client_reissues_existing(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
     conf_dir = tmp_path / "clients" / "conf"
@@ -370,7 +368,9 @@ def test_export_client_reissues_links(load_loomwg, monkeypatch, tmp_path):
 
     result = client.export_client({"name": "alice"})
 
-    assert result["config_token"] and result["qr_token"]
+    assert result["name"] == "alice"
+    assert result["client_config"] == str(conf_dir / "alice.conf")
+    assert result["qr_code"] == str(qr_dir / "alice.png")
     assert result["rotated"] is False
 
 
@@ -473,9 +473,6 @@ def test_export_client_rotate_recreates(load_loomwg, monkeypatch, tmp_path):
             "preshared_key": _key(9),
             "addresses": ["10.0.0.9/32"],
             "endpoint": "1.2.3.4:51820",
-            "artifact_expires_in": 600,
-            "config_token": "c",
-            "qr_token": "q",
         },
     )
 

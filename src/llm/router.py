@@ -13,14 +13,14 @@ logger = logging.getLogger("loomcore.router")
 
 
 class AIRouter:
-    """Маршрутизатор запросов к LLM: история -> промпт -> запрос -> парсинг.
+    """LLM request router: history -> prompt -> request -> parsing.
 
-    Формат возвращаемого словаря из route():
+    Shape of the dict returned by route():
         {
             "type": "text" | "tool_call",
-            "content": str | None,       # Текстовый ответ
-            "tool_name": str | None,     # Если вызов инструмента
-            "tool_args": dict | None,    # Аргументы вызова
+            "content": str | None,       # Text response
+            "tool_name": str | None,     # Set when a tool is called
+            "tool_args": dict | None,    # Tool call arguments
         }
     """
 
@@ -35,48 +35,48 @@ class AIRouter:
         user_message: str,
         session_id: str,
     ) -> dict:
-        """Обработать запрос пользователя и вернуть ответ.
+        """Handle a user request and return the response.
 
-        1. Загрузить историю через db_session.
-        2. Сформировать сообщения через prompt.build_messages.
-        3. Отправить запрос в HetznerClient.
-        4. Распарсить ответ: tool_calls или текст.
-        5. Сохранить ответ ассистента через db_session.add_assistant_message.
+        1. Load history via db_session.
+        2. Build messages via prompt.build_messages.
+        3. Send the request to HetznerClient.
+        4. Parse the response: tool_calls or text.
+        5. Save the assistant response via db_session.add_assistant_message.
         """
-        # 1. Загружаем историю
+        # 1. Load history
         async with async_session_factory() as db:
             history_messages = await db_session.get_session_history(
                 db, session_id, limit=50
             )
 
-            # Убедиться, что сессия существует (создать пользователя и сессию если нет)
+            # Ensure the session exists (create the user and session if needed)
             await ensure_session(db, session_id)
 
-            # Преобразуем ORM-модели в dicts для LLM
+            # Convert ORM models to dicts for the LLM
             history_dicts = [
                 {"role": msg.role, "content": msg.content}
                 for msg in history_messages
             ]
 
-            # 0.5. Сохраняем пользовательское сообщение в историю
+            # 0.5. Save the user message to history
             await db_session.add_user_message(
                 db, session_id, user_message
             )
 
-            # 2. Формируем messages (с инструментами, если есть plugin_manager)
+            # 2. Build messages (with tools, if a plugin_manager is present)
             tools_schema = []
             unavailable_plugins: list[str] = []
             if self.plugin_manager:
                 try:
                     tools_schema = await self.plugin_manager.get_all_tools()
                 except Exception as exc:
-                    logger.warning(f"Не удалось получить инструменты плагина: {exc}")
-                    unavailable_plugins.append("все плагины")
+                    logger.warning(f"Failed to fetch plugin tools: {exc}")
+                    unavailable_plugins.append("all plugins")
 
-            # Если некоторые инструменты недоступны, фиксируем это
+            # If some tools are unavailable, record that
             message_extra = {}
             if unavailable_plugins:
-                logger.warning(f"Недоступные плагины при маршрутизации: {unavailable_plugins}")
+                logger.warning(f"Unavailable plugins during routing: {unavailable_plugins}")
                 message_extra["tool_schema_warning"] = unavailable_plugins
 
             messages = build_messages(user_message, history_dicts, tools_schema)
@@ -95,23 +95,23 @@ class AIRouter:
                 for tool in tools_schema
             ]
 
-            # 3. Отправляем запрос к LLM
-            logger.info(f"🚀 Вызов LLM: user_msg='{user_message[:100]}...', history_len={len(history_dicts)}, tools_count={len(tools_schema)}")
+            # 3. Send the request to the LLM
+            logger.info(f"🚀 LLM call: user_msg='{user_message[:100]}...', history_len={len(history_dicts)}, tools_count={len(tools_schema)}")
             llm_response = await self.client.chat_completion(messages, tools=llm_tools)
 
-            # 4. Парсим ответ LLM
+            # 4. Parse the LLM response
             choices = llm_response.get("choices", [])
             finish_reason = choices[0].get("finish_reason", "N/A") if choices else "N/A"
-            logger.info(f"✅ LLM API ответ: finish_reason={finish_reason}")
+            logger.info(f"✅ LLM API response: finish_reason={finish_reason}")
 
             if not choices:
-                return {"type": "text", "content": "Нет ответа от LLM"}
+                return {"type": "text", "content": "No response from the LLM"}
 
             message = choices[0].get("message", {})
             content = message.get("content") or ""
             raw_tool_calls = message.get("tool_calls")
 
-            # Явный разбор tool_calls
+            # Explicit tool_calls parsing
             tool_name: str | None = None
             tool_args: dict | None = None
 
@@ -125,10 +125,10 @@ class AIRouter:
                 except (json.JSONDecodeError, TypeError):
                     tool_args = {"_raw": args_str}
 
-            # Определяем тип ответа
+            # Determine the response type
             answer_type = "tool_call" if tool_name else "text"
 
-            # Сохраняем ответ ассистента через db_session (SRP)
+            # Save the assistant response via db_session (SRP)
             await db_session.add_assistant_message(
                 db, session_id, content, raw_tool_calls
             )

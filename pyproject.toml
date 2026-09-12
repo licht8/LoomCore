@@ -41,6 +41,6 @@ markers = [
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "ASYNC"]
-# BLE001/S110: broad-except на границах API/менеджера плагинов — намеренно.
+# BLE001/S110: broad-except at API/plugin-manager boundaries — intentional.
 ignore = ["BLE001", "S110"]
 

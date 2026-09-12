@@ -14,13 +14,13 @@ interface ChatInputProps {
 }
 
 /**
- * Компонент ввода сообщения в чат.
- * - Отправка по Enter или кнопке "Send"
- * - Индикатор "печатает…" когда бэкенд обрабатывает запрос
- * - Диалог подтверждения (approve/deny) когда приходит approval_request
- * - Дизейбл кнопки отправки пока идёт обработка
+ * Chat message input component.
+ * - Sends on Enter or the "Send" button
+ * - Shows a "typing…" indicator while the backend processes the request
+ * - Shows a confirmation dialog (approve/deny) when an approval_request arrives
+ * - Disables the send button while processing
  *
- * CSS-структура НЕ изменена — только логика.
+ * The CSS structure is unchanged — only the logic.
  */
 export function ChatInput({
   onSend,
@@ -32,7 +32,7 @@ export function ChatInput({
   const [text, setText] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Фокус на инпут при монтировании и после отправки
+  // Focus the input on mount and after sending
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
@@ -45,23 +45,23 @@ export function ChatInput({
     inputRef.current?.focus()
   }
 
-  // Обработка approval (approve/deny)
+  // Handle approval (approve/deny)
   const handleApproval = (action: "approve" | "deny") => {
     if (onApprovalResponse) onApprovalResponse(action)
   }
 
   return (
     <div className="relative px-6 pb-4 pt-10">
-      {/* Градиентный фон — как было */}
+      {/* Gradient background — unchanged */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/60 via-background/30 to-transparent backdrop-blur-2xl [mask-image:linear-gradient(to_top,black_55%,transparent)]"
       />
 
-      {/* Блок запроса на подтверждение — поверх инпута */}
+      {/* Confirmation request block — above the input */}
       {approvalRequest && (
         <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 backdrop-blur-md dark:border-amber-600/50 dark:bg-amber-950/60">
-          <p className="mb-2 font-medium">⚠️ Требуется подтверждение</p>
+          <p className="mb-2 font-medium">⚠️ Confirmation required</p>
           <p className="mb-3 text-xs opacity-80">{approvalRequest.message}</p>
           <div className="flex gap-2">
             <Button
@@ -69,14 +69,14 @@ export function ChatInput({
               className="bg-emerald-600 text-white hover:bg-emerald-700"
               onClick={() => handleApproval("approve")}
             >
-              OK — Подтвердить
+              OK — Confirm
             </Button>
             <Button
               size="sm"
               variant="outline"
               onClick={() => handleApproval("deny")}
             >
-              Отмена
+              Cancel
             </Button>
           </div>
         </div>
@@ -109,7 +109,7 @@ export function ChatInput({
         </Button>
       </form>
 
-      {/* Индикатор "печатает…" над полем ввода */}
+      {/* "Typing…" indicator above the input */}
       <p className="mt-2 text-center text-xs text-muted-foreground">
         {isThinking ? (
           <span className="inline-flex items-center gap-1.5">
@@ -133,7 +133,7 @@ export function ChatInput({
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
               />
             </svg>
-            LoomCore печатает…
+            LoomCore is typing…
           </span>
         ) : (
           "LoomCore can execute infrastructure changes. Review tool calls before confirming."

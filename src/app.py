@@ -1,4 +1,4 @@
-"""Сборка FastAPI-приложения LoomCore."""
+"""LoomCore FastAPI application assembly."""
 
 import asyncio
 import logging
@@ -18,18 +18,18 @@ logger = logging.getLogger("loomcore.app")
 
 
 def create_app() -> FastAPI:
-    """Создать и сконфигурировать экземпляр приложения."""
+    """Create and configure the application instance."""
     app = FastAPI(
         title="LoomCore",
         version="0.0.1",
         docs_url="/docs" if settings.debug else None,
     )
 
-    # Регистрируем обработчик 429
+    # Register the 429 handler
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-    # --- Подключение CORS для React (Vite/Next.js) ---
+    # --- CORS for the frontend (Vite/Next.js) ---
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
         discovered = plugin_manager.discover_plugins(settings.plugins_dir)
         print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
 
-        # Запускаем фоновый healthcheck каждые 30 секунд
+        # Start the background healthcheck every 30 seconds
         asyncio.create_task(healthcheck_loop())
 
     return app

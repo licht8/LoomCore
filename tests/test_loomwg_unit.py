@@ -1,4 +1,4 @@
-"""Unit-тесты логики плагина loomwg без реальных вызовов WireGuard."""
+"""Unit tests for loomwg plugin logic without real WireGuard calls."""
 
 import base64
 import time
@@ -8,11 +8,11 @@ import pytest
 
 
 def _fake_key(seed: int) -> str:
-    """Валидный по форме WireGuard public key (base64 от 32 байт)."""
+    """A WireGuard-shaped public key (base64 of 32 bytes)."""
     return base64.b64encode(bytes([seed] * 32)).decode()
 
 
-# === client.py: чистые функции ===
+# === client.py: pure functions ===
 
 def test_format_endpoint_ipv4(load_loomwg):
     client = load_loomwg("client")["client"]
@@ -54,32 +54,40 @@ def test_allocate_addresses(load_loomwg, monkeypatch):
     assert result == ["10.66.66.2/32"]
 
 
-def test_get_artifact_is_one_time(load_loomwg, monkeypatch, tmp_path):
+def test_get_artifact_by_name(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
-    monkeypatch.setattr(client, "CLIENTS_DIR", tmp_path)
-    conf_dir = tmp_path / "conf"
-    conf_dir.mkdir()
+    conf_dir = tmp_path / "clients" / "conf"
+    conf_dir.mkdir(parents=True)
     (conf_dir / "alice.conf").write_bytes(b"[Interface]\n")
-    client._artifacts["tok"] = ("alice", time.time() + 60)
+    client.clients_store.upsert(
+        "alice",
+        {
+            "public_key": _fake_key(1),
+            "private_key": _fake_key(2),
+            "addresses": ["10.0.0.2/32"],
+        },
+    )
 
-    result = client.get_artifact({"token": "tok", "kind": "config"})
+    result = client.get_artifact({"name": "alice", "kind": "config"})
 
     assert result["filename"] == "alice.conf"
     assert base64.b64decode(result["content_base64"]) == b"[Interface]\n"
-    with pytest.raises(ValueError):
-        client.get_artifact({"token": "tok", "kind": "config"})
+    # Artifacts are durable — the same name can be fetched again.
+    again = client.get_artifact({"name": "alice", "kind": "config"})
+    assert again["filename"] == "alice.conf"
 
 
-def test_get_artifact_rejects_expired(load_loomwg, monkeypatch, tmp_path):
+def test_get_artifact_missing_key_errors(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
-    monkeypatch.setattr(client, "CLIENTS_DIR", tmp_path)
-    client._artifacts["old"] = ("alice", time.time() - 1)
+    client.clients_store.upsert("ghost", {"public_key": _fake_key(3), "addresses": []})
 
-    with pytest.raises(ValueError):
-        client.get_artifact({"token": "old", "kind": "config"})
+    with pytest.raises(ValueError, match="rotate=true"):
+        client.get_artifact({"name": "ghost", "kind": "config"})
 
 
-# === config.py: персистентность пиров ===
+# === config.py: peer persistence ===
 
 def test_add_and_remove_peer(load_loomwg, monkeypatch, tmp_path):
     config = load_loomwg("config")["config"]
@@ -153,7 +161,7 @@ def test_setup_server_configures_firewall_by_default(load_loomwg, monkeypatch, t
     assert result["firewall"] == "firewalld"
 
 
-# === wireguard.py: парсеры ===
+# === wireguard.py: parsers ===
 
 def test_parse_transfer_bytes(load_loomwg):
     wg = load_loomwg("wireguard")["wireguard"]

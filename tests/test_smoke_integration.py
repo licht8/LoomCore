@@ -1,6 +1,6 @@
-"""Интеграционный smoke-тест: доступность Postgres.
+"""Integration smoke test: Postgres availability.
 
-Запускается только при LOOMCORE_INTEGRATION=1 (иначе skip), т.к. требует БД.
+Only runs when LOOMCORE_INTEGRATION=1 (otherwise skipped), since it needs a DB.
 """
 
 import os
@@ -15,7 +15,7 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         os.environ.get("LOOMCORE_INTEGRATION") != "1",
-        reason="Требуется БД; задайте LOOMCORE_INTEGRATION=1",
+        reason="A database is required; set LOOMCORE_INTEGRATION=1",
     ),
 ]
 

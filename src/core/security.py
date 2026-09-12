@@ -7,22 +7,22 @@ from src.config import settings
 
 
 def require_admin_token(token: str | None) -> None:
-    """Проверить административный доступ (JWT-cookie или bearer-токен)."""
+    """Verify admin access (JWT cookie or bearer token)."""
     if settings.admin_password_hash and settings.admin_totp_secret:
         payload = decode_jwt_token(token, settings.session_secret)
         if not payload:
-            raise HTTPException(status_code=401, detail="Требуется вход администратора")
+            raise HTTPException(status_code=401, detail="Admin login required")
         return
     if not settings.admin_token:
-        raise HTTPException(status_code=503, detail="Административный доступ не настроен")
+        raise HTTPException(status_code=503, detail="Admin access is not configured")
     if not token or not secrets.compare_digest(token, settings.admin_token):
-        raise HTTPException(status_code=401, detail="Требуется административный токен")
+        raise HTTPException(status_code=401, detail="Admin token required")
 
 
 def classify_tool_risk(tool_name: str) -> str:
-    """Определить уровень риска вызова инструмента.
+    """Determine the risk level of a tool call.
 
-    Возвращает: 'dangerous', 'moderate' или 'safe'.
+    Returns: 'dangerous', 'moderate' or 'safe'.
     """
     explicit_dangerous = {
         "wg_remove_peer",
