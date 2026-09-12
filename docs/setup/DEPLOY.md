@@ -77,9 +77,10 @@ The `hub` container keeps least privilege: only `NET_ADMIN`, `NET_RAW`,
 **Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`; **not used:**
 `nsenter`, `chroot`, `pid: host`.
 
-`wg_create_client` stores the client config and a protected QR file under
-`/etc/wireguard/clients` with mode `600`; the private key is never returned to
-the chat or stored in message history. `qrencode` is included in the image.
+`wg_add_peer` stores the client config under `/etc/wireguard/clients/conf` and a
+protected QR file under `/etc/wireguard/clients/qr_code`, both with mode `600`;
+the private key is never returned to the chat or stored in message history.
+`qrencode` is included in the image.
 
 To create a client, only a name is required: the address is allocated from free
 addresses in the interface network and the server's public IP is detected

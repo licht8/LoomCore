@@ -5,7 +5,8 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 (the `hub` container uses `network_mode: host`).
 
 - Server configs: `LOOMWG_CONFIG_DIR` (default `/etc/wireguard`)
-- Client configs / QR: `LOOMWG_CONFIG_DIR/clients`
+- Client configs: `LOOMWG_CONFIG_DIR/clients/conf/<name>.conf`
+- Client QR codes: `LOOMWG_CONFIG_DIR/clients/qr_code/<name>.png`
 - Client/user store: `LOOMWG_CONFIG_DIR/.loomwg/clients.json`
 - Autostart state: `LOOMWG_CONFIG_DIR/.loomwg/autostart.json`
 - Private keys are never returned in chat; configs/QR are served as one-time
@@ -73,8 +74,8 @@ exists — use `wg_add_peer` + `wg_export_existing_clients`.
 ## Flows
 
 - **New client:** `wg_add_peer {name}` → generates keys, adds the peer, and writes
-  `clients/<name>.conf` + `.png`, returning links. `wg_export_existing_clients`
-  re-issues links later.
+  `clients/conf/<name>.conf` + `clients/qr_code/<name>.png`, returning links.
+  `wg_export_existing_clients` re-issues links later.
 - **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored
   private key. Peers without a stored key (external/backfilled) are rekeyed when
   `rotate=true` (the default); with `rotate=false` they are reported as failed.

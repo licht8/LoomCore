@@ -248,10 +248,10 @@ docker compose exec db psql -U loomuser -d loomcore -c \
 3. Click the config and QR download buttons (`access_token` is appended automatically).
 4. Verify:
 ```bash
-ls -l /etc/wireguard/clients/
+ls -l /etc/wireguard/clients/conf /etc/wireguard/clients/qr_code
 docker compose exec hub wg show wg0
 ```
-Expect `phone1.conf`/`phone1.png` with mode `600` and a new peer block.
+Expect `conf/phone1.conf`/`qr_code/phone1.png` with mode `600` and a new peer block.
 
 ### 11.5 Connect a real device (true e2e)
 1. Install WireGuard on a phone/PC, import the QR (or `.conf`), enable the tunnel.
@@ -268,7 +268,7 @@ Expect a fresh `latest handshake` and non-zero transfer; `list peers` shows `onl
 ```bash
 docker compose exec hub wg show wg0
 grep -c 'phone1' /etc/wireguard/wg0.conf || true
-ls -l /etc/wireguard/clients/
+ls -l /etc/wireguard/clients/conf /etc/wireguard/clients/qr_code
 ```
 Expect: peer gone, no matching `PublicKey`, client files removed.
 

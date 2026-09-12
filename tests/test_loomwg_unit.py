@@ -57,7 +57,9 @@ def test_allocate_addresses(load_loomwg, monkeypatch):
 def test_get_artifact_is_one_time(load_loomwg, monkeypatch, tmp_path):
     client = load_loomwg("client")["client"]
     monkeypatch.setattr(client, "CLIENTS_DIR", tmp_path)
-    (tmp_path / "alice.conf").write_bytes(b"[Interface]\n")
+    conf_dir = tmp_path / "conf"
+    conf_dir.mkdir()
+    (conf_dir / "alice.conf").write_bytes(b"[Interface]\n")
     client._artifacts["tok"] = ("alice", time.time() + 60)
 
     result = client.get_artifact({"token": "tok", "kind": "config"})

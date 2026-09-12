@@ -360,16 +360,36 @@ def test_export_existing_clients_tool_formats(load_loomwg, monkeypatch):
 def test_export_client_reissues_links(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]
-    clients = tmp_path / "clients"
-    clients.mkdir()
-    (clients / "alice.conf").write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
-    (clients / "alice.png").write_bytes(b"png")
+    conf_dir = tmp_path / "clients" / "conf"
+    qr_dir = tmp_path / "clients" / "qr_code"
+    conf_dir.mkdir(parents=True)
+    qr_dir.mkdir(parents=True)
+    (conf_dir / "alice.conf").write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    (qr_dir / "alice.png").write_bytes(b"png")
     client.clients_store.upsert("alice", {"public_key": _key(1), "addresses": ["10.0.0.2/32"]})
 
     result = client.export_client({"name": "alice"})
 
     assert result["config_token"] and result["qr_token"]
     assert result["rotated"] is False
+
+
+def test_migrate_client_layout(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    clients = tmp_path / "clients"
+    clients.mkdir()
+    (clients / "alice.conf").write_text("[Interface]\n", encoding="utf-8")
+    (clients / "alice.png").write_bytes(b"png")
+
+    moved = client.migrate_client_layout()
+
+    assert moved == {"conf": 1, "qr": 1}
+    assert (clients / "conf" / "alice.conf").is_file()
+    assert (clients / "qr_code" / "alice.png").is_file()
+    assert not (clients / "alice.conf").exists()
+    assert not (clients / "alice.png").exists()
+    assert client.migrate_client_layout() == {"conf": 0, "qr": 0}
 
 
 def test_export_client_rebuilds_missing_config(load_loomwg, monkeypatch, tmp_path):
@@ -395,12 +415,19 @@ def test_export_client_rebuilds_missing_config(load_loomwg, monkeypatch, tmp_pat
         "_write_secret",
         lambda path, content: (path.parent.mkdir(parents=True, exist_ok=True), path.write_text(content, encoding="utf-8")),
     )
-    monkeypatch.setattr(client, "_generate_qr", lambda config, path: path.write_bytes(b"png"))
+    monkeypatch.setattr(
+        client,
+        "_generate_qr",
+        lambda config, path: (
+            path.parent.mkdir(parents=True, exist_ok=True),
+            path.write_bytes(b"png"),
+        ),
+    )
 
     result = client.export_client({"name": "bob"})
 
     assert result["rotated"] is False
-    assert (tmp_path / "clients" / "bob.conf").is_file()
+    assert (tmp_path / "clients" / "conf" / "bob.conf").is_file()
 
 
 def test_export_client_missing_private_key_errors(load_loomwg, monkeypatch, tmp_path):

@@ -22,6 +22,8 @@ from wireguard import CommandError, config_directory, run_command
 from config import add_peer, config_path, iter_peers, remove_peer
 
 CLIENTS_DIR = config_directory() / "clients"
+CONF_DIR_NAME = "conf"
+QR_DIR_NAME = "qr_code"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ARTIFACT_TTL_SECONDS = 600
 _artifacts: dict[str, tuple[str, float]] = {}
@@ -41,6 +43,7 @@ def _format_endpoint(endpoint: str, port: int) -> str:
 
 def _generate_qr(client_config: str, qr_path: Path) -> None:
     """Render a client config to a PNG QR code (mode 600)."""
+    qr_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         qrencode = subprocess.run(
             ["qrencode", "-o", str(qr_path), "-t", "png"],
@@ -87,7 +90,10 @@ def build_client_config(
 
 def client_paths(name: str) -> tuple[Path, Path]:
     directory = clients_directory()
-    return directory / f"{name}.conf", directory / f"{name}.png"
+    return (
+        directory / CONF_DIR_NAME / f"{name}.conf",
+        directory / QR_DIR_NAME / f"{name}.png",
+    )
 
 
 def _issue_tokens(name: str) -> dict:
@@ -142,6 +148,26 @@ def rebuild_client(name: str, record: dict, interface: str) -> dict:
 
 def clients_directory() -> Path:
     return CLIENTS_DIR
+
+
+def migrate_client_layout() -> dict[str, int]:
+    """Move legacy flat ``clients/*.conf`` and ``*.png`` into the split dirs."""
+    directory = clients_directory()
+    moved = {"conf": 0, "qr": 0}
+    if not directory.is_dir():
+        return moved
+
+    conf_dir = directory / CONF_DIR_NAME
+    qr_dir = directory / QR_DIR_NAME
+    for conf_path in directory.glob("*.conf"):
+        conf_dir.mkdir(parents=True, exist_ok=True)
+        conf_path.replace(conf_dir / conf_path.name)
+        moved["conf"] += 1
+    for qr_path in directory.glob("*.png"):
+        qr_dir.mkdir(parents=True, exist_ok=True)
+        qr_path.replace(qr_dir / qr_path.name)
+        moved["qr"] += 1
+    return moved
 
 
 def _safe_name(value: object) -> str:
@@ -274,11 +300,12 @@ def _write_secret(path: Path, content: str) -> None:
 def remove_client_artifacts(public_key: str) -> list[str]:
     """Remove generated client files whose key matches a server peer."""
     removed: list[str] = []
-    directory = clients_directory()
-    if not directory.is_dir():
+    conf_dir = clients_directory() / CONF_DIR_NAME
+    qr_dir = clients_directory() / QR_DIR_NAME
+    if not conf_dir.is_dir():
         return removed
 
-    for client_path in directory.glob("*.conf"):
+    for client_path in conf_dir.glob("*.conf"):
         private_key = ""
         for line in client_path.read_text(encoding="utf-8").splitlines():
             key, separator, value = line.partition("=")
@@ -293,7 +320,7 @@ def remove_client_artifacts(public_key: str) -> list[str]:
 
         name = client_path.stem
         client_path.unlink()
-        qr_path = directory / f"{name}.png"
+        qr_path = qr_dir / f"{name}.png"
         if qr_path.exists():
             qr_path.unlink()
         for token, (artifact_name, _) in list(_artifacts.items()):
@@ -323,8 +350,7 @@ def create_client(arguments: dict) -> dict:
             raise ValueError(f"Адрес клиента {address} уже занят")
     keypair = generate_keypair()
     preshared_key = run_command(["wg", "genpsk"])
-    client_path = clients_directory() / f"{name}.conf"
-    qr_path = clients_directory() / f"{name}.png"
+    client_path, qr_path = client_paths(name)
     if client_path.exists() or qr_path.exists():
         raise ValueError(f"Клиент '{name}' уже существует")
 
@@ -393,7 +419,7 @@ def get_artifact(arguments: dict) -> dict:
         raise ValueError("Срок действия ссылки истёк")
     if kind not in {"config", "qr"}:
         raise ValueError("Недопустимый тип артефакта")
-    path = clients_directory() / f"{name}.{'conf' if kind == 'config' else 'png'}"
+    path = client_paths(name)[0 if kind == "config" else 1]
     if not path.is_file():
         raise FileNotFoundError("Файл артефакта не найден")
     raw = path.read_bytes()
@@ -524,6 +550,7 @@ def export_existing_clients(arguments: dict) -> dict:
         with contextlib.suppress(ValueError):
             endpoint = _detect_endpoint()
 
+    migrate_client_layout()
     for old_name in clients_store.migrate_legacy_names():
         _drop_client_files(old_name)
 
