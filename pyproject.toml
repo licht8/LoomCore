@@ -19,6 +19,7 @@ dependencies = [
     "mcp",
     "slowapi",
     "pyjwt>=2.13.0",
+    "alembic",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +27,6 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
-    "alembic",
 ]
 
 [tool.pytest.ini_options]

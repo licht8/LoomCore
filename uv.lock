@@ -819,6 +819,7 @@ name = "loomcore"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
@@ -834,7 +835,6 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "alembic" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -842,7 +842,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", marker = "extra == 'dev'" },
+    { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi", extras = ["standard"] },
     { name = "httpx" },

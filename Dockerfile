@@ -15,6 +15,9 @@ RUN apt-get update \
 COPY pyproject.toml .
 COPY src ./src
 COPY plugins ./plugins
+# Alembic config + migrations are needed for `docker compose exec hub alembic upgrade head`
+COPY alembic.ini .
+COPY alembic ./alembic
 RUN pip install --no-cache-dir .
 
 EXPOSE 8000
