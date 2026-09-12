@@ -78,7 +78,8 @@ exists — use `wg_add_peer` + `wg_export_client`.
   links later.
 - **Lost config/QR:** `wg_export_client {name}` rebuilds files from the stored
   private key. If the peer has no stored private key (external/backfilled), it
-  errors; `rotate=true` recreates it with new keys.
+  errors; `rotate=true` recreates it with new keys. Names are resolved leniently
+  (exact key, a doubled `peer-` prefix, or a unique public-key prefix).
 - **First run:** existing peers in `wg0.conf` are not tracked until you approve
   `wg_backfill_clients` (names them `peer-<shortkey>`).
 

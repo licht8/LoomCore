@@ -67,6 +67,41 @@ def get(name: str) -> dict[str, Any] | None:
     return load().get(name)
 
 
+def resolve_name(value: object) -> str:
+    """Resolve a user-supplied name to a stored client key.
+
+    Accepts an exact key, a key with a duplicated ``peer-`` prefix, or a unique
+    public-key prefix. Raises ``ValueError`` with the known names otherwise.
+    Unlike :func:`validate_name` this is tolerant of the base64 characters that
+    ``wg_backfill_clients`` may have baked into ``peer-<shortkey>`` names.
+    """
+    name = str(value or "").strip()
+    if not name:
+        raise ValueError("Client name is required")
+    data = load()
+    if name in data:
+        return name
+
+    if name.startswith("peer-peer-"):
+        collapsed = name[len("peer-") :]
+        if collapsed in data:
+            return collapsed
+
+    matches = [
+        key
+        for key, record in data.items()
+        if str(record.get("public_key") or "").startswith(name)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        candidates = ", ".join(sorted(matches))
+        raise ValueError(f"Client name '{name}' is ambiguous; candidates: {candidates}")
+
+    known = ", ".join(sorted(data)) or "none"
+    raise ValueError(f"Client '{name}' not found. Available clients: {known}")
+
+
 def upsert(name: str, record: dict[str, Any]) -> None:
     data = load()
     data[name] = {**data.get(name, {}), **record}

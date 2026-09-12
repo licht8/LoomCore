@@ -427,7 +427,7 @@ def export_client(arguments: dict) -> dict:
     ``rotate=true`` a peer without a stored private key is recreated with new keys.
     """
     interface = str(arguments.get("interface", "wg0"))
-    name = clients_store.validate_name(arguments.get("name"))
+    name = clients_store.resolve_name(arguments.get("name"))
     kind = str(arguments.get("kind", "both")).lower()
     if kind not in {"config", "qr", "both"}:
         raise ValueError("kind must be one of: config, qr, both")
@@ -467,8 +467,9 @@ def export_client(arguments: dict) -> dict:
             rotated = True
         else:
             raise ValueError(
-                f"Config for '{name}' is missing and no private key is stored; "
-                "pass rotate=true to recreate it with new keys"
+                f"Config for '{name}' is missing and no private key is stored "
+                "(backfilled/external peer); retry with rotate=true to recreate "
+                "it with new keys"
             )
     else:
         client_config = client_path.read_text(encoding="utf-8")

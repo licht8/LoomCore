@@ -59,6 +59,36 @@ def test_store_roundtrip(load_loomwg, monkeypatch, tmp_path):
     assert store.load() == {}
 
 
+def test_resolve_name_matches_variants(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    key = _key(2)
+    store.upsert(f"peer-{key[:12]}", {"public_key": key, "addresses": ["10.0.0.2/32"]})
+
+    assert store.resolve_name(f"peer-{key[:12]}") == f"peer-{key[:12]}"
+    assert store.resolve_name(f"peer-peer-{key[:12]}") == f"peer-{key[:12]}"
+    assert store.resolve_name(key[:12]) == f"peer-{key[:12]}"
+
+
+def test_resolve_name_errors_list_available(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    store.upsert("alice", {"public_key": _key(1), "addresses": []})
+
+    with pytest.raises(ValueError, match="alice"):
+        store.resolve_name("bob")
+
+
+def test_resolve_name_rejects_ambiguous_prefix(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    store.upsert("one", {"public_key": "AAAABBBB", "addresses": []})
+    store.upsert("two", {"public_key": "AAAACCCC", "addresses": []})
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        store.resolve_name("AAAA")
+
+
 # === wg_show_config ===
 
 def test_show_config_masks_secrets(load_loomwg, monkeypatch):
@@ -287,8 +317,27 @@ def test_export_client_missing_private_key_errors(load_loomwg, monkeypatch, tmp_
     client = load_loomwg("client")["client"]
     client.clients_store.upsert("ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]})
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="rotate=true"):
         client.export_client({"name": "ghost"})
+
+
+def test_export_client_resolves_doubled_prefix(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    key = _key(6)
+    client.clients_store.upsert(f"peer-{key[:12]}", {"public_key": key, "addresses": []})
+
+    with pytest.raises(ValueError, match="rotate=true"):
+        client.export_client({"name": f"peer-peer-{key[:12]}"})
+
+
+def test_export_client_unknown_name_lists_clients(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    client.clients_store.upsert("ghost", {"public_key": _key(6), "addresses": []})
+
+    with pytest.raises(ValueError, match="ghost"):
+        client.export_client({"name": "nobody"})
 
 
 def test_export_client_rotate_recreates(load_loomwg, monkeypatch, tmp_path):

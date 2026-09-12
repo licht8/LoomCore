@@ -327,7 +327,7 @@ def remove_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     if public_key_arg:
         public_key = validate_public_key(str(public_key_arg))
     elif name_arg:
-        name = clients_store.validate_name(name_arg)
+        name = clients_store.resolve_name(name_arg)
         record = clients_store.get(name)
         if not record:
             raise ValueError(f"Client '{name}' not found")
@@ -627,7 +627,8 @@ TOOLS_SCHEMA.extend(
             "description": (
                 "Regenerate the config/QR artifact links for an existing client. "
                 "If the saved config is missing, pass rotate=true to recreate the "
-                "client with new keys."
+                "client with new keys. Backfilled peer-<shortkey> clients have no "
+                "stored private key and therefore require rotate=true."
             ),
             "inputSchema": {
                 "type": "object",
@@ -671,7 +672,8 @@ TOOLS_SCHEMA.extend(
             "name": "wg_backfill_clients",
             "description": (
                 "Import untracked peers from the server config into the JSON store "
-                "(names them peer-<shortkey>). Requires admin approval."
+                "(names them peer-<shortkey>). Requires admin approval. Imported "
+                "peers have no private key, so exporting them needs rotate=true."
             ),
             "inputSchema": {
                 "type": "object",
