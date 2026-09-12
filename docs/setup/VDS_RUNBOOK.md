@@ -16,9 +16,8 @@ nothing here requires external access.
 ## 1. Get the code and configure `.env`
 
 ```bash
-sudo mkdir -p /opt/loomhub
-sudo git clone https://github.com/licht8/LoomCore.git /opt/loomhub
-cd /opt/loomhub
+git clone https://github.com/licht8/LoomCore.git ~/LoomCore
+cd ~/LoomCore
 cp .env.vds.example .env
 chmod 600 .env
 ```
@@ -57,7 +56,7 @@ sudo modprobe wireguard   # in-tree on modern kernels; otherwise: dnf install -y
 sudo docker compose up -d --build
 ```
 
-`deploy/install.sh` assumes the repo is at `/opt/loomhub` (it `cd`s there).
+`deploy/install.sh` works from wherever you cloned the repo (it uses its own location).
 
 ## 3. Apply migrations
 
@@ -93,7 +92,7 @@ The compose mount already uses `:z`; relabeling is the fallback.
 ## 5. Smoke tests (no WireGuard yet)
 
 ```bash
-cd /opt/loomhub
+cd ~/LoomCore
 TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2-)
 
 curl -s http://SERVER_IP/health
@@ -159,7 +158,7 @@ Approved tool results should now be persisted as `role = tool` rows.
 ## 9. Update
 
 ```bash
-cd /opt/loomhub
+cd ~/LoomCore
 git pull
 docker compose up -d --build
 docker compose exec hub alembic upgrade head

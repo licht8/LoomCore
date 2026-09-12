@@ -13,8 +13,8 @@ For a Rocky Linux 10 walkthrough (EPEL, firewalld, SELinux), see
 ## First run
 
 ```bash
-git clone https://github.com/licht8/LoomCore.git /opt/loomhub
-cd /opt/loomhub
+git clone https://github.com/licht8/LoomCore.git ~/LoomCore
+cd ~/LoomCore
 cp .env.vds.example .env
 chmod 600 .env
 nano .env
@@ -113,7 +113,7 @@ tool list, and artifact downloads (`/api/artifacts/...`) all require auth.
 ## Update
 
 ```bash
-cd /opt/loomhub
+cd ~/LoomCore
 git pull
 docker compose up -d --build
 docker compose exec hub alembic upgrade head

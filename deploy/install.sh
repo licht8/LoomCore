@@ -16,13 +16,14 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-install -d -m 0750 /opt/loomhub
-cd /opt/loomhub
+# Work from the repo this script lives in (works from any clone path).
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_DIR"
 
 if [[ ! -f .env ]]; then
   cp .env.vds.example .env
   chmod 600 .env
-  echo "Created /opt/loomhub/.env. Fill in HETZNER_API_KEY, POSTGRES_PASSWORD and ADMIN_TOKEN, then rerun."
+  echo "Created $REPO_DIR/.env. Fill in HETZNER_API_KEY, POSTGRES_PASSWORD and ADMIN_TOKEN, then rerun."
   exit 0
 fi
 
