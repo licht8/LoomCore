@@ -1,4 +1,4 @@
-# LoomHub
+# LoomCore
 
 **AI-Driven Infrastructure Hub** — an infrastructure orchestrator with an AI assistant.
 
@@ -24,7 +24,7 @@ After that the UI is available at `http://SERVER_IP/`. Log in on the **Token**
 tab with `ADMIN_TOKEN`. The backend and PostgreSQL are not published publicly;
 Nginx is the only public entrypoint, and it also proxies the WebSocket.
 
-LoomHub loads plugins from `plugins/<name>/main.py` automatically. A plugin runs
+LoomCore loads plugins from `plugins/<name>/main.py` automatically. A plugin runs
 on the same Linux host in a host-networked container and can use the provided
 host integrations. `plugins/loomwg` manages WireGuard (server setup, peers,
 client configs/QR).

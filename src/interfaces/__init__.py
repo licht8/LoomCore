@@ -1,1 +1,1 @@
-# LoomHub Interfaces Package
+# LoomCore Interfaces Package

@@ -12,10 +12,10 @@ function generateSessionId(): string {
 /** Получить или создать ID сессии (из localStorage) */
 function getSessionId(): string {
   if (typeof window === "undefined") return generateSessionId()
-  let sid = localStorage.getItem("loomhub_session_id")
+  let sid = localStorage.getItem("loomcore_session_id")
   if (!sid) {
     sid = generateSessionId()
-    localStorage.setItem("loomhub_session_id", sid)
+    localStorage.setItem("loomcore_session_id", sid)
   }
   return sid
 }

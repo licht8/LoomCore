@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'LoomHub Assistant — AI Infrastructure Management',
-  description: 'Manage your AI infrastructure with the LoomHub Assistant.',
+  title: 'LoomCore Assistant — AI Infrastructure Management',
+  description: 'Manage your AI infrastructure with the LoomCore Assistant.',
   generator: 'v0.app',
   icons: {
     icon: [

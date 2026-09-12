@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "loomhub"
+name = "loomcore"
 version = "0.0.1"
 description = "AI-Driven Infrastructure Hub"
 requires-python = ">=3.11"

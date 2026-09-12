@@ -9,7 +9,7 @@ from src.db.session import add_message, ensure_session
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
 
-logger = logging.getLogger("loomhub.websocket")
+logger = logging.getLogger("loomcore.websocket")
 
 # Shared AIRouter instance using the shared plugin_manager
 airouter_with_plugins = AIRouter(plugin_manager=plugin_manager)

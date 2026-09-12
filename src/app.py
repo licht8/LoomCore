@@ -1,4 +1,4 @@
-"""Сборка FastAPI-приложения LoomHub Core."""
+"""Сборка FastAPI-приложения LoomCore."""
 
 import asyncio
 import logging
@@ -14,13 +14,13 @@ from src.core.rate_limit import limiter
 from src.plugins import plugin_manager
 from src.plugins.health import healthcheck_loop
 
-logger = logging.getLogger("loomhub.app")
+logger = logging.getLogger("loomcore.app")
 
 
 def create_app() -> FastAPI:
     """Создать и сконфигурировать экземпляр приложения."""
     app = FastAPI(
-        title="LoomHub Core",
+        title="LoomCore",
         version="0.0.1",
         docs_url="/docs" if settings.debug else None,
     )
@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
-        print("🚀 LoomHub Core starting up...")
+        print("🚀 LoomCore starting up...")
 
         discovered = plugin_manager.discover_plugins(settings.plugins_dir)
         print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")

@@ -9,7 +9,7 @@ from src.llm.client import HetznerClient
 from src.llm.prompt import build_messages
 from src.plugins.manager import PluginManager
 
-logger = logging.getLogger("loomhub.router")
+logger = logging.getLogger("loomcore.router")
 
 
 class AIRouter:

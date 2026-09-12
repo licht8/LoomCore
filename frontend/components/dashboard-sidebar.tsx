@@ -26,7 +26,7 @@ export function DashboardSidebar() {
           <Sparkles className="size-5" />
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-bold tracking-tight">LoomHub</p>
+          <p className="text-sm font-bold tracking-tight">LoomCore</p>
           <p className="text-xs text-sidebar-foreground/60">AI Infrastructure</p>
         </div>
       </div>

@@ -95,7 +95,7 @@ export function ChatInput({
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Ask LoomHub to manage clusters, models, or deployments…"
+          placeholder="Ask LoomCore to manage clusters, models, or deployments…"
           className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
         <Button
@@ -133,10 +133,10 @@ export function ChatInput({
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
               />
             </svg>
-            LoomHub печатает…
+            LoomCore печатает…
           </span>
         ) : (
-          "LoomHub can execute infrastructure changes. Review tool calls before confirming."
+          "LoomCore can execute infrastructure changes. Review tool calls before confirming."
         )}
       </p>
     </div>

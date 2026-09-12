@@ -4,7 +4,7 @@ export function DashboardHeader() {
   return (
     <header className="flex items-center justify-between border-b border-border bg-transparent px-6 py-4">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-primary text-balance">LoomHub Assistant</h1>
+        <h1 className="text-xl font-bold tracking-tight text-primary text-balance">LoomCore Assistant</h1>
         <p className="text-sm text-muted-foreground">Conversational control for your AI infrastructure</p>
       </div>
       <div className="flex items-center gap-3">

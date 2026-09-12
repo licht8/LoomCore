@@ -1,1 +1,1 @@
-# LoomHub API Package
+# LoomCore API Package

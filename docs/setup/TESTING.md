@@ -1,6 +1,6 @@
-# Testing LoomHub
+# Testing LoomCore
 
-LoomHub targets Linux servers, so all checks run in a Linux environment:
+LoomCore targets Linux servers, so all checks run in a Linux environment:
 **WSL2 Ubuntu**, **Linux containers** (Docker Desktop), or a **VDS**. Windows is
 only a terminal/editor — there is no Windows-native support.
 
@@ -36,16 +36,16 @@ Easiest: run only the DB in Docker and the core in WSL2.
 
 ```bash
 docker compose up -d db
-export DATABASE_URL="postgresql+asyncpg://loomuser:secret_password@127.0.0.1:5432/loomhub"
+export DATABASE_URL="postgresql+asyncpg://loomuser:secret_password@127.0.0.1:5432/loomcore"
 alembic upgrade head
-LOOMHUB_INTEGRATION=1 pytest -q -m integration
+LOOMCORE_INTEGRATION=1 pytest -q -m integration
 ```
 
 ### Running the core locally (WSL2)
 
 ```bash
 export PLUGINS_DIR="$PWD/plugins"
-export DATABASE_URL="postgresql+asyncpg://loomuser:secret_password@127.0.0.1:5432/loomhub"
+export DATABASE_URL="postgresql+asyncpg://loomuser:secret_password@127.0.0.1:5432/loomcore"
 uvicorn src.main:app --reload --port 8000
 ```
 
@@ -105,6 +105,6 @@ For a full Rocky Linux 10 runbook see [VDS_RUNBOOK.md](VDS_RUNBOOK.md).
 | `PLUGINS_DIR` | plugins directory (default `/app/plugins`) |
 | `LOOMWG_CONFIG_DIR` | WireGuard config directory (default `/etc/wireguard`) |
 | `LOOMWG_SKIP_FIREWALL=1` | skip automatic firewall/NAT in `wg_setup_server` (firewalld hosts) |
-| `LOOMHUB_INTEGRATION=1` | enable integration tests (Postgres) |
+| `LOOMCORE_INTEGRATION=1` | enable integration tests (Postgres) |
 | `LOOMWG_E2E=1` | enable the real-WireGuard e2e test |
 | `DATABASE_URL` | Postgres connection string |

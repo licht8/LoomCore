@@ -15,7 +15,7 @@ from enum import StrEnum
 from pathlib import Path
 from time import time
 
-logger = logging.getLogger("loomhub.plugins")
+logger = logging.getLogger("loomcore.plugins")
 
 
 class PluginState(StrEnum):

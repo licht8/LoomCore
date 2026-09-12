@@ -62,7 +62,7 @@ sudo docker compose up -d --build
 
 ```bash
 docker compose exec hub alembic upgrade head
-docker compose exec db psql -U loomuser -d loomhub -c '\dt'
+docker compose exec db psql -U loomuser -d loomcore -c '\dt'
 ```
 
 You should see `users`, `sessions`, `messages`, `alembic_version`.
@@ -149,7 +149,7 @@ Notes:
 ## 8. Verify message history
 
 ```bash
-docker compose exec db psql -U loomuser -d loomhub -c \
+docker compose exec db psql -U loomuser -d loomcore -c \
   "select role, left(content, 60), tool_calls from messages order by created_at desc limit 10;"
 ```
 
@@ -163,6 +163,31 @@ git pull
 docker compose up -d --build
 docker compose exec hub alembic upgrade head
 ```
+
+### One-time migration from the old name (LoomHub -> LoomCore)
+
+Only for a server deployed before the rename. Preserves existing data.
+
+```bash
+cd ~/LoomCore
+git pull
+
+# stop writers, then rename the database
+docker compose stop hub frontend nginx
+docker compose exec db psql -U loomuser -d postgres -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='loomhub' AND pid <> pg_backend_pid();"
+docker compose exec db psql -U loomuser -d postgres -c 'ALTER DATABASE loomhub RENAME TO loomcore;'
+
+# set POSTGRES_DB=loomcore in .env, then recreate the stack
+docker compose down
+sudo bash deploy/install.sh
+docker compose exec hub alembic upgrade head
+```
+
+Notes:
+- The Postgres volume is unchanged, so data is preserved.
+- Container names change (`loom_hub` -> `loom_core`); `docker compose down` removes the old ones.
+- Browser localStorage keys changed (`loomcore_admin_token`, `loomcore_session_id`) — re-enter `ADMIN_TOKEN`.
 
 ## 10. If something fails, send me
 
@@ -189,7 +214,7 @@ Run this after sections 1-6. It exercises the product the way an end user would.
 
 Verify history:
 ```bash
-docker compose exec db psql -U loomuser -d loomhub -c \
+docker compose exec db psql -U loomuser -d loomcore -c \
   "select role, left(content, 60) from messages order by created_at desc limit 10;"
 ```
 
@@ -236,7 +261,7 @@ Expect: peer gone, no matching `PublicKey`, client files removed.
 - `http://SERVER_IP/api/tools` without token -> 401/503; with `?access_token=...` -> JSON.
 - Spam `/api/chat` 31x/min -> 429.
 - Refresh the page -> history persists from Postgres.
-- Token mode "logout": clear the `loomhub_admin_token` key in browser `localStorage`.
+- Token mode "logout": clear the `loomcore_admin_token` key in browser `localStorage`.
 
 ### 11.8 Evidence to collect
 - `docker compose ps`, `docker compose logs --tail=200 hub`

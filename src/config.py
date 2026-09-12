@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://loomuser:secret_password@localhost:5432/loomhub"
+    database_url: str = "postgresql+asyncpg://loomuser:secret_password@localhost:5432/loomcore"
     hetzner_api_key: str = ""
     hetzner_base_url: str = "https://inference.hetzner.com/api/v1"
     hetzner_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"

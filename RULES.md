@@ -1,4 +1,4 @@
-# ⚖️ Strict Rules — LoomHub
+# ⚖️ Strict Rules — LoomCore
 
 The central set of project rules. Any violation means changes are **not
 accepted** until fixed. Read before making any edits.
@@ -37,7 +37,7 @@ Commit messages are **in English**.
 
 ## 0c. Interface architecture (Web & Telegram)
 
-**LoomHub** is a server with a centralized API. Interfaces are clients.
+**LoomCore** is a server with a centralized API. Interfaces are clients.
 
 **Mapping table: interface ↔ port/protocol (important for AI!):**
 
@@ -48,13 +48,13 @@ Commit messages are **in English**.
 | **API** | HTTP / REST | `8000` | Internal core API for the Web UI and plugins. |
 
 **Rules:**
-- There is one codebase (the LoomHub Core). Interfaces are clients only.
+- There is one codebase (the LoomCore). Interfaces are clients only.
 - The Web UI and Telegram work with the same hub API.
 - Do not write logic tied to an interface type (except for output format).
 
 ## 0d. Business logic and the role of AI
 
-**LoomHub** is an infrastructure orchestrator.
+**LoomCore** is an infrastructure orchestrator.
 - **Hub (Core)**: orchestration, history storage, routing requests to the LLM, session management.
 - **Plugins**: actual work with hardware (WireGuard, SSH, Nginx).
 - **AI (LLM)**: the "brain". Translates human language into JSON tool calls (MCP).
@@ -64,7 +64,7 @@ Commit messages are **in English**.
 
 ## 0e. We work only inside the project
 
-- The bot works ONLY in the project folder `LoomHub/` (where this `RULES.md` lives)
+- The bot works ONLY in the project folder `LoomCore/` (where this `RULES.md` lives)
   and its subfolders. Outside the project (desktop, home folder, other projects) do
   not read, create, or modify files.
 - All bot files (configs, docs, reports) go ONLY into the internal `tmp/` folder (in `.gitignore`).
@@ -83,12 +83,12 @@ Commit messages are **in English**.
 
 ---
 
-## 1. LoomHub is a broker and orchestrator: the core is thin, everything else is plugins
+## 1. LoomCore is a broker and orchestrator: the core is thin, everything else is plugins
 
-> **Important:** The LoomHub Core (in `src/`) is transport and the "brain" only.
+> **Important:** The LoomCore (in `src/`) is transport and the "brain" only.
 > All system logic (network, file, service management) lives in **Plugins**.
 
-LoomHub is a control center (Hub).
+LoomCore is a control center (Hub).
 - **Core (`src/`)**: web interface, API, Postgres, LLM Router, Plugin Manager.
 - **Plugins (`plugins/`)**: separate processes (subprocess) communicating via **MCP (Model Context Protocol)**.
 
@@ -124,8 +124,8 @@ LoomHub is a control center (Hub).
 The host (VDS) may run other containers.
 
 - **Never** stop, restart, or remove other people's containers.
-- All LoomHub resources use the `loom_` / `loom-` prefix:
-    - Containers: `loom_hub`, `loom_worker_...`, `loom_db`.
+- All LoomCore resources use the `loom_` / `loom-` prefix:
+    - Containers: `loom_core`, `loom_worker_...`, `loom_db`.
     - Volumes: `loom_db_data`.
     - Network: `loom_default`.
 - On the VDS, ports are published only through Nginx (reverse proxy); never expose port 8000 directly.
@@ -133,7 +133,7 @@ The host (VDS) may run other containers.
 
 ## 5. One project — one folder — one database
 
-- The single working copy is this folder. Do not run code from copies (e.g. `LoomHub_backup/`).
+- The single working copy is this folder. Do not run code from copies (e.g. `LoomCore_backup/`).
 - Launch: via `docker compose up -d` (the main method for Dev and Prod).
 - Data lives in Postgres (`loom_db` container). Code reaches the DB via `DATABASE_URL`.
 - `tmp/` — drafts, not tracked by git.
@@ -205,7 +205,7 @@ Main file: `main.py`.
 
 ## 13. Security and AI Guardrails (Critical!)
 
-This is the most important part of LoomHub. AI has access to server management.
+This is the most important part of LoomCore. AI has access to server management.
 
 - **Approvals:**
     - "Read" operations (status, logs) -> AI performs them itself.
@@ -243,5 +243,5 @@ This is the most important part of LoomHub. AI has access to server management.
 
 ---
 
-*Last updated: 2026-09-12 (LoomHub Architecture: FastAPI + Postgres + MCP Plugins + Hetzner LLM)*
+*Last updated: 2026-09-12 (LoomCore Architecture: FastAPI + Postgres + MCP Plugins + Hetzner LLM)*
 *Keep in the project root.*

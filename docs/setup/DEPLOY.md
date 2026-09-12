@@ -1,4 +1,4 @@
-# Deploying LoomHub on a VDS
+# Deploying LoomCore on a VDS
 
 For a Rocky Linux 10 walkthrough (EPEL, firewalld, SELinux), see
 [VDS_RUNBOOK.md](VDS_RUNBOOK.md).

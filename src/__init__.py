@@ -1,1 +1,1 @@
-# LoomHub Core Package
+# LoomCore Package

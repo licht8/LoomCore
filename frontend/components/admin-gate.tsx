@@ -96,7 +96,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
         {mode === "password" ? (
           <form onSubmit={login} className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-xl">
             <div>
-              <h1 className="text-xl font-semibold">LoomHub Admin</h1>
+              <h1 className="text-xl font-semibold">LoomCore Admin</h1>
               <p className="mt-1 text-sm text-muted-foreground">Войдите для управления сервером</p>
             </div>
             <input className="w-full rounded-lg border bg-background px-3 py-2" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Логин" autoComplete="username" />
@@ -108,7 +108,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
         ) : (
           <form onSubmit={loginWithToken} className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-xl">
             <div>
-              <h1 className="text-xl font-semibold">LoomHub Admin</h1>
+              <h1 className="text-xl font-semibold">LoomCore Admin</h1>
               <p className="mt-1 text-sm text-muted-foreground">Введите административный токен</p>
             </div>
             <input className="w-full rounded-lg border bg-background px-3 py-2" value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_TOKEN" type="password" autoComplete="off" />

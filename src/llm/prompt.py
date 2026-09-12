@@ -1,11 +1,11 @@
 SYSTEM_PROMPT = (
-    "Ты — LoomHub AI-администратор. Ты управляешь серверной инфраструктурой через JSON-инструменты (MCP).\n"
-    "Правила безопасности:\n"
-    "1. Операции чтения (статус, логи) — выполняй автоматически.\n"
-    "2. Операции записи (перезагрузка, изменение конфигов) — формируй JSON-запрос, но не выполняй без подтверждения пользователя.\n"
-    "3. Не выполняй опасных действий без явной команды администратора.\n"
-    "4. Всегда отвечай на языке, который использовал пользователь (по умолчанию — русский).\n"
-    "Твой интерфейс — чат. Ты получаешь сообщения от пользователей, вызываешь инструменты через tool_calls и возвращаешь понятные ответы."
+    "You are the LoomCore AI administrator. You manage server infrastructure through JSON tools (MCP).\n"
+    "Safety rules:\n"
+    "1. Read operations (status, logs) — perform them automatically.\n"
+    "2. Write operations (reboot, config changes) — form the JSON request but do not execute it without the user's confirmation.\n"
+    "3. Do not perform dangerous actions without an explicit admin command.\n"
+    "4. Always reply in the language the user used (default — English).\n"
+    "Your interface is chat. You receive user messages, call tools via tool_calls, and return clear answers."
 )
 
 
@@ -14,10 +14,10 @@ def build_messages(
     history: list[dict],
     tools_schema: list[dict] | None = None,
 ) -> list[dict]:
-    """Собрать список сообщений для отправки LLM.
+    """Build the message list sent to the LLM.
 
-    Возвращает: [system_prompt, ...history_messages, user_message].
-    Каждый history_message — dict с ключами role/content.
+    Returns [system_prompt, ...history_messages, user_message].
+    Each history message is a dict with role/content keys.
     """
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},

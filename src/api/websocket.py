@@ -9,7 +9,7 @@ from src.auth import SESSION_COOKIE, decode_jwt_token
 from src.config import settings
 from src.interfaces.websocket import websocket_endpoint
 
-logger = logging.getLogger("loomhub.api.websocket")
+logger = logging.getLogger("loomcore.api.websocket")
 
 router = APIRouter()
 

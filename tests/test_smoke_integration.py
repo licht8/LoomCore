@@ -1,6 +1,6 @@
 """Интеграционный smoke-тест: доступность Postgres.
 
-Запускается только при LOOMHUB_INTEGRATION=1 (иначе skip), т.к. требует БД.
+Запускается только при LOOMCORE_INTEGRATION=1 (иначе skip), т.к. требует БД.
 """
 
 import os
@@ -14,8 +14,8 @@ from src.config import settings
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        os.environ.get("LOOMHUB_INTEGRATION") != "1",
-        reason="Требуется БД; задайте LOOMHUB_INTEGRATION=1",
+        os.environ.get("LOOMCORE_INTEGRATION") != "1",
+        reason="Требуется БД; задайте LOOMCORE_INTEGRATION=1",
     ),
 ]
 

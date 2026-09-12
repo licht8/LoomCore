@@ -1,4 +1,4 @@
-"""Общие фикстуры тестов LoomHub."""
+"""Общие фикстуры тестов LoomCore."""
 
 import importlib
 import sys

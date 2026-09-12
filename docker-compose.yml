@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-loomuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret_password}
-      POSTGRES_DB: ${POSTGRES_DB:-loomhub}
+      POSTGRES_DB: ${POSTGRES_DB:-loomcore}
     # Postgres is reachable from the host-networked hub via loopback only.
     ports:
       - "127.0.0.1:5432:5432"
@@ -25,7 +25,7 @@ services:
 
   hub:
     build: .
-    container_name: loom_hub
+    container_name: loom_core
     restart: unless-stopped
     depends_on:
       db:
@@ -41,10 +41,9 @@ services:
     security_opt:
       - no-new-privileges:false
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@127.0.0.1:5432/${POSTGRES_DB:-loomhub}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@127.0.0.1:5432/${POSTGRES_DB:-loomcore}
       HETZNER_API_KEY: ${HETZNER_API_KEY:-}
       DEBUG: ${DEBUG:-false}
-      LOOMHUB_MODE: self-hosted
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
       # On firewalld hosts (RHEL/Rocky) set to 1 and open UDP/NAT manually.
       LOOMWG_SKIP_FIREWALL: ${LOOMWG_SKIP_FIREWALL:-0}

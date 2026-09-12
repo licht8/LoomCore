@@ -1,4 +1,4 @@
-# AGENTS.md — LoomHub / LoomCore
+# AGENTS.md — LoomCore / LoomCore
 
 Read `RULES.md` before any change — it is the authoritative project rulebook.
 All chat, comments, documentation and commit messages are **in English** (RULES 0).
@@ -42,7 +42,7 @@ docker compose up -d --build         # VDS: sudo bash deploy/install.sh (nginx:8
 - Auth has **two modes** (`src/core/security.py:require_admin_token`): `ADMIN_TOKEN` (bearer/query), or JWT cookie when `ADMIN_PASSWORD_HASH` + `ADMIN_TOTP_SECRET` + `SESSION_SECRET` are set. Password hash: `python -m src.auth <password>`.
 - The `/ws/{session_id}` route is not wrapped by slowapi (limits are on REST: chat 30/min, auth 5/min, etc.).
 - `frontend/next.config.mjs` sets `typescript.ignoreBuildErrors: true` — TS errors do not break `next build`; type-check separately (`npx tsc --noEmit`).
-- Tests need no DB; integration smoke needs Postgres: `LOOMHUB_INTEGRATION=1 pytest tests/test_smoke_integration.py`. CI is `.github/workflows/ci.yml` (ruff + pytest + frontend).
+- Tests need no DB; integration smoke needs Postgres: `LOOMCORE_INTEGRATION=1 pytest tests/test_smoke_integration.py`. CI is `.github/workflows/ci.yml` (ruff + pytest + frontend).
 
 ## Project invariants (from RULES.md — do not violate)
 

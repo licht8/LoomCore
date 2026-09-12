@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only smoke check for a running LoomHub stack on a VDS.
+# Read-only smoke check for a running LoomCore stack on a VDS.
 #
 # Usage:  bash scripts/vds_smoke.sh [BASE_URL]
 # Default BASE_URL: http://127.0.0.1 (through nginx on :80)
@@ -22,7 +22,7 @@ env_value() {
 
 TOKEN="$(env_value ADMIN_TOKEN)"
 PG_USER="$(env_value POSTGRES_USER)"; PG_USER="${PG_USER:-loomuser}"
-PG_DB="$(env_value POSTGRES_DB)"; PG_DB="${PG_DB:-loomhub}"
+PG_DB="$(env_value POSTGRES_DB)"; PG_DB="${PG_DB:-loomcore}"
 
 FAIL=0
 OUT="$(mktemp)"

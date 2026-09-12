@@ -10,7 +10,7 @@ from src.api.deps import extract_admin_token
 from src.core.security import require_admin_token
 from src.plugins import plugin_manager
 
-logger = logging.getLogger("loomhub.api.artifacts")
+logger = logging.getLogger("loomcore.api.artifacts")
 
 router = APIRouter(prefix="/api", tags=["artifacts"])
 

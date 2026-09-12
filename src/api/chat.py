@@ -13,7 +13,7 @@ from src.core.security import require_admin_token
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
 
-logger = logging.getLogger("loomhub.api.chat")
+logger = logging.getLogger("loomcore.api.chat")
 
 router = APIRouter(prefix="/api", tags=["chat"])
 

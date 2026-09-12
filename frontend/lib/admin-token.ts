@@ -1,4 +1,4 @@
-const TOKEN_KEY = "loomhub_admin_token"
+const TOKEN_KEY = "loomcore_admin_token"
 
 /** Получить сохранённый административный bearer-токен. */
 export function getAdminToken(): string {

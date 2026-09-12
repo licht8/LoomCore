@@ -4,7 +4,7 @@ import httpx
 
 from src.config import settings
 
-logger = logging.getLogger("loomhub.llm")
+logger = logging.getLogger("loomcore.llm")
 
 
 class HetznerClient:

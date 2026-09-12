@@ -63,10 +63,10 @@ fi
 
 # === Build and start containers ===
 
-echo "=== Building and starting LoomHub ==="
+echo "=== Building and starting LoomCore ==="
 docker compose up -d --build
 docker compose ps
-echo "LoomHub is available on port 80."
+echo "LoomCore is available on port 80."
 echo ""
 echo "Apply DB migrations once: docker compose exec hub alembic upgrade head"
-echo "Then configure WireGuard via the wg_setup_server tool in the LoomHub UI/chat."
+echo "Then configure WireGuard via the wg_setup_server tool in the LoomCore UI/chat."

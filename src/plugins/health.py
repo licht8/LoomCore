@@ -5,7 +5,7 @@ import logging
 
 from src.plugins import plugin_manager
 
-logger = logging.getLogger("loomhub.plugins.health")
+logger = logging.getLogger("loomcore.plugins.health")
 
 HEALTHCHECK_INTERVAL_SECONDS = 30
 

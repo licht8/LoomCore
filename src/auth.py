@@ -10,7 +10,7 @@ import time
 
 import jwt
 
-SESSION_COOKIE = "loomhub_session"
+SESSION_COOKIE = "loomcore_session"
 # Simple blocklist for revoked tokens (token_id → revoke timestamp)
 _revoked: dict[str, float] = {}
 
