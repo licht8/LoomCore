@@ -176,12 +176,16 @@ def test_validate_interface(load_loomwg):
 
 # === wireguard.py: read_interface (wg show dump, 8 fields per peer) ===
 
-def _dump_output(handshake_ts: int) -> str:
+def _dump_output(
+    handshake_ts: int,
+    keepalive: str = "25",
+    allowed_ips: str = "10.66.66.4/32,fd42:42:42::4/128",
+) -> str:
     interface = "wPrivKey== wServerPub== 51820 off"
     peer = (
         "wPeerPub== (none) 91.90.160.72:51361 "
-        "10.66.66.4/32,fd42:42:42::4/128 "
-        f"{handshake_ts} 6438256 96416563 25"
+        f"{allowed_ips} "
+        f"{handshake_ts} 6438256 96416563 {keepalive}"
     )
     return f"{interface}\n{peer}"
 
@@ -214,3 +218,26 @@ def test_read_interface_offline_without_handshake(load_loomwg, monkeypatch):
 
     assert peer["latest_handshake"] is None
     assert wg.peer_is_online(peer) is False
+
+
+def test_read_interface_handles_off_keepalive(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(
+        wg, "run_command", lambda *args, **kwargs: _dump_output(int(time.time()), keepalive="off")
+    )
+
+    peer = wg.read_interface("wg0")["peers"][0]
+
+    assert peer["persistent_keepalive"] == 0
+    assert wg.peer_is_online(peer) is True
+
+
+def test_read_interface_handles_none_allowed_ips(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(
+        wg, "run_command", lambda *args, **kwargs: _dump_output(0, allowed_ips="(none)")
+    )
+
+    peer = wg.read_interface("wg0")["peers"][0]
+
+    assert peer["allowed_ips"] == []

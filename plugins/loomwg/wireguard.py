@@ -98,15 +98,18 @@ def read_interface(interface: str) -> dict[str, Any]:
         parts = line.split()
         if len(parts) < 8:
             continue
+        allowed_ips = parts[3]
+        keepalive = parts[7]
         peers.append(
             {
                 "public_key": parts[0],
                 "endpoint": None if parts[2] == "(none)" else parts[2],
-                "allowed_ips": parts[3].split(",") if parts[3] else [],
+                "allowed_ips": [] if allowed_ips == "(none)" else allowed_ips.split(","),
                 "latest_handshake": _parse_timestamp(parts[4]),
                 "receive_bytes": int(parts[5]),
                 "transmit_bytes": int(parts[6]),
-                "persistent_keepalive": int(parts[7]),
+                # wg prints "off" for the keepalive interval when it is unset.
+                "persistent_keepalive": int(keepalive) if keepalive.isdigit() else 0,
             }
         )
 
