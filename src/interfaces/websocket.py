@@ -32,9 +32,9 @@ def _extract_text(raw_result: dict) -> str:
     return str(raw_result)
 
 
-def _build_artifacts(tool_name: str, raw_result: dict) -> list[dict] | None:
-    """Собрать одноразовые ссылки на артефакты клиента (config/QR)."""
-    if tool_name != "wg_create_client" or not isinstance(raw_result, dict):
+def _build_artifacts(raw_result: dict) -> list[dict] | None:
+    """Build one-time download links for any tool result exposing client artifacts."""
+    if not isinstance(raw_result, dict):
         return None
     data = raw_result.get("data")
     if not isinstance(data, dict):
@@ -82,7 +82,7 @@ async def _run_tool_and_notify(
     """Выполнить инструмент, сохранить результат и отправить его в UI."""
     raw_result = await _execute_tool(tool_name, arguments)
     content_text = _extract_text(raw_result)
-    artifacts = _build_artifacts(tool_name, raw_result)
+    artifacts = _build_artifacts(raw_result)
 
     await _save_tool_message(session_id, tool_name, arguments, content_text)
 

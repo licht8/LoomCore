@@ -265,6 +265,16 @@ def create_client_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def export_client_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    result = export_client(arguments)
+    action = "recreated with new keys" if result.get("rotated") else "exported"
+    return text_result(
+        f"Client '{result['name']}' {action}. One-time config and QR links are "
+        f"ready (valid for {result['artifact_expires_in']}s).",
+        **result,
+    )
+
+
 def get_artifact_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     return get_artifact(arguments)
 
@@ -285,7 +295,7 @@ HANDLERS = {
     "wg_service_enable": service_mode.enable,
     "wg_service_disable": service_mode.disable,
     "wg_create_client": create_client_tool,
-    "wg_export_client": export_client,
+    "wg_export_client": export_client_tool,
     "wg_setup_server": setup_server,
     "wg_get_client_artifact": get_artifact_tool,
 }

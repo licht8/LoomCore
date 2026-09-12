@@ -246,3 +246,44 @@ def test_add_peer_updates_existing_allowed_ips(load_loomwg, monkeypatch):
     assert result["data"]["changed"] is True
     assert calls and calls[0][0][:5] == ["wg", "set", "wg0", "peer", key]
     assert upserts
+
+
+def test_export_client_tool_wraps_result(load_loomwg, monkeypatch):
+    tools = load_loomwg("tools")["tools"]
+    monkeypatch.setattr(
+        tools,
+        "export_client",
+        lambda args: {
+            "name": args["name"],
+            "config_token": "cfg",
+            "qr_token": "qr",
+            "artifact_expires_in": 600,
+            "rotated": False,
+        },
+    )
+
+    result = tools.export_client_tool({"name": "alice"})
+
+    assert result["content"][0]["type"] == "text"
+    assert "exported" in result["content"][0]["text"]
+    assert result["data"]["config_token"] == "cfg"
+    assert result["data"]["qr_token"] == "qr"
+
+
+def test_export_client_tool_reports_rotation(load_loomwg, monkeypatch):
+    tools = load_loomwg("tools")["tools"]
+    monkeypatch.setattr(
+        tools,
+        "export_client",
+        lambda args: {
+            "name": args["name"],
+            "config_token": "cfg",
+            "qr_token": "qr",
+            "artifact_expires_in": 600,
+            "rotated": True,
+        },
+    )
+
+    result = tools.export_client_tool({"name": "bob"})
+
+    assert "recreated" in result["content"][0]["text"]
