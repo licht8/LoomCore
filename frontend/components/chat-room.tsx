@@ -25,16 +25,23 @@ export function ChatRoom() {
   // --- Auto-scroll to the newest message ---
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  // Only auto-scroll while the user is near the bottom, so reading history
-  // is not interrupted by incoming messages.
+  // Follow new messages unless the user deliberately scrolls up to read
+  // history. Intent is detected from the scroll direction, so programmatic
+  // (smooth) scrolling and content growth never flip this off by accident.
   const stickToBottom = useRef(true)
+  const lastScrollTop = useRef(0)
   const hasHydrated = useRef(false)
 
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    stickToBottom.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+    if (atBottom) {
+      stickToBottom.current = true
+    } else if (el.scrollTop < lastScrollTop.current - 2) {
+      stickToBottom.current = false
+    }
+    lastScrollTop.current = el.scrollTop
   }
 
   useEffect(() => {
@@ -42,7 +49,7 @@ export function ChatRoom() {
     const behavior: ScrollBehavior = hasHydrated.current ? "smooth" : "auto"
     endRef.current?.scrollIntoView({ behavior, block: "end" })
     hasHydrated.current = true
-  }, [messages.length, isThinking, approvalRequest])
+  }, [messages, isThinking, approvalRequest, error])
 
   return (
     <>

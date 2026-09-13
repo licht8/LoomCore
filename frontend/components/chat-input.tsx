@@ -75,7 +75,7 @@ export function ChatInput({
       {/* Gradient background — unchanged */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/70 via-background/30 to-transparent backdrop-blur-xl [mask-image:linear-gradient(to_top,black_25%,transparent_75%)]"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/25 via-background/10 to-transparent backdrop-blur-lg [mask-image:linear-gradient(to_top,black_40%,transparent)]"
       />
 
       {/* Confirmation request block — above the input */}
