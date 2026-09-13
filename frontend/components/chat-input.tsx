@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Paperclip, Pause, SendHorizonal } from "lucide-react"
+import { Eraser, Paperclip, Pause, SendHorizonal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { ApprovalRequest } from "@/lib/chat-types"
 
@@ -102,68 +102,70 @@ export function ChatInput({
         </div>
       )}
 
-      <form
-        className="mx-auto flex max-w-3xl items-center gap-2 rounded-2xl border border-input bg-background/50 px-3 py-2 shadow-sm backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-ring"
-        onSubmit={handleSubmit}
-      >
-        <Button type="button" variant="ghost" size="icon" className="shrink-0 text-muted-foreground">
-          <Paperclip className="size-4.5" />
-          <span className="sr-only">Attach file</span>
-        </Button>
-        <input
-          ref={inputRef}
-          type="text"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Ask LoomCore to manage clusters, models, or deployments…"
-          className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-        />
-        {isRunning ? (
+      <div className="mx-auto flex max-w-3xl items-stretch gap-2">
+        <form
+          className="flex flex-1 items-center gap-2 rounded-2xl border border-input bg-background/50 px-3 py-2 shadow-sm backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-ring"
+          onSubmit={handleSubmit}
+        >
+          <Button type="button" variant="ghost" size="icon" className="shrink-0 text-muted-foreground">
+            <Paperclip className="size-4.5" />
+            <span className="sr-only">Attach file</span>
+          </Button>
+          <input
+            ref={inputRef}
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Ask LoomCore to manage clusters, models, or deployments…"
+            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+          {isRunning ? (
+            <Button
+              type="button"
+              size="icon"
+              onClick={onCancel}
+              title="Pause / stop"
+              aria-label="Pause request"
+              className="relative size-9 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <span
+                aria-hidden
+                className="absolute inset-1.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+              />
+              <Pause className="size-3.5" />
+              <span className="sr-only">Pause request</span>
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!text.trim()}
+              className="size-9 shrink-0 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50"
+            >
+              <SendHorizonal className="size-4.5" />
+              <span className="sr-only">Send message</span>
+            </Button>
+          )}
+        </form>
+        {onClear && (
           <Button
             type="button"
-            size="icon"
-            onClick={onCancel}
-            title="Pause / stop"
-            aria-label="Pause request"
-            className="relative size-9 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+            variant="outline"
+            onClick={handleClear}
+            disabled={isRunning}
+            className="h-auto shrink-0 self-stretch rounded-2xl px-4"
           >
-            <span
-              aria-hidden
-              className="absolute inset-1.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
-            />
-            <Pause className="size-3.5" />
-            <span className="sr-only">Pause request</span>
-          </Button>
-        ) : (
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!text.trim()}
-            className="size-9 shrink-0 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50"
-          >
-            <SendHorizonal className="size-4.5" />
-            <span className="sr-only">Send message</span>
+            <Eraser className="size-4" />
+            Clear
           </Button>
         )}
-      </form>
+      </div>
 
       {/* Static hint below the input. The submit button already rotates while
           a request is running, so no second spinner is shown here. */}
-      <div className="mt-2 flex items-center justify-center gap-3">
-        <p className="text-center text-xs text-muted-foreground">
-          LoomCore can execute infrastructure changes. Review tool calls before confirming.
-        </p>
-        {onClear && (
-          <button
-            type="button"
-            onClick={handleClear}
-            disabled={isRunning}
-            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Clear conversation
-          </button>
-        )}
-      </div>
+      <p className="mt-2 text-center text-xs text-muted-foreground">
+        LoomCore can execute infrastructure changes. Review tool calls before confirming.
+      </p>
     </div>
   )
 }
