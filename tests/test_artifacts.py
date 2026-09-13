@@ -1,5 +1,11 @@
-"""Tests for chat artifact link building."""
+"""Tests for chat artifact link building and artifact downloads."""
 
+import base64
+import json
+
+import pytest
+
+from src.api import artifacts as artifacts_api
 from src.interfaces.websocket import _build_artifacts
 
 
@@ -49,3 +55,51 @@ def test_build_artifacts_quotes_names():
         {"label": "Configuration: peer/a b", "url": "/api/artifacts/peer%2Fa%20b/config"}
     ]
     assert _build_artifacts({"data": {"clients": []}}) is None
+
+
+def _patch_auth(monkeypatch):
+    monkeypatch.setattr(artifacts_api, "extract_admin_token", lambda *a, **k: None)
+    monkeypatch.setattr(artifacts_api, "require_admin_token", lambda token: None)
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_returns_file(monkeypatch):
+    class _FakeManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            assert tool_name == "wg_get_client_artifact"
+            assert arguments == {"name": "alice", "kind": "config"}
+            return {
+                "data": {
+                    "filename": "alice.conf",
+                    "media_type": "text/plain",
+                    "content_base64": base64.b64encode(b"[Interface]\n").decode(),
+                }
+            }
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FakeManager())
+
+    response = await artifacts_api.download_artifact(
+        "alice", "config", request=None, access_token=None
+    )
+
+    assert response.status_code == 200
+    assert response.body == b"[Interface]\n"
+    assert response.media_type == "text/plain"
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_reports_reason(monkeypatch):
+    class _FailingManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            raise ValueError("Client 'alice' not found")
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FailingManager())
+
+    response = await artifacts_api.download_artifact(
+        "alice", "config", request=None, access_token=None
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body)["reason"] == "Client 'alice' not found"

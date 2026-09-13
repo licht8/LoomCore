@@ -378,7 +378,8 @@ def export_existing_clients_tool(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_artifact_tool(arguments: dict[str, Any]) -> dict[str, Any]:
-    return get_artifact(arguments)
+    artifact = get_artifact(arguments)
+    return text_result(artifact["filename"], **artifact)
 
 
 HANDLERS = {

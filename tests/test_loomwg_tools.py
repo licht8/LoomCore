@@ -481,6 +481,26 @@ def test_export_client_rotate_recreates(load_loomwg, monkeypatch, tmp_path):
     assert result["rotated"] is True
 
 
+# === wg_get_client_artifact (internal) ===
+
+def test_get_artifact_tool_wraps_result_in_data(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    conf_dir = tmp_path / "clients" / "conf"
+    conf_dir.mkdir(parents=True)
+    (conf_dir / "alice.conf").write_bytes(b"[Interface]\n")
+    tools.clients_store.upsert(
+        "alice",
+        {"public_key": _key(1), "private_key": _key(2), "addresses": ["10.0.0.2/32"]},
+    )
+
+    result = tools.get_artifact_tool({"name": "alice", "kind": "config"})
+
+    assert result["content"][0]["text"] == "alice.conf"
+    assert base64.b64decode(result["data"]["content_base64"]) == b"[Interface]\n"
+    assert result["data"]["media_type"] == "text/plain"
+
+
 # === wg_service_enable / disable / autostart ===
 
 def test_service_enable_disable(load_loomwg, monkeypatch, tmp_path):

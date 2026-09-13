@@ -44,5 +44,6 @@ async def download_artifact(
     except (KeyError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("Artifact fetch failed for %r (%s): %s", name, kind, exc)
         return JSONResponse(
-            status_code=404, content={"error": "Artifact not found or unavailable"}
+            status_code=404,
+            content={"error": "Artifact not found or unavailable", "reason": str(exc)},
         )
