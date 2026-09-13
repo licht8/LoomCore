@@ -38,7 +38,12 @@ def patched_router(monkeypatch):
     async def fake_ensure(*args, **kwargs):
         return "sess"
 
-    state: dict = {"response": {"choices": []}, "user_saved": [], "assistant_saved": []}
+    state: dict = {
+        "response": {"choices": []},
+        "user_saved": [],
+        "assistant_saved": [],
+        "tools": None,
+    }
 
     async def fake_add_user(db, session_id, content):
         state["user_saved"].append((session_id, content))
@@ -55,6 +60,7 @@ def patched_router(monkeypatch):
     router = AIRouter(plugin_manager=None)
 
     async def fake_chat_completion(messages, tools=None):
+        state["tools"] = tools
         return state["response"]
 
     router.client.chat_completion = fake_chat_completion  # type: ignore[method-assign]
@@ -156,6 +162,42 @@ async def test_route_persists_tool_call(patched_router):
     assert state["assistant_saved"][0][0] == "sess-9"
     assert state["assistant_saved"][0][1] == ""
     assert state["assistant_saved"][0][2] == raw_tool_calls
+
+
+@pytest.mark.asyncio
+async def test_route_exposes_core_tools_without_plugin_manager(patched_router):
+    router, state = patched_router
+    state["response"] = {"choices": [{"message": {"content": "ok"}}]}
+
+    await router.route("hi", "sess-1")
+
+    names = [tool["function"]["name"] for tool in state["tools"]]
+    assert "core_health" in names
+    assert "core_enable_plugin" in names
+
+
+@pytest.mark.asyncio
+async def test_route_appends_plugin_tools_after_core_tools(patched_router):
+    router, state = patched_router
+
+    class _Manager:
+        async def get_all_tools(self):
+            return [
+                {
+                    "name": "wg_interface_status",
+                    "description": "status",
+                    "inputSchema": {"type": "object", "properties": {}},
+                }
+            ]
+
+    router.plugin_manager = _Manager()  # type: ignore[assignment]
+    state["response"] = {"choices": [{"message": {"content": "ok"}}]}
+
+    await router.route("hi", "sess-1")
+
+    names = [tool["function"]["name"] for tool in state["tools"]]
+    assert names[-1] == "wg_interface_status"
+    assert "core_health" in names
 
 
 @pytest.mark.asyncio

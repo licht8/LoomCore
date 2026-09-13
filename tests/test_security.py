@@ -28,10 +28,31 @@ def test_read_only_tools_are_safe():
         "wg_interface_restart",
         "wg_service_enable",
         "wg_service_disable",
+        "core_enable_plugin",
+        "core_disable_plugin",
+        "core_reload_plugin",
+        "ops_run_command",
+        "ops_write_file",
+        "ops_kill_process",
+        "ops_systemctl_restart",
     ],
 )
 def test_explicit_dangerous_tools(tool_name):
     assert classify_tool_risk(tool_name) == "dangerous"
+
+
+def test_ops_read_tools_are_safe():
+    assert classify_tool_risk("ops_read_file") == "safe"
+    assert classify_tool_risk("ops_list_processes") == "safe"
+    assert classify_tool_risk("ops_systemctl_status") == "safe"
+    assert classify_tool_risk("ops_disk_usage") == "safe"
+    assert classify_tool_risk("ops_network_status") == "safe"
+
+
+def test_core_read_tools_are_safe():
+    assert classify_tool_risk("core_health") == "safe"
+    assert classify_tool_risk("core_list_plugins") == "safe"
+    assert classify_tool_risk("core_capabilities") == "safe"
 
 
 def test_risk_classification_is_case_insensitive():

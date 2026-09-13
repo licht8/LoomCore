@@ -39,6 +39,13 @@ def classify_tool_risk(tool_name: str) -> str:
         "wg_service_enable",
         "wg_service_disable",
         "wg_install_dependencies",
+        "core_enable_plugin",
+        "core_disable_plugin",
+        "core_reload_plugin",
+        "ops_run_command",
+        "ops_write_file",
+        "ops_kill_process",
+        "ops_systemctl_restart",
     }
     if tool_name.lower() in explicit_dangerous:
         return "dangerous"

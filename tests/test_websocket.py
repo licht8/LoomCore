@@ -259,3 +259,34 @@ async def test_websocket_deny_persists_tool(monkeypatch):
     assert saved[0]["status"] == "cancelled"
     assert saved[0]["summary"] == "Denied"
     assert saved[0]["arguments"] == {"name": "laptop"}
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_routes_core_names_to_dispatch(monkeypatch):
+    seen: dict = {}
+
+    async def fake_dispatch(name, arguments):
+        seen["core"] = (name, arguments)
+        return {"content": [], "data": {}}
+
+    monkeypatch.setattr(ws_module, "dispatch_core_tool", fake_dispatch)
+
+    result = await ws_module._execute_tool("core_health", {"a": 1})
+
+    assert seen["core"] == ("core_health", {"a": 1})
+    assert result == {"content": [], "data": {}}
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_routes_plugin_names_to_manager(monkeypatch):
+    seen: dict = {}
+
+    async def fake_execute(name, arguments):
+        seen["plugin"] = (name, arguments)
+        return {"content": [], "data": {}}
+
+    monkeypatch.setattr(ws_module.plugin_manager, "execute_tool_by_name", fake_execute)
+
+    await ws_module._execute_tool("wg_interface_status", None)
+
+    assert seen["plugin"] == ("wg_interface_status", None)

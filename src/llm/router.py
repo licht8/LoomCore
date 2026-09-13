@@ -2,6 +2,7 @@ import json
 import logging
 
 from src.config import settings
+from src.core.core_tools import CORE_TOOLS_SCHEMA
 from src.db import session as db_session
 from src.db.database import async_session_factory
 from src.db.session import ensure_session
@@ -107,11 +108,11 @@ class AIRouter:
 
     async def _collect_tools(self) -> tuple[list[dict], dict]:
         """Fetch the tool schema; return it with any 'unavailable' warning."""
-        tools_schema: list[dict] = []
+        tools_schema: list[dict] = list(CORE_TOOLS_SCHEMA)
         unavailable_plugins: list[str] = []
         if self.plugin_manager:
             try:
-                tools_schema = await self.plugin_manager.get_all_tools()
+                tools_schema.extend(await self.plugin_manager.get_all_tools())
             except Exception as exc:
                 logger.warning(f"Failed to fetch plugin tools: {exc}")
                 unavailable_plugins.append("all plugins")

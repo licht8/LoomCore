@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from src.core.core_tools import CORE_TOOL_NAMES, dispatch_core_tool
 from src.core.security import classify_tool_risk
 from src.db.database import async_session_factory
 from src.db.session import ensure_session
@@ -40,7 +41,9 @@ Send = Callable[[dict], Awaitable[None]]
 
 
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
-    """Run a tool through the plugin that owns it."""
+    """Run a core meta-tool or the plugin tool that owns the name."""
+    if tool_name in CORE_TOOL_NAMES:
+        return await dispatch_core_tool(tool_name, arguments)
     return await plugin_manager.execute_tool_by_name(tool_name, arguments)
 
 
