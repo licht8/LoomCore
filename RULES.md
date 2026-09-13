@@ -154,9 +154,10 @@ Each plugin is a separate project in `plugins/<id>/`.
 Main file: `main.py`.
 
 - **Manifest:** every plugin ships a `manifest.json` (id, name, version,
-  description, entry, protocol, permissions, env) — see
-  `docs/architecture/PLUGIN_MANIFEST.md`. It is plugin-local metadata: the plugin
-  validates it against its own runtime and warns; the core does not enforce it.
+  description, entry, protocol, permissions, env, `default_enabled`) — see
+  `docs/architecture/PLUGIN_MANIFEST.md`. The core reads and validates it
+  (identity, version, permissions, `default_enabled`) and **warns**; a mismatch
+  never blocks startup. The plugin also self-validates it against its own runtime.
 
 - **Start:** the script is launched by the hub -> reads `stdin`.
 - **Initialization:** it sends JSON `{"method": "initialize", ...}`.

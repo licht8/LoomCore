@@ -21,6 +21,7 @@ Thumbs.db
 tmp/
 data/
 logs/
+.loomcore/
 
 # Docker
 *.log

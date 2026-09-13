@@ -16,6 +16,14 @@ from enum import StrEnum
 from pathlib import Path
 from time import time
 
+from src.plugins.manifest import (
+    ManifestError,
+    check_permissions,
+    load_manifest,
+    validate_manifest,
+)
+from src.plugins.state import load_disabled, save_disabled
+
 logger = logging.getLogger("loomcore.plugins")
 
 
@@ -41,16 +49,24 @@ class ManagedPlugin:
     restart_delay_base: float = 1.0
     restart_delay_max: float = 30.0
     tools: list[dict] = field(default_factory=list)
+    enabled: bool = True
+    version: str = ""
+    manifest: dict | None = None
+    permission_warnings: list[str] = field(default_factory=list)
 
 
 class PluginManager:
     """Manage plugins: launch, MCP transport, tool invocation."""
 
-    def __init__(self):
+    def __init__(self, state_path: Path | None = None):
         self._plugins: dict[str, ManagedPlugin] = {}
         self._tool_plugins: dict[str, str] = {}
         # Tools marked "internal": True (available only to the core, not the LLM)
         self._internal_tools: dict[str, str] = {}
+
+        # Persisted enable/disable state (in-memory only when no path is given)
+        self._state_path = state_path
+        self._disabled: set[str] = load_disabled(state_path) if state_path else set()
 
         # Tool call limit: tool_name -> [timestamps]
         self._tool_calls: dict[str, list[float]] = defaultdict(list)
@@ -90,7 +106,13 @@ class PluginManager:
         logger.info(f"Plugin '{name}' started (PID: {proc.pid})")
 
     def discover_plugins(self, plugins_dir: str = "plugins") -> list[str]:
-        """Launch every plugin that has a main.py in a child directory."""
+        """Discover and launch manifest-aware plugins.
+
+        An invalid manifest is logged and the plugin skipped; a missing manifest
+        falls back to the folder name as the plugin identity. A plugin is only
+        launched when ``default_enabled`` is true and it is not in the persisted
+        disabled set.
+        """
         discovered: list[str] = []
         for plugin_dir in sorted(Path(plugins_dir).iterdir()):
             if not plugin_dir.is_dir() or not (plugin_dir / "main.py").is_file():
@@ -98,12 +120,177 @@ class PluginManager:
             name = plugin_dir.name
             if name in self._plugins:
                 continue
-            self.register(name, [sys.executable, str(plugin_dir / "main.py")])
+
+            manifest, warnings = self._resolve_manifest(plugin_dir, name)
+            if manifest is None:
+                continue
+
+            command = [sys.executable, str(plugin_dir / "main.py")]
+            enabled = bool(manifest.get("default_enabled", True)) and (
+                name not in self._disabled
+            )
+            if enabled:
+                self.register(name, command)
+                plugin = self._plugins.get(name)
+                if plugin is not None:
+                    self._apply_manifest(plugin, manifest, warnings)
+            else:
+                # Keep a record so the plugin can be enabled later, but do not spawn.
+                self._plugins[name] = ManagedPlugin(
+                    name=name,
+                    command=command,
+                    state=PluginState.STOPPED,
+                    enabled=False,
+                    version=str(manifest.get("version") or ""),
+                    manifest=manifest,
+                    permission_warnings=warnings,
+                )
+                logger.info(f"Plugin '{name}' is disabled; not launching")
             discovered.append(name)
         return discovered
 
+    def _resolve_manifest(
+        self, plugin_dir: Path, name: str
+    ) -> tuple[dict | None, list[str]]:
+        """Load and validate a plugin manifest.
+
+        Returns ``(manifest, permission_warnings)``; ``(None, [])`` means the
+        plugin must be skipped (invalid manifest).
+        """
+        try:
+            manifest = load_manifest(plugin_dir)
+        except ManifestError as exc:
+            logger.warning(f"Skipping plugin '{name}': {exc}")
+            return None, []
+
+        if manifest is None:
+            logger.warning(
+                f"Plugin '{name}' has no manifest.json; using folder-name identity"
+            )
+            return {"id": name, "name": name, "default_enabled": True}, []
+
+        issues = validate_manifest(manifest, expected_id=name)
+        if issues:
+            logger.warning(
+                f"Skipping plugin '{name}': manifest issues: {'; '.join(issues)}"
+            )
+            return None, []
+
+        warnings = check_permissions(manifest)
+        for warning in warnings:
+            logger.warning(f"Plugin '{name}': {warning}")
+        return manifest, warnings
+
+    @staticmethod
+    def _apply_manifest(
+        plugin: ManagedPlugin, manifest: dict, warnings: list[str]
+    ) -> None:
+        plugin.manifest = manifest
+        plugin.version = str(manifest.get("version") or "")
+        plugin.permission_warnings = list(warnings)
+        plugin.enabled = True
+
     def plugin_names(self) -> list[str]:
         return list(self._plugins)
+
+    # ------------------------------------------------------------------
+    # Enable / disable / reload
+    # ------------------------------------------------------------------
+
+    def is_enabled(self, plugin_name: str) -> bool:
+        """Return True when the plugin exists and is enabled."""
+        plugin = self._plugins.get(plugin_name)
+        return bool(plugin and plugin.enabled)
+
+    def plugin_version(self, plugin_name: str) -> str:
+        plugin = self._plugins.get(plugin_name)
+        return plugin.version if plugin else ""
+
+    def plugin_manifest(self, plugin_name: str) -> dict | None:
+        plugin = self._plugins.get(plugin_name)
+        return plugin.manifest if plugin else None
+
+    def permission_warnings(self, plugin_name: str) -> list[str]:
+        plugin = self._plugins.get(plugin_name)
+        return list(plugin.permission_warnings) if plugin else []
+
+    async def disable_plugin(self, plugin_name: str) -> bool:
+        """Stop a plugin and persist its disabled state."""
+        plugin = self._plugins.get(plugin_name)
+        if plugin is None:
+            logger.error(f"Plugin '{plugin_name}' is not registered; cannot disable")
+            return False
+        if not plugin.enabled:
+            return True
+
+        self._kill_and_stop(plugin_name)
+        plugin.enabled = False
+        self._rebuild_tool_cache(plugin_name, [])
+        self._disabled.add(plugin_name)
+        self._persist_state()
+        logger.info(f"Plugin '{plugin_name}' disabled")
+        return True
+
+    async def enable_plugin(self, plugin_name: str) -> bool:
+        """Launch a disabled plugin again and persist the change."""
+        plugin = self._plugins.get(plugin_name)
+        if plugin is None:
+            logger.error(f"Plugin '{plugin_name}' is not registered; cannot enable")
+            return False
+        if plugin.enabled:
+            return True
+
+        self._disabled.discard(plugin_name)
+        plugin.enabled = True
+        plugin.restart_attempt = 0
+        try:
+            self._do_register_inplace(plugin_name, plugin.command, plugin.working_dir)
+            await self._initialize_plugin(plugin_name)
+            tools = await self.get_tools(plugin_name)
+            self._rebuild_tool_cache(plugin_name, tools)
+            plugin.state = PluginState.IDLE
+        except Exception as exc:
+            logger.error(f"Failed to enable plugin '{plugin_name}': {exc}")
+            plugin.enabled = False
+            plugin.state = PluginState.STOPPED
+            self._disabled.add(plugin_name)
+            self._persist_state()
+            return False
+
+        self._persist_state()
+        logger.info(f"Plugin '{plugin_name}' enabled")
+        return True
+
+    async def reload_plugin(self, plugin_name: str) -> bool:
+        """Restart an enabled plugin and refresh its tools."""
+        plugin = self._plugins.get(plugin_name)
+        if plugin is None:
+            logger.error(f"Plugin '{plugin_name}' is not registered; cannot reload")
+            return False
+        if not plugin.enabled:
+            logger.warning(f"Plugin '{plugin_name}' is disabled; cannot reload")
+            return False
+
+        self._kill_and_stop(plugin_name)
+        plugin.restart_attempt = 0
+        try:
+            self._do_register_inplace(plugin_name, plugin.command, plugin.working_dir)
+            await self._initialize_plugin(plugin_name)
+            tools = await self.get_tools(plugin_name)
+            self._rebuild_tool_cache(plugin_name, tools)
+            plugin.state = PluginState.IDLE
+        except Exception as exc:
+            logger.error(f"Failed to reload plugin '{plugin_name}': {exc}")
+            plugin.state = PluginState.STOPPED
+            return False
+
+        logger.info(f"Plugin '{plugin_name}' reloaded")
+        return True
+
+    def _persist_state(self) -> None:
+        if self._state_path is None:
+            return
+        save_disabled(self._state_path, self._disabled)
 
     # ------------------------------------------------------------------
     # Process state helpers
@@ -141,6 +328,10 @@ class PluginManager:
         plugin = self._plugins.get(plugin_name)
         if not plugin:
             logger.error(f"Plugin '{plugin_name}' is not registered; cannot restart")
+            return False
+
+        if not plugin.enabled:
+            logger.warning(f"Plugin '{plugin_name}' is disabled; not restarting")
             return False
 
         # Check the restart limit
@@ -266,7 +457,7 @@ class PluginManager:
             False — the plugin is missing, dead, or stopped.
         """
         plugin = self._plugins.get(plugin_name)
-        if not plugin or plugin.state == PluginState.STOPPED:
+        if not plugin or not plugin.enabled or plugin.state == PluginState.STOPPED:
             return False
         return not self._mark_stopped_if_dead(plugin)
 
@@ -286,7 +477,7 @@ class PluginManager:
                 "is_healthy": False,
             }
 
-        pid = plugin.proc.pid
+        pid = plugin.proc.pid if plugin.proc is not None else None
         healthy = self.is_healthy(plugin_name)
         return {
             "name": plugin_name,
@@ -371,6 +562,9 @@ class PluginManager:
         """
         plugin = self._plugins.get(plugin_name)
 
+        if plugin is not None and not plugin.enabled:
+            raise RuntimeError(f"Plugin '{plugin_name}' is disabled")
+
         if not plugin or self._mark_stopped_if_dead(plugin) or plugin.state == PluginState.STOPPED:
             logger.info(f"Attempting auto-restart of plugin '{plugin_name}' before get_tools")
             success = await self._restart_plugin(plugin_name)
@@ -405,6 +599,8 @@ class PluginManager:
         all_tools: list[dict] = []
         failed_plugins: list[str] = []
         for plugin_name in self.plugin_names():
+            if not self.is_enabled(plugin_name):
+                continue
             try:
                 tools = await self.get_tools(plugin_name)
                 all_tools.extend(self._index_tools(plugin_name, tools))
@@ -464,6 +660,9 @@ class PluginManager:
         On STOPPED or a dead process, attempts auto-restart.
         """
         plugin = self._plugins.get(plugin_name)
+
+        if plugin is not None and not plugin.enabled:
+            raise RuntimeError(f"Plugin '{plugin_name}' is disabled")
 
         if not plugin or self._mark_stopped_if_dead(
             plugin, detail=f"while calling '{tool_name}'"

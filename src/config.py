@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     admin_totp_secret: str = ""
     session_secret: str = ""
     plugins_dir: str = "/app/plugins"
+    plugins_state_file: str = ""
     model_config = {"env_file": ".env"}
 
 @lru_cache

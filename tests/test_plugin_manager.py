@@ -1,6 +1,7 @@
 """Unit tests for PluginManager: tool separation, status and resilience."""
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -490,4 +491,240 @@ async def test_get_all_tools_skips_failing_plugin(monkeypatch):
 
     assert [tool["name"] for tool in tools] == ["wg_ok"]
     assert manager._internal_tools["wg_internal"] == "good"
+
+
+# === manifest-aware discovery ===
+
+
+def _manifest(**overrides) -> dict:
+    data = {
+        "schema_version": 1,
+        "id": "demo",
+        "name": "Demo",
+        "version": "1.0.0",
+        "description": "demo",
+        "entry": "main.py",
+        "protocol": "2024-11-05",
+        "platforms": ["linux"],
+    }
+    data.update(overrides)
+    return data
+
+
+def _add_plugin_dir(tmp_path, name, manifest, *, main=True):
+    plugin_dir = tmp_path / name
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    if main:
+        (plugin_dir / "main.py").write_text("", encoding="utf-8")
+    if manifest is not None:
+        (plugin_dir / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+    return plugin_dir
+
+
+def test_discover_skips_invalid_manifest(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest(version="1.0"))
+    manager = PluginManager()
+    monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("no launch"))
+
+    assert manager.discover_plugins(str(tmp_path)) == []
+    assert manager.plugin_names() == []
+
+
+def test_discover_honours_default_enabled_false(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest(default_enabled=False))
+    manager = PluginManager()
+    monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("no launch"))
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    assert manager.is_enabled("demo") is False
+    assert manager._plugins["demo"].proc is None
+    assert manager._plugins["demo"].version == "1.0.0"
+
+
+def test_discover_records_permission_warnings(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest())
+    manager = PluginManager()
+
+    def fake_register(name, command, working_dir=None):
+        manager._plugins[name] = ManagedPlugin(name=name, command=command)
+
+    monkeypatch.setattr(manager, "register", fake_register)
+    monkeypatch.setattr(
+        "src.plugins.manager.check_permissions", lambda manifest: ["fake warning"]
+    )
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    plugin = manager._plugins["demo"]
+    assert plugin.permission_warnings == ["fake warning"]
+    assert plugin.version == "1.0.0"
+
+
+def test_discover_respects_persisted_disabled(tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest())
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"disabled": ["demo"]}), encoding="utf-8")
+
+    manager = PluginManager(state_path=state_path)
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    assert manager.is_enabled("demo") is False
+    assert manager._plugins["demo"].proc is None
+
+
+# === enable / disable / reload ===
+
+
+@pytest.mark.asyncio
+async def test_disable_plugin_stops_drops_tools_and_persists(tmp_path):
+    state_path = tmp_path / "state.json"
+    manager = PluginManager(state_path=state_path)
+    plugin = _add_plugin(manager)
+    manager._tool_plugins["demo_tool"] = "demo"
+    manager._internal_tools["demo_internal"] = "demo"
+
+    assert await manager.disable_plugin("demo") is True
+
+    assert plugin.enabled is False
+    assert plugin.state == PluginState.STOPPED
+    assert manager._tool_plugins == {}
+    assert manager._internal_tools == {}
+    assert manager.is_enabled("demo") is False
+    assert manager.is_healthy("demo") is False
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"disabled": ["demo"]}
+
+
+@pytest.mark.asyncio
+async def test_disable_unknown_plugin_returns_false():
+    manager = PluginManager()
+    assert await manager.disable_plugin("ghost") is False
+
+
+@pytest.mark.asyncio
+async def test_enable_plugin_spawns_and_registers_tools(monkeypatch, tmp_path):
+    state_path = tmp_path / "state.json"
+    manager = PluginManager(state_path=state_path)
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+    plugin.state = PluginState.STOPPED
+    calls: list[str] = []
+
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: calls.append("spawn"))
+
+    async def fake_init(name):
+        calls.append("init")
+
+    async def fake_tools(name):
+        return [{"name": "demo_ok"}]
+
+    monkeypatch.setattr(manager, "_initialize_plugin", fake_init)
+    monkeypatch.setattr(manager, "get_tools", fake_tools)
+
+    assert await manager.enable_plugin("demo") is True
+
+    assert plugin.enabled is True
+    assert plugin.state == PluginState.IDLE
+    assert manager._tool_plugins == {"demo_ok": "demo"}
+    assert calls == ["spawn", "init"]
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"disabled": []}
+
+
+@pytest.mark.asyncio
+async def test_enable_plugin_failure_reverts(monkeypatch, tmp_path):
+    manager = PluginManager(state_path=tmp_path / "state.json")
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def boom(name):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(manager, "_initialize_plugin", boom)
+
+    assert await manager.enable_plugin("demo") is False
+    assert plugin.enabled is False
+    assert plugin.state == PluginState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_reload_plugin_refreshes_enabled(monkeypatch):
+    manager = PluginManager()
+    plugin = _add_plugin(manager)
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def fake_init(name):
+        return None
+
+    async def fake_tools(name):
+        return []
+
+    monkeypatch.setattr(manager, "_initialize_plugin", fake_init)
+    monkeypatch.setattr(manager, "get_tools", fake_tools)
+
+    assert await manager.reload_plugin("demo") is True
+    assert plugin.state == PluginState.IDLE
+    assert await manager.reload_plugin("ghost") is False
+
+
+@pytest.mark.asyncio
+async def test_reload_disabled_plugin_returns_false():
+    manager = PluginManager()
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+
+    assert await manager.reload_plugin("demo") is False
+
+
+# === disabled behaviour ===
+
+
+@pytest.mark.asyncio
+async def test_restart_disabled_plugin_returns_false():
+    manager = PluginManager()
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+
+    assert await manager._restart_plugin("demo") is False
+
+
+@pytest.mark.asyncio
+async def test_get_tools_and_execute_tool_raise_when_disabled():
+    manager = PluginManager()
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+
+    with pytest.raises(RuntimeError, match="disabled"):
+        await manager.get_tools("demo")
+    with pytest.raises(RuntimeError, match="disabled"):
+        await manager.execute_tool("demo", "demo_tool")
+
+
+@pytest.mark.asyncio
+async def test_get_all_tools_skips_disabled(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "on")
+    off = _add_plugin(manager, "off")
+    off.enabled = False
+
+    async def fake_get_tools(name):
+        return [{"name": f"{name}_tool"}]
+
+    monkeypatch.setattr(manager, "get_tools", fake_get_tools)
+
+    tools = await manager.get_all_tools()
+
+    assert [tool["name"] for tool in tools] == ["on_tool"]
+
+
+def test_get_plugin_status_disabled_has_no_pid():
+    manager = PluginManager()
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+    plugin.proc = None
+
+    status = manager.get_plugin_status("demo")
+
+    assert status["pid"] is None
+    assert status["is_healthy"] is False
 

@@ -15,6 +15,8 @@ async def healthcheck_loop() -> None:
     while True:
         await asyncio.sleep(HEALTHCHECK_INTERVAL_SECONDS)
         for name in plugin_manager.plugin_names():
+            if not plugin_manager.is_enabled(name):
+                continue
             if not plugin_manager.is_healthy(name):
                 logger.warning(f"Plugin '{name}' is unhealthy — restarting")
                 try:

@@ -9,11 +9,17 @@ plugins/<PluginId>/
 └── ...
 ```
 
-The manifest is **plugin-local metadata**. The core does not read or enforce it;
-the plugin validates it against its own runtime (see `manifest.py`) and logs
-warnings so a misconfigured deployment is visible immediately. This keeps the
-core thin (RULES 1) while giving every plugin one place to declare identity,
-permissions and environment.
+The core reads and validates the manifest (identity, version, permissions and
+`default_enabled`) during discovery and **warns** on mismatch — a manifest issue
+never blocks startup, except that a structurally invalid manifest causes the
+plugin to be skipped. The plugin additionally validates it against its own
+runtime (see `manifest.py`) and logs warnings so a misconfigured deployment is
+visible immediately. This keeps the core thin (RULES 1) while giving every plugin
+one place to declare identity, permissions and environment.
+
+The persisted enable/disable state lives outside the plugin: by default
+`<plugins_dir>/../.loomcore/plugins.json` (`{"disabled": ["<id>", ...]}`),
+overridable with the `PLUGINS_STATE_FILE` setting.
 
 ## Schema
 
@@ -32,6 +38,7 @@ permissions and environment.
 | `permissions` | no | object | See below. |
 | `env` | no | array | Environment variables the plugin reads. |
 | `internal_tools` | no | array | Tool names available only to the core. |
+| `default_enabled` | no | boolean | Whether the core launches the plugin on startup (default `true`). |
 
 ### `permissions`
 
