@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "LoomOps",
+  "name": "System Operations",
+  "version": "0.1.0",
+  "description": "Baseline system operations: allow-listed commands, confined files, processes and services.",
+  "entry": "main.py",
+  "protocol": "2024-11-05",
+  "tools_prefix": "ops_",
+  "requires_core": ">=0.0.1",
+  "platforms": ["linux"],
+  "default_enabled": true,
+  "permissions": {
+    "cap_add": [],
+    "cap_add_optional": [],
+    "network_mode": "host",
+    "mounts": []
+  },
+  "env": [
+    {
+      "name": "LOOMOPS_ALLOWED_COMMANDS",
+      "required": false,
+      "description": "Comma/space separated allowlist of executable names for ops_run_command. Empty denies all."
+    },
+    {
+      "name": "LOOMOPS_ALLOWED_PATHS",
+      "required": false,
+      "description": "Comma or ':' separated roots that ops_read_file/ops_write_file may touch. Empty denies all."
+    },
+    {
+      "name": "LOOMOPS_AUDIT_LOG",
+      "required": false,
+      "description": "Path to the JSON-lines audit log (defaults to the plugin-local tmp directory)."
+    },
+    {
+      "name": "LOOMOPS_COMMAND_TIMEOUT",
+      "required": false,
+      "default": "30",
+      "description": "Maximum seconds a command may run before it is terminated."
+    }
+  ]
+}

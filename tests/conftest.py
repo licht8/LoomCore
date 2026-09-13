@@ -8,6 +8,8 @@ import pytest
 
 # LoomWG plugin directory: `import LoomWG` resolves to plugins/LoomWG/LoomWG.
 PLUGIN_DIR = Path(__file__).resolve().parents[1] / "plugins" / "LoomWG"
+# LoomOps plugin directory: `import LoomOps` resolves to plugins/LoomOps/LoomOps.
+LOOMOPS_DIR = Path(__file__).resolve().parents[1] / "plugins" / "LoomOps"
 # Logical module names used by tests -> dotted paths inside the package.
 _MODULE_PATHS = {
     "wireguard": "LoomWG.wg.device",
@@ -30,11 +32,26 @@ _MODULE_PATHS = {
     "manifest": "LoomWG.manifest",
 }
 
+# Logical module names used by LoomOps tests -> dotted paths inside the package.
+_LOOMOPS_MODULE_PATHS = {
+    "ops": "LoomOps.ops",
+    "commands": "LoomOps.ops.commands",
+    "files": "LoomOps.ops.files",
+    "processes": "LoomOps.ops.processes",
+    "services": "LoomOps.ops.services",
+    "system_info": "LoomOps.ops.system_info",
+    "tools": "LoomOps.tools",
+    "schemas": "LoomOps.schemas",
+    "protocol": "LoomOps.protocol",
+    "server": "LoomOps.server",
+    "results": "LoomOps.results",
+}
 
-def _purge_package() -> None:
-    for name in list(sys.modules):
-        if name == "LoomWG" or name.startswith("LoomWG."):
-            sys.modules.pop(name, None)
+
+def _purge_package(name: str = "LoomWG") -> None:
+    for module_name in list(sys.modules):
+        if module_name == name or module_name.startswith(f"{name}."):
+            sys.modules.pop(module_name, None)
 
 
 @pytest.fixture
@@ -54,3 +71,17 @@ def load_loomwg(monkeypatch):
     yield _load
 
     _purge_package()
+
+
+@pytest.fixture
+def load_loomops(monkeypatch):
+    """Return a loader that imports LoomOps plugin modules into the current process."""
+    monkeypatch.syspath_prepend(str(LOOMOPS_DIR))
+
+    def _load(*names: str) -> dict:
+        _purge_package("LoomOps")
+        return {name: importlib.import_module(_LOOMOPS_MODULE_PATHS[name]) for name in names}
+
+    yield _load
+
+    _purge_package("LoomOps")
