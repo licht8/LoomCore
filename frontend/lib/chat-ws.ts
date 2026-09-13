@@ -1,5 +1,10 @@
 import type { UseChatState, WsMessage } from "@/lib/chat-types"
-import { finalizePendingTool, formatTimestamp } from "@/lib/chat-hydrate"
+import {
+  applyPlanStep,
+  finalizePendingTool,
+  formatTimestamp,
+  upsertPlanMessage,
+} from "@/lib/chat-hydrate"
 import { withAdminToken } from "@/lib/admin-token"
 
 /** Build the admin-authenticated WebSocket URL for a session. */
@@ -25,6 +30,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         ...state,
         isThinking: false,
         isSending: false,
+        planRequest: null,
         error: null,
         messages: [
           ...state.messages,
@@ -63,7 +69,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         ...state,
         isThinking: false,
         isSending: false,
-        approvalRequest: null,
+        planRequest: null,
         messages: finalizePendingTool(state.messages, {
           toolStatus: msg.status === "error" ? "error" : "success",
           toolSummary: msg.summary || (msg.status === "error" ? "Error" : "Done"),
@@ -77,26 +83,48 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
             : null,
       }
 
-    case "approval_request":
+    case "plan_proposed": {
+      const plan = msg.plan
+      if (!plan) return state
+      const requiresApproval = Boolean(msg.requires_approval)
       return {
         ...state,
         isThinking: true,
         error: null,
-        approvalRequest: {
-          id: `approval_${Date.now()}`,
-          action: msg.action || msg.tool || "unknown_action",
-          message: msg.content || msg.text || `Confirm running tool ${msg.tool || ""}`,
-          tool: msg.tool,
-          args: msg.args,
-        },
+        planRequest: requiresApproval ? { id: plan.plan_id, plan } : null,
+        messages: upsertPlanMessage(state.messages, plan),
       }
+    }
+
+    case "plan_step": {
+      if (!msg.plan_id || !msg.step) return state
+      return {
+        ...state,
+        messages: applyPlanStep(state.messages, msg.plan_id, msg.step),
+      }
+    }
+
+    case "plan_done": {
+      const plan = msg.plan
+      const planId = plan?.plan_id ?? msg.plan_id
+      return {
+        ...state,
+        isThinking: false,
+        isSending: false,
+        planRequest:
+          state.planRequest && state.planRequest.plan.plan_id === planId
+            ? null
+            : state.planRequest,
+        messages: plan ? upsertPlanMessage(state.messages, plan) : state.messages,
+      }
+    }
 
     case "error":
       return {
         ...state,
         isThinking: false,
         isSending: false,
-        approvalRequest: null,
+        planRequest: null,
         messages: finalizePendingTool(state.messages, {
           toolStatus: "error",
           toolSummary: "Error",
@@ -109,24 +137,11 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         ...state,
         isThinking: false,
         isSending: false,
-        approvalRequest: null,
+        planRequest: null,
         messages: finalizePendingTool(state.messages, {
           toolStatus: "cancelled",
           toolSummary: "Cancelled",
         }),
-      }
-
-    case "tool_denied":
-      return {
-        ...state,
-        isThinking: false,
-        isSending: false,
-        approvalRequest: null,
-        messages: finalizePendingTool(state.messages, {
-          toolStatus: "cancelled",
-          toolSummary: "Denied",
-        }),
-        error: null,
       }
 
     case "busy":

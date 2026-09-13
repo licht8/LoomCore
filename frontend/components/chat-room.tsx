@@ -13,11 +13,11 @@ export function ChatRoom() {
   const {
     messages,
     isThinking,
-    approvalRequest,
+    planRequest,
     error,
     isSending,
     sendMessage,
-    sendApprovalResponse,
+    sendPlanResponse,
     cancelRequest,
     clearConversation,
   } = useChat()
@@ -55,7 +55,7 @@ export function ChatRoom() {
     if (!stickToBottom.current) return
     scrollToBottom(hasHydrated.current ? "smooth" : "auto")
     if (messages.length > 0) hasHydrated.current = true
-  }, [messages, isThinking, approvalRequest, error, scrollToBottom])
+  }, [messages, isThinking, planRequest, error, scrollToBottom])
 
   // Also react to layout growth that does not come from React state
   // (artifact links, code blocks wrapping, images loading).
@@ -112,8 +112,8 @@ export function ChatRoom() {
         onClear={clearConversation}
         isThinking={isThinking}
         isSending={isSending}
-        approvalRequest={approvalRequest}
-        onApprovalResponse={sendApprovalResponse}
+        planRequest={planRequest}
+        onPlanResponse={sendPlanResponse}
       />
     </>
   )

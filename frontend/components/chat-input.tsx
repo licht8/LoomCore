@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { ApprovalRequest } from "@/lib/chat-types"
+import type { PlanRequest, PlanStep } from "@/lib/chat-types"
 
 interface ChatInputProps {
   onSend: (text: string) => void
@@ -21,8 +21,8 @@ interface ChatInputProps {
   onClear?: () => void
   isThinking?: boolean
   isSending?: boolean
-  approvalRequest?: ApprovalRequest | null
-  onApprovalResponse?: (action: "approve" | "deny") => void
+  planRequest?: PlanRequest | null
+  onPlanResponse?: (action: "approve" | "edit" | "reject", steps?: PlanStep[]) => void
 }
 
 /**
@@ -30,7 +30,7 @@ interface ChatInputProps {
  * - Sends on Enter or the "Send" button
  * - The submit button rotates and morphs into a pause control while running;
  *   clicking it cancels the in-flight request
- * - Shows a confirmation dialog (approve/deny) when an approval_request arrives
+ * - Shows the agent plan for approval (approve/edit/reject) when one arrives
  * - Disables sending while a request is running
  *
  * The CSS structure is unchanged — only the logic.
@@ -41,11 +41,14 @@ export function ChatInput({
   onClear,
   isThinking = false,
   isSending = false,
-  approvalRequest,
-  onApprovalResponse,
+  planRequest,
+  onPlanResponse,
 }: ChatInputProps) {
   const [text, setText] = useState("")
   const [clearOpen, setClearOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editText, setEditText] = useState("")
+  const [editError, setEditError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const isRunning = isThinking || isSending
 
@@ -53,6 +56,13 @@ export function ChatInput({
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
+
+  // Reset the edit form whenever a new plan arrives
+  useEffect(() => {
+    setEditOpen(false)
+    setEditError(null)
+    setEditText(planRequest ? JSON.stringify(planRequest.plan.steps, null, 2) : "")
+  }, [planRequest])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,9 +72,29 @@ export function ChatInput({
     inputRef.current?.focus()
   }
 
-  // Handle approval (approve/deny)
-  const handleApproval = (action: "approve" | "deny") => {
-    if (onApprovalResponse) onApprovalResponse(action)
+  const handlePlan = (action: "approve" | "reject") => {
+    onPlanResponse?.(action)
+  }
+
+  const handleStartEdit = () => {
+    if (!planRequest) return
+    setEditText(JSON.stringify(planRequest.plan.steps, null, 2))
+    setEditError(null)
+    setEditOpen(true)
+  }
+
+  const handleSubmitEdit = () => {
+    try {
+      const parsed = JSON.parse(editText)
+      if (!Array.isArray(parsed)) {
+        setEditError("Steps must be a JSON array.")
+        return
+      }
+      onPlanResponse?.("edit", parsed as PlanStep[])
+      setEditOpen(false)
+    } catch {
+      setEditError("Invalid JSON. Fix the steps and try again.")
+    }
   }
 
   // Open the confirmation dialog (the actual clear happens on confirm)
@@ -88,27 +118,67 @@ export function ChatInput({
         className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/60 via-background/30 to-transparent backdrop-blur-xl [mask-image:linear-gradient(to_top,black_45%,transparent)]"
       />
 
-      {/* Confirmation request block — above the input */}
-      {approvalRequest && (
+      {/* Plan approval block — above the input */}
+      {planRequest && (
         <div className="relative z-10 mx-auto mb-3 max-w-3xl rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 backdrop-blur-md dark:border-amber-600/50 dark:bg-amber-950/60">
-          <p className="mb-2 font-medium">⚠️ Confirmation required</p>
-          <p className="mb-3 text-xs opacity-80">{approvalRequest.message}</p>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-              onClick={() => handleApproval("approve")}
-            >
-              OK — Confirm
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => handleApproval("deny")}
-            >
-              Cancel
-            </Button>
-          </div>
+          <p className="mb-1 font-medium">Approval required</p>
+          <p className="mb-2 text-xs opacity-80">{planRequest.plan.goal}</p>
+
+          {!editOpen ? (
+            <>
+              <ol className="mb-3 flex flex-col gap-1 text-xs">
+                {planRequest.plan.steps.map((step, index) => (
+                  <li key={step.id} className="flex items-start gap-2">
+                    <span className="font-mono opacity-80">
+                      {index + 1}. {step.tool}
+                    </span>
+                    <span className="rounded-full bg-amber-900/10 px-1.5 text-[10px] uppercase tracking-wide">
+                      {step.risk}
+                    </span>
+                    {step.why && <span className="opacity-70">{step.why}</span>}
+                  </li>
+                ))}
+              </ol>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="bg-emerald-600 text-white hover:bg-emerald-700"
+                  onClick={() => handlePlan("approve")}
+                >
+                  Approve
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleStartEdit}>
+                  Edit
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handlePlan("reject")}>
+                  Reject
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                rows={8}
+                spellCheck={false}
+                className="mb-2 w-full resize-y rounded-md border border-amber-300 bg-background/70 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              {editError && <p className="mb-2 text-xs text-destructive">{editError}</p>}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="bg-emerald-600 text-white hover:bg-emerald-700"
+                  onClick={handleSubmitEdit}
+                >
+                  Apply changes
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setEditOpen(false)}>
+                  Cancel edit
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

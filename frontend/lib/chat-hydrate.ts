@@ -1,4 +1,4 @@
-import type { ChatMessage, SessionMessage } from "@/lib/chat-types"
+import type { ChatMessage, Plan, PlanStep, SessionMessage } from "@/lib/chat-types"
 
 /** Format the current timestamp as a local HH:MM label. */
 export function formatTimestamp(): string {
@@ -33,6 +33,44 @@ export function finalizePendingTool(
   return updated
 }
 
+/** Insert or replace the card for a plan (keyed by plan_id, so revisions collapse). */
+export function upsertPlanMessage(messages: ChatMessage[], plan: Plan): ChatMessage[] {
+  const index = messages.findIndex(
+    (m) => m.role === "plan" && m.plan?.plan_id === plan.plan_id,
+  )
+  if (index === -1) {
+    return [
+      ...messages,
+      {
+        id: `plan_${plan.plan_id}_${plan.revision}`,
+        role: "plan",
+        content: plan.goal,
+        timestamp: formatTimestamp(),
+        plan,
+      },
+    ]
+  }
+  const updated = [...messages]
+  updated[index] = { ...updated[index], content: plan.goal, plan }
+  return updated
+}
+
+/** Merge a single step update into its plan's card. */
+export function applyPlanStep(
+  messages: ChatMessage[],
+  planId: string,
+  step: PlanStep,
+): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "plan" || message.plan?.plan_id !== planId) return message
+    const plan = message.plan
+    const steps = plan.steps.map((existing) =>
+      existing.id === step.id ? { ...existing, ...step } : existing,
+    )
+    return { ...message, plan: { ...plan, steps } }
+  })
+}
+
 /** Build a tool card from a stored tool call. */
 export function toolCardFromRow(row: SessionMessage, timestamp: string): ChatMessage {
   const meta = Array.isArray(row.tool_calls) ? row.tool_calls[0] : null
@@ -58,6 +96,7 @@ export function toolCardFromRow(row: SessionMessage, timestamp: string): ChatMes
  *   represented by the following tool row instead of a blank bubble.
  * - A tool-call decision with no following tool row (e.g. reload while an
  *   approval was pending) becomes an "Interrupted" card.
+ * - Plan rows are collapsed by plan_id so only the latest revision is shown.
  */
 export function hydrateMessages(rows: SessionMessage[]): ChatMessage[] {
   const hydrated: ChatMessage[] = []
@@ -76,6 +115,27 @@ export function hydrateMessages(rows: SessionMessage[]): ChatMessage[] {
     if (row.role === "tool") {
       pendingDecision = null
       hydrated.push(toolCardFromRow(row, timestamp))
+      continue
+    }
+
+    if (row.role === "plan") {
+      flushDecision()
+      const stored = Array.isArray(row.tool_calls) ? row.tool_calls[0] : null
+      const plan = stored as unknown as Plan | null
+      if (plan && plan.plan_id) {
+        const message: ChatMessage = {
+          id: row.id,
+          role: "plan",
+          content: plan.goal || row.content,
+          timestamp,
+          plan,
+        }
+        const existing = hydrated.findIndex(
+          (m) => m.role === "plan" && m.plan?.plan_id === plan.plan_id,
+        )
+        if (existing >= 0) hydrated[existing] = message
+        else hydrated.push(message)
+      }
       continue
     }
 

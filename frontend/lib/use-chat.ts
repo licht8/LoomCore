@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import type { UseChatState, WsMessage } from "@/lib/chat-types"
+import type { PlanStep, UseChatState, WsMessage } from "@/lib/chat-types"
 import { clearSessionHistory, fetchSessionHistory, getSessionId } from "@/lib/chat-api"
 import { finalizePendingTool, formatTimestamp, hydrateMessages } from "@/lib/chat-hydrate"
 import { applyWsMessage, buildChatWsUrl } from "@/lib/chat-ws"
@@ -11,11 +11,11 @@ import { applyWsMessage, buildChatWsUrl } from "@/lib/chat-ws"
  * Connection/URL logic lives in `chat-ws`, REST in `chat-api` and the
  * stored-row mapping in `chat-hydrate`.
  */
-export function useChat(onApprovalResponse?: (action: "approve" | "deny") => void) {
+export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject") => void) {
   const [state, setState] = useState<UseChatState>({
     messages: [],
     isThinking: false,
-    approvalRequest: null,
+    planRequest: null,
     error: null,
     isSending: false,
     wsReady: false,
@@ -23,12 +23,12 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
 
   const wsRef = useRef<WebSocket | null>(null)
   const sessionId = useRef<string>(getSessionId())
-  const onApprovalRef = useRef(onApprovalResponse)
+  const onPlanRef = useRef(onPlanResponse)
 
   // Sync the callback ref
   useEffect(() => {
-    onApprovalRef.current = onApprovalResponse
-  }, [onApprovalResponse])
+    onPlanRef.current = onPlanResponse
+  }, [onPlanResponse])
 
   // === Open the WebSocket connection ===
   useEffect(() => {
@@ -74,7 +74,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
         error: "Could not connect to the server. Check that the backend is running.",
         isThinking: false,
         isSending: false,
-        approvalRequest: null,
+        planRequest: null,
         messages: finalizePendingTool(prev.messages, {
           toolStatus: "error",
           toolSummary: "Disconnected",
@@ -89,7 +89,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
         wsReady: false,
         isThinking: false,
         isSending: false,
-        approvalRequest: null,
+        planRequest: null,
         messages: finalizePendingTool(prev.messages, {
           toolStatus: "error",
           toolSummary: "Disconnected",
@@ -138,6 +138,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
     setState((prev) => ({
       ...prev,
       isSending: true,
+      planRequest: null,
       messages: [
         ...prev.messages,
         {
@@ -152,45 +153,65 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
     wsRef.current.send(JSON.stringify({ message: text.trim() }))
   }, [])
 
-  /** Send a response to an approval request */
-  const sendApprovalResponse = useCallback(
-    (action: "approve" | "deny") => {
+  /** Approve, edit or reject the plan awaiting a decision. */
+  const sendPlanResponse = useCallback(
+    (action: "approve" | "edit" | "reject", steps?: PlanStep[]) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
 
-      const approval = state.approvalRequest
-      wsRef.current.send(
-        JSON.stringify({
-          action,
-          tool: approval?.tool,
-          args: approval?.args,
-        }),
-      )
+      const request = state.planRequest
+      if (!request) return
+      const { plan } = request
+
       if (action === "approve") {
-        // Keep the "running" state until the tool_response arrives.
+        wsRef.current.send(
+          JSON.stringify({
+            action: "plan_approve",
+            plan_id: plan.plan_id,
+            revision: plan.revision,
+          }),
+        )
         setState((prev) => ({
           ...prev,
-          approvalRequest: null,
+          planRequest: null,
           isThinking: true,
           isSending: true,
+          error: null,
         }))
-      } else {
+      } else if (action === "edit") {
+        wsRef.current.send(
+          JSON.stringify({
+            action: "plan_edit",
+            plan_id: plan.plan_id,
+            revision: plan.revision,
+            steps: steps ?? plan.steps,
+          }),
+        )
+        // A fresh plan_proposed event will arrive with the revised plan.
         setState((prev) => ({
           ...prev,
-          approvalRequest: null,
+          planRequest: null,
+          isThinking: true,
+          isSending: true,
+          error: null,
+        }))
+      } else {
+        wsRef.current.send(
+          JSON.stringify({ action: "plan_reject", plan_id: plan.plan_id }),
+        )
+        setState((prev) => ({
+          ...prev,
+          planRequest: null,
           isThinking: false,
           isSending: false,
-          messages: finalizePendingTool(prev.messages, {
-            toolStatus: "cancelled",
-            toolSummary: "Denied",
-          }),
         }))
       }
-      if (onApprovalRef.current) onApprovalRef.current(action)
+
+      if (onPlanRef.current) onPlanRef.current(action)
     },
-    [state.approvalRequest],
+    [state.planRequest],
   )
 
-  /** Cancel the request currently in flight (LLM and/or tool). */
+  /** Cancel the request currently in flight (LLM and/or plan). */
   const cancelRequest = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
     wsRef.current.send(JSON.stringify({ action: "cancel" }))
@@ -198,7 +219,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       ...prev,
       isThinking: false,
       isSending: false,
-      approvalRequest: null,
+      planRequest: null,
       messages: finalizePendingTool(prev.messages, {
         toolStatus: "cancelled",
         toolSummary: "Cancelled",
@@ -214,7 +235,7 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       messages: [],
       isThinking: false,
       isSending: false,
-      approvalRequest: null,
+      planRequest: null,
       error: null,
     }))
   }, [])
@@ -222,12 +243,12 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
   return {
     messages: state.messages,
     isThinking: state.isThinking,
-    approvalRequest: state.approvalRequest,
+    planRequest: state.planRequest,
     error: state.error,
     isSending: state.isSending,
     wsReady: state.wsReady,
     sendMessage,
-    sendApprovalResponse,
+    sendPlanResponse,
     cancelRequest,
     clearConversation,
   }
