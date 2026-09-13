@@ -17,6 +17,7 @@ export function ChatRoom() {
     isSending,
     sendMessage,
     sendApprovalResponse,
+    cancelRequest,
   } = useChat()
 
   return (
@@ -41,6 +42,7 @@ export function ChatRoom() {
 
       <ChatInput
         onSend={sendMessage}
+        onCancel={cancelRequest}
         isThinking={isThinking}
         isSending={isSending}
         approvalRequest={approvalRequest}

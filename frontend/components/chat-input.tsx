@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Paperclip, SendHorizonal } from "lucide-react"
+import { Paperclip, Pause, SendHorizonal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { ApprovalRequest } from "@/lib/chat-types"
 
 interface ChatInputProps {
   onSend: (text: string) => void
+  onCancel?: () => void
   isThinking?: boolean
   isSending?: boolean
   approvalRequest?: ApprovalRequest | null
@@ -16,14 +17,17 @@ interface ChatInputProps {
 /**
  * Chat message input component.
  * - Sends on Enter or the "Send" button
+ * - The submit button rotates and morphs into a pause control while running;
+ *   clicking it cancels the in-flight request
  * - Shows a "typing…" indicator while the backend processes the request
  * - Shows a confirmation dialog (approve/deny) when an approval_request arrives
- * - Disables the send button while processing
+ * - Disables sending while a request is running
  *
  * The CSS structure is unchanged — only the logic.
  */
 export function ChatInput({
   onSend,
+  onCancel,
   isThinking = false,
   isSending = false,
   approvalRequest,
@@ -31,6 +35,7 @@ export function ChatInput({
 }: ChatInputProps) {
   const [text, setText] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
+  const isRunning = isThinking || isSending
 
   // Focus the input on mount and after sending
   useEffect(() => {
@@ -39,7 +44,7 @@ export function ChatInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!text.trim() || isSending) return
+    if (!text.trim() || isRunning) return
     onSend(text.trim())
     setText("")
     inputRef.current?.focus()
@@ -98,15 +103,33 @@ export function ChatInput({
           placeholder="Ask LoomCore to manage clusters, models, or deployments…"
           className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={isSending || !text.trim()}
-          className="size-9 shrink-0 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50"
-        >
-          <SendHorizonal className="size-4.5" />
-          <span className="sr-only">Send message</span>
-        </Button>
+        {isRunning ? (
+          <Button
+            type="button"
+            size="icon"
+            onClick={onCancel}
+            title="Pause / stop"
+            aria-label="Pause request"
+            className="relative size-9 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <span
+              aria-hidden
+              className="absolute inset-1.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            />
+            <Pause className="size-3.5" />
+            <span className="sr-only">Pause request</span>
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            disabled={!text.trim()}
+            className="size-9 shrink-0 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50"
+          >
+            <SendHorizonal className="size-4.5" />
+            <span className="sr-only">Send message</span>
+          </Button>
+        )}
       </form>
 
       {/* "Typing…" indicator above the input */}

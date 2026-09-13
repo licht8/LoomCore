@@ -518,6 +518,14 @@ class PluginManager:
             if result is None:
                 raise RuntimeError(f"Plugin '{plugin_name}' returned no result")
             return result
+        except asyncio.CancelledError:
+            # The caller cancelled mid-call; the stdio stream can no longer be
+            # trusted to pair requests with responses, so restart the plugin.
+            logger.warning(
+                f"Call to '{tool_name}' in '{plugin_name}' cancelled — restarting plugin"
+            )
+            self._kill_and_stop(plugin_name)
+            raise
         except TimeoutError:
             logger.warning(f"30s timeout for plugin '{plugin_name}' — killing process")
             plugin["proc"].kill()
@@ -529,6 +537,25 @@ class PluginManager:
         finally:
             if plugin["state"] == PluginState.BUSY:
                 plugin["state"] = PluginState.IDLE
+
+    def _kill_and_stop(self, plugin_name: str) -> None:
+        """Kill a plugin subprocess and mark it STOPPED for the next auto-restart.
+
+        Used when an in-flight tool call is cancelled: the plugin's stdio stream
+        may still hold the abandoned request/response, so the process is replaced
+        on the next call instead of risking a request/response desync.
+        """
+        plugin = self._plugins.get(plugin_name)
+        if not plugin:
+            return
+        proc = plugin.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                logger.exception(f"Failed to kill plugin '{plugin_name}'")
+        plugin["state"] = PluginState.STOPPED
 
     async def execute_tool_by_name(
         self, tool_name: str, arguments: dict | None = None

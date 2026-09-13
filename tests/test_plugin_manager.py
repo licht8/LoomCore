@@ -1,8 +1,10 @@
 """Unit tests for PluginManager: internal vs public tool separation."""
 
+import asyncio
+
 import pytest
 
-from src.plugins.manager import PluginManager
+from src.plugins.manager import PluginManager, PluginState
 
 
 def test_tool_cache_splits_internal_tools():
@@ -64,3 +66,44 @@ async def test_execute_internal_tool_unknown_raises():
 
     with pytest.raises(ValueError):
         await manager.execute_internal_tool("nope")
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_cancelled_restarts_plugin(monkeypatch):
+    manager = PluginManager()
+
+    class FakeProc:
+        def __init__(self):
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    proc = FakeProc()
+    manager._plugins["demo"] = {
+        "proc": proc,
+        "state": PluginState.IDLE,
+        "config": {},
+    }
+
+    async def blocking_write(plugin_name, request):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(manager, "_write_request", blocking_write)
+
+    task = asyncio.create_task(manager.execute_tool("demo", "wg_interface_status"))
+    await asyncio.sleep(0.01)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert proc.killed is True
+    assert manager._plugins["demo"]["state"] == PluginState.STOPPED
+

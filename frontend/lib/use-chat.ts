@@ -26,6 +26,27 @@ function formatTimestamp(): string {
 }
 
 /**
+ * Resolve the newest still-pending tool message with the given patch.
+ * Undefined patch values are ignored so existing fields are preserved.
+ */
+function finalizePendingTool(
+  messages: ChatMessage[],
+  patch: Partial<ChatMessage>,
+): ChatMessage[] {
+  const clean = Object.fromEntries(
+    Object.entries(patch).filter(([, value]) => value !== undefined),
+  ) as Partial<ChatMessage>
+  const updated = [...messages]
+  for (let i = updated.length - 1; i >= 0; i--) {
+    if (updated[i].role === "tool" && updated[i].toolStatus === "pending") {
+      updated[i] = { ...updated[i], ...clean }
+      break
+    }
+  }
+  return updated
+}
+
+/**
  * Custom hook managing the WebSocket connection and chat state.
  * Replaces static mock data with a real connection to FastAPI.
  */
@@ -95,12 +116,28 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
         ...prev,
         error: "Could not connect to the server. Check that the backend is running.",
         isThinking: false,
+        isSending: false,
+        approvalRequest: null,
+        messages: finalizePendingTool(prev.messages, {
+          toolStatus: "error",
+          toolSummary: "Disconnected",
+        }),
       }))
     }
 
     ws.onclose = () => {
       if (!isActive || wsRef.current !== ws) return
-      setState((prev) => ({ ...prev, wsReady: false }))
+      setState((prev) => ({
+        ...prev,
+        wsReady: false,
+        isThinking: false,
+        isSending: false,
+        approvalRequest: null,
+        messages: finalizePendingTool(prev.messages, {
+          toolStatus: "error",
+          toolSummary: "Disconnected",
+        }),
+      }))
     }
 
     // Cleanup on unmount
@@ -169,30 +206,24 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       }
 
       case "tool_response": {
-        // Update the last pending tool message
-        setState((prev) => {
-          const updated = [...prev.messages]
-          for (let i = updated.length - 1; i >= 0; i--) {
-            if (updated[i].role === "tool" && updated[i].toolStatus === "pending") {
-              updated[i] = {
-                ...updated[i],
-                toolStatus: msg.status === "error" ? "error" : "success",
-                toolSummary: msg.summary || updated[i].toolSummary || "",
-                toolCode: msg.code || updated[i].toolCode || "",
-                artifacts: msg.artifacts || updated[i].artifacts,
-                content: msg.content || updated[i].content,
-              }
-              break
-            }
-          }
-          return {
-            ...prev,
-            isThinking: false,
-            isSending: false,
-            messages: updated,
-            error: msg.status === "error" ? (msg.error || msg.text || "Tool execution failed") : null,
-          }
-        })
+        // Update the last pending tool message with the terminal state
+        setState((prev) => ({
+          ...prev,
+          isThinking: false,
+          isSending: false,
+          approvalRequest: null,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: msg.status === "error" ? "error" : "success",
+            toolSummary: msg.summary || (msg.status === "error" ? "Error" : "Done"),
+            toolCode: msg.code,
+            artifacts: msg.artifacts,
+            content: msg.content,
+          }),
+          error:
+            msg.status === "error"
+              ? msg.error || msg.text || "Tool execution failed"
+              : null,
+        }))
         break
       }
 
@@ -218,8 +249,56 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
           ...prev,
           isThinking: false,
           isSending: false,
+          approvalRequest: null,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: "error",
+            toolSummary: "Error",
+          }),
           error: msg.error || msg.text || "Unknown server error",
         }))
+        break
+      }
+
+      case "cancelled": {
+        setState((prev) => ({
+          ...prev,
+          isThinking: false,
+          isSending: false,
+          approvalRequest: null,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: "cancelled",
+            toolSummary: "Cancelled",
+          }),
+        }))
+        break
+      }
+
+      case "tool_denied": {
+        setState((prev) => ({
+          ...prev,
+          isThinking: false,
+          isSending: false,
+          approvalRequest: null,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: "cancelled",
+            toolSummary: "Denied",
+          }),
+          error: null,
+        }))
+        break
+      }
+
+      case "busy": {
+        setState((prev) => ({
+          ...prev,
+          error: "A request is already running. Pause it before sending another.",
+        }))
+        break
+      }
+
+      case "schema_warning": {
+        // Some plugins were unavailable while building the tool schema.
+        console.warn("Unavailable plugins:", msg.unavailable_plugins)
         break
       }
 
@@ -267,11 +346,46 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
           args: approval?.args,
         }),
       )
-      setState((prev) => ({ ...prev, approvalRequest: null, isSending: false }))
+      if (action === "approve") {
+        // Keep the "running" state until the tool_response arrives.
+        setState((prev) => ({
+          ...prev,
+          approvalRequest: null,
+          isThinking: true,
+          isSending: true,
+        }))
+      } else {
+        setState((prev) => ({
+          ...prev,
+          approvalRequest: null,
+          isThinking: false,
+          isSending: false,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: "cancelled",
+            toolSummary: "Denied",
+          }),
+        }))
+      }
       if (onApprovalRef.current) onApprovalRef.current(action)
     },
     [state.approvalRequest],
   )
+
+  /** Cancel the request currently in flight (LLM and/or tool). */
+  const cancelRequest = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    wsRef.current.send(JSON.stringify({ action: "cancel" }))
+    setState((prev) => ({
+      ...prev,
+      isThinking: false,
+      isSending: false,
+      approvalRequest: null,
+      messages: finalizePendingTool(prev.messages, {
+        toolStatus: "cancelled",
+        toolSummary: "Cancelled",
+      }),
+    }))
+  }, [])
 
   return {
     messages: state.messages,
@@ -282,5 +396,6 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
     wsReady: state.wsReady,
     sendMessage,
     sendApprovalResponse,
+    cancelRequest,
   }
 }

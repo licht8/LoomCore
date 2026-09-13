@@ -2,7 +2,17 @@
 
 /** Event arriving from the backend over WebSocket */
 export interface WsMessage {
-  type: "thinking" | "response" | "tool_call" | "tool_response" | "approval_request" | "error"
+  type:
+    | "thinking"
+    | "response"
+    | "tool_call"
+    | "tool_response"
+    | "approval_request"
+    | "schema_warning"
+    | "tool_denied"
+    | "cancelled"
+    | "busy"
+    | "error"
   content?: string
   text?: string
   result?: string
@@ -16,6 +26,7 @@ export interface WsMessage {
   action?: string
   error?: string
   artifacts?: Array<{ label: string; url: string }>
+  unavailable_plugins?: string[]
 }
 
 /** Chat message type in the UI feed */
@@ -28,7 +39,7 @@ export interface ChatMessage {
   timestamp: string
   // For tool messages:
   tool?: string
-  toolStatus?: "pending" | "success" | "error"
+  toolStatus?: "pending" | "success" | "error" | "cancelled"
   toolSummary?: string
   toolCode?: string
   artifacts?: Array<{ label: string; url: string }>

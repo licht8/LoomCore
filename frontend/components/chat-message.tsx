@@ -1,6 +1,6 @@
 "use client"
 
-import { CheckCircle2, Loader2, XCircle, Sparkles, Terminal } from "lucide-react"
+import { CheckCircle2, CircleStop, Loader2, XCircle, Sparkles, Terminal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/lib/chat-types"
 import { withAdminToken } from "@/lib/admin-token"
@@ -65,6 +65,8 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
                   ? "text-emerald-600"
                   : message.toolStatus === "error"
                   ? "text-destructive"
+                  : message.toolStatus === "cancelled"
+                  ? "text-muted-foreground"
                   : "text-primary",
               )}
             >
@@ -77,6 +79,11 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
                 <>
                   <XCircle className="size-3.5" />
                   {message.toolSummary || "Error"}
+                </>
+              ) : message.toolStatus === "cancelled" ? (
+                <>
+                  <CircleStop className="size-3.5" />
+                  {message.toolSummary || "Cancelled"}
                 </>
               ) : (
                 <>

@@ -274,6 +274,9 @@ Expect: peer gone, no matching `PublicKey`, client files removed.
 
 ### 11.7 Negative and UX checks
 - Deny a dangerous tool -> `tool_denied`, no server change.
+- Send a message, then click the rotating submit button (pause) -> `cancelled`, the tool card resolves, and the UI returns to idle.
+- A tool that fails (e.g. `wg_interface_status` on a down interface) -> `tool_response` with `status: error`, card shows the error instead of spinning forever.
+- While a request is running, sending another message -> `busy` (no overlapping runs).
 - Invalid name (`bad name!`) -> clear validation error, no client created.
 - Duplicate `phone1` -> "client already exists".
 - `http://SERVER_IP/api/tools` without token -> 401/503; with `?access_token=...` -> JSON.
