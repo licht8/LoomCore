@@ -79,6 +79,60 @@ def test_next_revision_reclassifies():
     assert revised["plan_id"] == plan["plan_id"]
 
 
+def test_mode_clamps_to_direct_for_single_step():
+    plan = agent.build_plan({"steps": [{"tool": "core_health", "why": "w"}]})
+    assert plan["mode"] == "direct"
+    assert agent.plan_is_direct(plan) is True
+
+
+def test_mode_forced_to_plan_for_multiple_steps():
+    plan = agent.build_plan(
+        {
+            "steps": [
+                {"tool": "core_health", "why": "w"},
+                {"tool": "ops_disk_usage", "why": "w2"},
+            ]
+        }
+    )
+    assert plan["mode"] == "plan"
+    assert agent.plan_is_direct(plan) is False
+
+
+def test_explicit_plan_mode_kept_for_single_step():
+    plan = agent.build_plan(
+        {"mode": "plan", "steps": [{"tool": "core_health", "why": "w"}]}
+    )
+    assert plan["mode"] == "plan"
+    assert agent.plan_is_direct(plan) is False
+
+
+def test_explicit_direct_mode_with_many_steps_is_clamped():
+    plan = agent.build_plan(
+        {
+            "mode": "direct",
+            "steps": [
+                {"tool": "core_health", "why": "w"},
+                {"tool": "ops_disk_usage", "why": "w2"},
+            ],
+        }
+    )
+    assert plan["mode"] == "plan"
+    assert agent.plan_is_direct(plan) is False
+
+
+def test_next_revision_forces_plan_mode():
+    plan = agent.build_plan({"steps": [{"tool": "core_health", "why": "w"}]})
+    assert plan["mode"] == "direct"
+    revised = agent.next_revision(plan, [{"tool": "core_health", "why": "w"}])
+    assert revised["mode"] == "plan"
+
+
+def test_validate_plan_rejects_invalid_mode():
+    known = {"core_health"}
+    plan = {"mode": "chatty", "steps": [{"tool": "core_health", "args": {}}]}
+    assert any("invalid mode" in error for error in agent.validate_plan(plan, known))
+
+
 @pytest.mark.asyncio
 async def test_execute_plan_replays_verbatim():
     plan = agent.build_plan(

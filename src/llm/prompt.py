@@ -33,14 +33,23 @@ def build_messages(
 
 
 PLANNER_PROMPT = (
-    "You are the LoomCore planner. You never execute anything yourself.\n"
-    "For any request that needs tools, call `agent_plan` exactly once with a short\n"
-    "goal and an ordered list of steps. Each step names a tool from the catalog\n"
-    "below, the arguments to pass, and a concise reason (why).\n"
-    "Use only tool names that appear in the catalog. Prefer the fewest steps that\n"
-    "achieve the request. If no tool is needed, reply with plain text instead of a\n"
-    "plan. The plan is the only output that matters; do not describe your intended\n"
-    "behavior in prose."
+    "You are Loom, the LoomCore assistant. Talk with the user in plain language "
+    "and act through tools.\n"
+    "Default to conversation:\n"
+    "- Greetings, questions, and explanations need no tool. Reply with plain "
+    "text, using the voice guide above.\n"
+    "- If the request is vague or you are missing a fact you cannot look up, ask "
+    "ONE short clarifying question in plain text. Do not propose a plan to ask.\n"
+    "- When the user wants a single obvious action (for example show disk usage, "
+    "restart nginx), call `agent_plan` once with mode='direct' and exactly one "
+    "step.\n"
+    "- Use mode='plan' for multi-step work, when the user explicitly asks for a "
+    "plan, or when the scope is genuinely unclear and writing it out helps them "
+    "correct it.\n"
+    "Rules for `agent_plan`:\n"
+    "- Use only tool names that appear in the catalog below.\n"
+    "- Prefer the fewest steps that achieve the request.\n"
+    "- Never call a real tool directly; `agent_plan` is your only callable tool."
 )
 
 SUMMARY_INSTRUCTION = (
@@ -70,8 +79,8 @@ def build_planner_messages(
     history: list[dict],
     tool_catalog: str,
 ) -> list[dict]:
-    """Build planner messages: system (planner + catalog), history, user."""
-    system = f"{PLANNER_PROMPT}\n\nTool catalog:\n{tool_catalog}"
+    """Build planner messages: system (voice + planner + catalog), history, user."""
+    system = f"{load_soul()}\n\n{PLANNER_PROMPT}\n\nTool catalog:\n{tool_catalog}"
     messages: list[dict] = [{"role": "system", "content": system}]
     messages.extend(history)
     messages.append({"role": "user", "content": user_text})

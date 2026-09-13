@@ -72,3 +72,12 @@ def test_build_summary_messages_uses_soul():
     assert "Loom" in messages[0]["content"]
     assert "check disk" in messages[1]["content"]
     assert "how full is the disk?" in messages[1]["content"]
+
+
+def test_build_planner_messages_carries_soul_and_mode_guidance():
+    messages = build_planner_messages("hi", [], "- core_health: check")
+
+    system = messages[0]["content"]
+    assert "Loom" in system
+    assert "mode='direct'" in system
+    assert "mode='plan'" in system

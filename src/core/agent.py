@@ -19,6 +19,7 @@ logger = logging.getLogger("loomcore.agent")
 AGENT_PLAN_TOOL = "agent_plan"
 MAX_PLAN_STEPS = 12
 PLANNER_REASK_LIMIT = 1
+VALID_PLAN_MODES = {"direct", "plan"}
 
 _SafeDispatch = Callable[[str, dict], Awaitable[dict]]
 _PlanEmit = Callable[[dict], Awaitable[None]]
@@ -28,14 +29,23 @@ AGENT_PLAN_SCHEMA: dict = {
     "function": {
         "name": AGENT_PLAN_TOOL,
         "description": (
-            "Propose an ordered plan of tool calls for the user's request. Call "
-            "this for ANY request that needs tools. Provide a short goal and one "
-            "or more steps; each step names a tool from the catalog, its "
-            "arguments, and a concise reason (why)."
+            "Propose a single direct tool call for one obvious action, or an "
+            "ordered plan for multi-step work. Use mode='direct' only when "
+            "exactly one step is needed. If no tool is needed, or you need to "
+            "ask the user something first, do not call this tool — reply with "
+            "plain text instead."
         ),
         "parameters": {
             "type": "object",
             "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["direct", "plan"],
+                    "description": (
+                        "direct for a single obvious action; plan for "
+                        "multi-step work."
+                    ),
+                },
                 "goal": {
                     "type": "string",
                     "description": "One line: what the plan achieves.",
@@ -73,6 +83,20 @@ def _normalize_step(index: int, raw: dict) -> dict:
     }
 
 
+def _effective_mode(declared: object, steps: list[dict]) -> str:
+    """Clamp the requested mode: one step is direct unless a plan was asked for.
+
+    Multiple steps always require a plan; a single step runs directly unless it
+    is forced into plan mode. This keeps the cheap path the default and makes
+    the safety-relevant shape a code decision, not a model preference.
+    """
+    if str(declared or "").strip().lower() == "plan":
+        return "plan"
+    if len(steps) != 1:
+        return "plan"
+    return "direct"
+
+
 def build_plan(raw_args: dict) -> dict:
     """Normalize a model-proposed plan into the stored plan object."""
     raw_steps = raw_args.get("steps")
@@ -85,6 +109,7 @@ def build_plan(raw_args: dict) -> dict:
         "revision": 1,
         "goal": str(raw_args.get("goal") or "").strip(),
         "steps": steps,
+        "mode": _effective_mode(raw_args.get("mode"), steps),
         "status": "proposed",
         "created_at": datetime.now(UTC).isoformat(),
     }
@@ -97,6 +122,7 @@ def next_revision(plan: dict, steps: list[dict]) -> dict:
         _normalize_step(index, raw) for index, raw in enumerate(steps, 1)
     ]
     updated["revision"] = int(plan.get("revision", 1)) + 1
+    updated["mode"] = "plan"
     updated["status"] = "proposed"
     updated["created_at"] = datetime.now(UTC).isoformat()
     return updated
@@ -108,6 +134,9 @@ def validate_plan(plan: dict, known_tools: set[str]) -> list[str]:
     steps = plan.get("steps")
     if not isinstance(steps, list) or not steps:
         return ["plan has no steps"]
+    mode = plan.get("mode")
+    if mode is not None and mode not in VALID_PLAN_MODES:
+        errors.append(f"invalid mode: {mode}")
     if len(steps) > MAX_PLAN_STEPS:
         errors.append(f"plan has more than {MAX_PLAN_STEPS} steps")
     for step in steps:
@@ -126,6 +155,11 @@ def validate_plan(plan: dict, known_tools: set[str]) -> list[str]:
 def plan_requires_approval(plan: dict) -> bool:
     """True when any step is not classified safe."""
     return any(step.get("risk") != "safe" for step in plan.get("steps", []))
+
+
+def plan_is_direct(plan: dict) -> bool:
+    """True for a single-step plan that runs without a user-facing plan card."""
+    return plan.get("mode") == "direct" and len(plan.get("steps", [])) == 1
 
 
 async def execute_plan(
