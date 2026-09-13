@@ -71,11 +71,12 @@ export function ChatInput({
   }
 
   return (
-    <div className="relative px-6 pb-4 pt-10">
-      {/* Gradient background — unchanged */}
+    <div className="absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-10">
+      {/* Frosted panel behind the input: messages scroll under this bar and
+          are softly blurred, while the field and buttons stay sharp. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/25 via-background/10 to-transparent backdrop-blur-lg [mask-image:linear-gradient(to_top,black_40%,transparent)]"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/60 via-background/30 to-transparent backdrop-blur-xl [mask-image:linear-gradient(to_top,black_45%,transparent)]"
       />
 
       {/* Confirmation request block — above the input */}
@@ -164,7 +165,7 @@ export function ChatInput({
 
       {/* Static hint below the input. The submit button already rotates while
           a request is running, so no second spinner is shown here. */}
-      <p className="mt-2 text-center text-xs text-muted-foreground">
+      <p className="relative z-10 mt-2 text-center text-xs text-muted-foreground">
         LoomCore can execute infrastructure changes. Review tool calls before confirming.
       </p>
     </div>
