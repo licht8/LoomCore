@@ -124,11 +124,45 @@ curl -s "http://SERVER_IP/api/chat?session_id=test1" \
   -d '{"message":"show wireguard status"}'
 ```
 
-Expected: `{"status":"ok"}`; a plugin status JSON; a tool list (all `wg_*`
-except the internal `wg_get_client_artifact`); and a `tool_call`/text answer.
+Expected: `{"status":"ok"}`; a plugin status JSON; a tool list (the `core_*`
+meta-tools, the `wg_*` tools except the internal `wg_get_client_artifact`, and the
+`ops_*` tools); and a `tool_call`/text answer.
 
 Open the UI at `http://SERVER_IP/` and log in with the **Token** tab using
 `ADMIN_TOKEN`.
+
+### Plugins, core meta-tools and enable/disable
+
+Both bundled plugins load on startup: `LoomWG` and `LoomOps` (enabled by default).
+The assistant can inspect and toggle them through the `core_*` meta-tools
+(`core_health`, `core_list_plugins`, `core_plugin_status`, `core_list_tools`,
+`core_capabilities`, and the approval-gated `core_enable_plugin` /
+`core_disable_plugin` / `core_reload_plugin`). The same lifecycle is exposed on
+REST:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  http://SERVER_IP/api/plugins/LoomOps/disable
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  http://SERVER_IP/api/plugins/LoomOps/enable
+```
+
+State persists to `.loomcore/plugins.json` under the repo (override with
+`PLUGINS_STATE_FILE`), so a disabled plugin stays disabled across restarts.
+
+LoomOps is **deny-by-default**: until you set its environment, it can only report
+system facts. Edit `.env` and restart `hub` to allow anything:
+
+```bash
+LOOMOPS_ALLOWED_COMMANDS=uptime,df,ss,ip      # ops_run_command allowlist (empty = deny all)
+LOOMOPS_ALLOWED_PATHS=/etc/wireguard          # ops_read_file/ops_write_file roots (empty = deny all)
+LOOMOPS_AUDIT_LOG=/app/plugins/LoomOps/tmp/loomops-audit.log
+```
+
+Every mutating LoomOps call is admin-approved and written as one JSON line to the
+audit log. Because the `hub` container has no `pid: host`/privileges,
+`ops_systemctl_*` return an actionable error unless systemd is reachable; see
+`docs/plugins/LoomOps.md`.
 
 ## 6. Configure WireGuard + firewalld
 
