@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from ..results import text_result
+from ..wg.config_parser import parse_sections
 from ..wg.device import CommandError, config_directory, run_command, validate_interface
 
 _SECRET_RE = re.compile(r"^\s*(PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
@@ -25,39 +26,42 @@ def _mask(text: str) -> str:
 def _summarize(text: str) -> dict[str, Any]:
     interface: dict[str, Any] = {}
     peers: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    section = None
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip().lower()
-            if section == "peer":
-                current = {"preshared_key": False, "endpoint": None, "allowed_ips": []}
-                peers.append(current)
-            continue
-        key, separator, value = line.partition("=")
-        if not separator:
-            continue
-        key = key.strip().lower()
-        value = value.strip()
-        if section == "interface":
-            if key == "address":
-                interface["addresses"] = [item.strip() for item in value.split(",") if item.strip()]
-            elif key == "listenport":
-                interface["listen_port"] = value
-            elif key == "fwmark":
-                interface["fwmark"] = value
-        elif section == "peer" and current is not None:
-            if key == "publickey":
-                current["public_key"] = value
-            elif key == "presharedkey":
-                current["preshared_key"] = True
-            elif key == "allowedips":
-                current["allowed_ips"] = [item.strip() for item in value.split(",") if item.strip()]
-            elif key == "endpoint":
-                current["endpoint"] = value
+    for section in parse_sections(text):
+        name = section.name.lower()
+        if name == "interface":
+            for key, value in section.entries:
+                if value is None:
+                    continue
+                lowered = key.lower()
+                if lowered == "address":
+                    interface["addresses"] = [
+                        item.strip() for item in value.split(",") if item.strip()
+                    ]
+                elif lowered == "listenport":
+                    interface["listen_port"] = value
+                elif lowered == "fwmark":
+                    interface["fwmark"] = value
+        elif name == "peer":
+            current: dict[str, Any] = {
+                "preshared_key": False,
+                "endpoint": None,
+                "allowed_ips": [],
+            }
+            for key, value in section.entries:
+                if value is None:
+                    continue
+                lowered = key.lower()
+                if lowered == "publickey":
+                    current["public_key"] = value
+                elif lowered == "presharedkey":
+                    current["preshared_key"] = True
+                elif lowered == "allowedips":
+                    current["allowed_ips"] = [
+                        item.strip() for item in value.split(",") if item.strip()
+                    ]
+                elif lowered == "endpoint":
+                    current["endpoint"] = value
+            peers.append(current)
     return {"interface": interface, "peers": peers}
 
 

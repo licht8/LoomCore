@@ -12,33 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from ..results import text_result
+from .config_parser import entries_map, parse_sections
 from .device import CommandError, config_directory, run_command, validate_interface
 from .keys import validate_public_key
 
-_SECTION_RE = re.compile(r"^\[(.+)\]$")
 _ENDPOINT_RE = re.compile(r"^(\[[0-9A-Fa-f:]+\]|[^\s:]+):(\d{1,5})$")
-
-
-def _parse(text: str) -> list[dict[str, Any]]:
-    sections: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = _SECTION_RE.match(line)
-        if match:
-            current = {"name": match.group(1).strip(), "entries": []}
-            sections.append(current)
-            continue
-        if current is None:
-            continue
-        key, separator, value = line.partition("=")
-        if separator:
-            current["entries"].append((key.strip(), value.strip()))
-        else:
-            current["entries"].append((line, None))
-    return sections
 
 
 def _check_key(value: str, label: str, errors: list[str]) -> None:
@@ -56,10 +34,6 @@ def _check_cidrs(values: list[str], label: str, errors: list[str]) -> list:
         except ValueError:
             errors.append(f"{label}: invalid CIDR '{value}'")
     return networks
-
-
-def _entries_by_key(section: dict[str, Any]) -> dict[str, str]:
-    return {key.lower(): value for key, value in section["entries"] if value is not None}
 
 
 def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -98,19 +72,19 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
             )
         text = path.read_text(encoding="utf-8")
 
-    sections = _parse(text)
-    interface_sections = [s for s in sections if s["name"].lower() == "interface"]
-    peer_sections = [s for s in sections if s["name"].lower() == "peer"]
+    sections = parse_sections(text)
+    interface_sections = [s for s in sections if s.name.lower() == "interface"]
+    peer_sections = [s for s in sections if s.name.lower() == "peer"]
 
     if not interface_sections:
         errors.append("[Interface] section missing")
     if len(interface_sections) > 1:
         errors.append("multiple [Interface] sections")
-    if sections and sections[0]["name"].lower() != "interface":
+    if sections and sections[0].name.lower() != "interface":
         warnings.append("[Interface] is not the first section")
 
     for section in interface_sections:
-        keys = _entries_by_key(section)
+        keys = entries_map(section)
         if "privatekey" not in keys:
             errors.append("[Interface] PrivateKey missing")
         else:
@@ -137,7 +111,7 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
     seen_peers: set[str] = set()
     peer_allowed: list[tuple[str, Any]] = []
     for index, section in enumerate(peer_sections, start=1):
-        keys = _entries_by_key(section)
+        keys = entries_map(section)
         public = keys.get("publickey")
         if not public:
             errors.append(f"[Peer #{index}] PublicKey missing")

@@ -23,7 +23,7 @@ async def download_artifact(
     access_token: str | None = Query(default=None),
 ):
     """Serve a client's config/QR by name (admin-only, rebuilt on demand)."""
-    require_admin_token(extract_admin_token(request, None, access_token))
+    require_admin_token(extract_admin_token(request, access_token=access_token))
     if kind not in {"config", "qr"}:
         return JSONResponse(status_code=404, content={"error": "Artifact not found"})
     try:

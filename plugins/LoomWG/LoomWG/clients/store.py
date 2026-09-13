@@ -10,12 +10,11 @@ from __future__ import annotations
 import base64
 import contextlib
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..util.files import atomic_write_text
 from ..wg.device import config_directory
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -61,19 +60,8 @@ def load() -> dict[str, dict[str, Any]]:
 
 
 def save(data: dict[str, dict[str, Any]]) -> None:
-    path = store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True, ensure_ascii=False)
-            handle.write("\n")
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    text = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    atomic_write_text(store_path(), text, mode=0o600)
 
 
 def get(name: str) -> dict[str, Any] | None:

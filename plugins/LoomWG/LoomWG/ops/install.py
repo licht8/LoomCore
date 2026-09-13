@@ -20,12 +20,12 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 from ipaddress import ip_network
 from typing import Any
 
 from ..peers.config import config_path
 from ..results import text_result
+from ..util.files import atomic_write_text
 from ..wg.device import CommandError, run_command
 from ..wg.keys import generate_keypair
 
@@ -365,17 +365,7 @@ def setup_server(arguments: dict) -> dict:
             "",
         ]
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    atomic_write_text(path, content, mode=0o600)
 
     _enable_forwarding()
     if os.environ.get("LOOMWG_SKIP_FIREWALL") == "1":

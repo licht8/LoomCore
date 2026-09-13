@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import traceback
 from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
@@ -410,7 +411,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         with contextlib.suppress(Exception):
             await send({"type": "error", "error": str(exc)})
         logger.error(f"❌ Fatal WebSocket error for session {session_id}: {exc}")
-        import traceback
         logger.error(traceback.format_exc())
     finally:
         await cancel_current()

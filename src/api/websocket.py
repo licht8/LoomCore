@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, WebSocket
 
 from src.auth import SESSION_COOKIE, decode_jwt_token
 from src.config import settings
+from src.core.security import admin_jwt_mode_enabled
 from src.interfaces.websocket import websocket_endpoint
 
 logger = logging.getLogger("loomcore.api.websocket")
@@ -24,7 +25,7 @@ async def ws_proxy(
     cookie = websocket.cookies.get(SESSION_COOKIE)
     authorized = (
         decode_jwt_token(cookie, settings.session_secret) is not None
-        if settings.admin_password_hash and settings.admin_totp_secret
+        if admin_jwt_mode_enabled()
         else bool(
             settings.admin_token
             and access_token

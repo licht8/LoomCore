@@ -6,9 +6,14 @@ from src.auth import decode_jwt_token
 from src.config import settings
 
 
+def admin_jwt_mode_enabled() -> bool:
+    """Return True when admin auth uses JWT sessions instead of a bearer token."""
+    return bool(settings.admin_password_hash and settings.admin_totp_secret)
+
+
 def require_admin_token(token: str | None) -> None:
     """Verify admin access (JWT cookie or bearer token)."""
-    if settings.admin_password_hash and settings.admin_totp_secret:
+    if admin_jwt_mode_enabled():
         payload = decode_jwt_token(token, settings.session_secret)
         if not payload:
             raise HTTPException(status_code=401, detail="Admin login required")

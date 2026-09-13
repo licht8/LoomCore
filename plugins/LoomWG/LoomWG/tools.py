@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import UTC, datetime
+from ipaddress import ip_network
 from typing import Any
 
 from .clients import store as clients_store
@@ -251,8 +252,6 @@ def _allowed_ips(arguments: dict[str, Any]) -> list[str]:
         raise ValueError("allowed_ips must be a non-empty array of CIDRs")
     normalized = []
     for value in values:
-        from ipaddress import ip_network
-
         try:
             network = ip_network(str(value), strict=False)
         except ValueError as exc:

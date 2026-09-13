@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import contextlib
-import os
-import tempfile
 from pathlib import Path
 
+from ..util.files import atomic_write_text
+from ..wg.config_parser import sections_named
 from ..wg.device import config_directory
 from ..wg.keys import validate_public_key
 
@@ -21,50 +20,25 @@ def iter_peers(interface: str) -> list[dict]:
     if not path.is_file():
         return []
     peers: list[dict] = []
-    current: dict | None = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            if current is not None:
-                peers.append(current)
-            current = (
-                {"public_key": "", "allowed_ips": [], "preshared_key": None}
-                if stripped.lower() == "[peer]"
-                else None
-            )
-            continue
-        if current is None:
-            continue
-        key, separator, value = line.partition("=")
-        if not separator:
-            continue
-        key = key.strip()
-        value = value.strip()
-        if key == "PublicKey":
-            current["public_key"] = value
-        elif key == "AllowedIPs":
-            current["allowed_ips"] = [
-                item.strip() for item in value.split(",") if item.strip()
-            ]
-        elif key == "PresharedKey":
-            current["preshared_key"] = value
-    if current is not None:
-        peers.append(current)
+    for section in sections_named(path.read_text(encoding="utf-8"), "peer"):
+        peer = {"public_key": "", "allowed_ips": [], "preshared_key": None}
+        for key, value in section.entries:
+            if value is None:
+                continue
+            if key == "PublicKey":
+                peer["public_key"] = value
+            elif key == "AllowedIPs":
+                peer["allowed_ips"] = [
+                    item.strip() for item in value.split(",") if item.strip()
+                ]
+            elif key == "PresharedKey":
+                peer["preshared_key"] = value
+        peers.append(peer)
     return [peer for peer in peers if peer["public_key"]]
 
 
 def _write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content.rstrip() + "\n")
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    atomic_write_text(path, content.rstrip() + "\n", mode=0o600)
 
 
 def _peer_block(public_key: str, allowed_ips: list[str], preshared_key: str | None) -> str:

@@ -15,6 +15,7 @@ from src.auth import (
 )
 from src.config import settings
 from src.core.rate_limit import limiter
+from src.core.security import admin_jwt_mode_enabled
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -25,7 +26,7 @@ async def login(request: Request):
     data = await request.json()
     valid = (
         data.get("username") == settings.admin_username
-        and bool(settings.admin_password_hash and settings.admin_totp_secret)
+        and admin_jwt_mode_enabled()
         and verify_password(str(data.get("password", "")), settings.admin_password_hash)
         and verify_totp(str(data.get("totp", "")), settings.admin_totp_secret)
     )

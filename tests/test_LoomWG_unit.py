@@ -26,10 +26,10 @@ def test_format_endpoint_ipv6(load_loomwg):
 
 
 def test_safe_name(load_loomwg):
-    client = load_loomwg("client")["client"]
-    assert client._safe_name("good-name_1") == "good-name_1"
+    clients_store = load_loomwg("clients_store")["clients_store"]
+    assert clients_store.validate_name("good-name_1") == "good-name_1"
     with pytest.raises(ValueError):
-        client._safe_name("bad name")
+        clients_store.validate_name("bad name")
 
 
 def test_client_addresses_explicit(load_loomwg):

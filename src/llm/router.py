@@ -79,7 +79,7 @@ class AIRouter:
                 logger.warning(f"Unavailable plugins during routing: {unavailable_plugins}")
                 message_extra["tool_schema_warning"] = unavailable_plugins
 
-            messages = build_messages(user_message, history_dicts, tools_schema)
+            messages = build_messages(user_message, history_dicts)
             llm_tools = [
                 {
                     "type": "function",

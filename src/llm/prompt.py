@@ -16,7 +16,6 @@ SYSTEM_PROMPT = (
 def build_messages(
     user_text: str,
     history: list[dict],
-    tools_schema: list[dict] | None = None,
 ) -> list[dict]:
     """Build the message list sent to the LLM.
 

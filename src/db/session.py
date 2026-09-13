@@ -37,17 +37,7 @@ async def add_user_message(
     content: str,
 ) -> Message:
     """Append a user message to the history."""
-    message = Message(
-        id=str(uuid4()),
-        session_id=session_id,
-        role="user",
-        content=content,
-        created_at=datetime.now(UTC).isoformat(),
-    )
-    session_db.add(message)
-    await session_db.commit()
-    await session_db.refresh(message)
-    return message
+    return await add_message(session_db, session_id, "user", content)
 
 
 async def add_assistant_message(
@@ -57,18 +47,9 @@ async def add_assistant_message(
     tool_calls: list | None = None,
 ) -> Message:
     """Append an assistant message to the history."""
-    message = Message(
-        id=str(uuid4()),
-        session_id=session_id,
-        role="assistant",
-        content=content,
-        tool_calls=tool_calls,
-        created_at=datetime.now(UTC).isoformat(),
+    return await add_message(
+        session_db, session_id, "assistant", content, tool_calls=tool_calls
     )
-    session_db.add(message)
-    await session_db.commit()
-    await session_db.refresh(message)
-    return message
 
 
 async def ensure_session(

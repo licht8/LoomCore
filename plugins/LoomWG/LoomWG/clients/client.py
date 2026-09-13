@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
-import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -14,6 +13,8 @@ from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
 from ..peers.config import add_peer, config_path, iter_peers, remove_peer
+from ..util.files import atomic_write_text
+from ..wg.config_parser import parse_sections
 from ..wg.device import CommandError, config_directory, run_command
 from ..wg.keys import generate_keypair
 from . import store as clients_store
@@ -21,7 +22,6 @@ from . import store as clients_store
 CLIENTS_DIR = config_directory() / "clients"
 CONF_DIR_NAME = "conf"
 QR_DIR_NAME = "qr_code"
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def _format_endpoint(endpoint: str, port: int) -> str:
@@ -151,13 +151,6 @@ def migrate_client_layout() -> dict[str, int]:
     return moved
 
 
-def _safe_name(value: object) -> str:
-    name = str(value or "").strip()
-    if not NAME_RE.fullmatch(name):
-        raise ValueError("Client name contains invalid characters")
-    return name
-
-
 def _detect_endpoint() -> str:
     """Detect the public address visible from the Internet."""
     for service in ("https://api64.ipify.org", "https://api.ipify.org"):
@@ -182,19 +175,19 @@ def _server_settings(interface: str) -> tuple[str, int, list[str], list[str]]:
     listen_port = 51820
     server_networks: list[str] = []
     server_addresses: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        key, separator, value = line.partition("=")
-        if not separator:
-            continue
-        if key.strip() == "PrivateKey":
-            private_key = value.strip()
-        elif key.strip() == "ListenPort":
-            listen_port = int(value.strip())
-        elif key.strip() == "Address":
-            for raw_address in value.split(","):
-                address = ip_interface(raw_address.strip())
-                server_networks.append(str(address.network))
-                server_addresses.append(str(address.ip))
+    for section in parse_sections(path.read_text(encoding="utf-8")):
+        for key, value in section.entries:
+            if value is None:
+                continue
+            if key == "PrivateKey":
+                private_key = value
+            elif key == "ListenPort":
+                listen_port = int(value)
+            elif key == "Address":
+                for raw_address in value.split(","):
+                    address = ip_interface(raw_address.strip())
+                    server_networks.append(str(address.network))
+                    server_addresses.append(str(address.ip))
     if not private_key:
         raise ValueError("Server configuration is missing PrivateKey")
     public_key = run_command(["wg", "pubkey"], input_text=private_key)
@@ -204,9 +197,10 @@ def _server_settings(interface: str) -> tuple[str, int, list[str], list[str]]:
 def _used_addresses(interface: str) -> set:
     path = config_path(interface)
     used = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        key, separator, value = line.partition("=")
-        if separator and key.strip() == "AllowedIPs":
+    for section in parse_sections(path.read_text(encoding="utf-8")):
+        for key, value in section.entries:
+            if value is None or key != "AllowedIPs":
+                continue
             for raw_network in value.split(","):
                 network = ip_network(raw_network.strip(), strict=False)
                 if network.prefixlen in (32, 128):
@@ -273,9 +267,7 @@ def _client_addresses(arguments: dict, interface: str, server_networks: list[str
 
 
 def _write_secret(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content.rstrip() + "\n", encoding="utf-8")
-    os.chmod(path, 0o600)
+    atomic_write_text(path, content.rstrip() + "\n", mode=0o600)
 
 
 def remove_client_artifacts(public_key: str) -> list[str]:
@@ -310,7 +302,7 @@ def remove_client_artifacts(public_key: str) -> list[str]:
 
 def create_client(arguments: dict) -> dict:
     interface = str(arguments.get("interface", "wg0"))
-    name = _safe_name(arguments.get("name"))
+    name = clients_store.validate_name(arguments.get("name"))
     endpoint = str(arguments.get("endpoint") or os.environ.get("LOOMWG_ENDPOINT", "")).strip()
     if not endpoint:
         endpoint = _detect_endpoint()
@@ -365,8 +357,6 @@ def create_client(arguments: dict) -> dict:
         for path in (client_path, qr_path):
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
-        from ..peers.config import remove_peer
-
         with contextlib.suppress(FileNotFoundError, ValueError):
             remove_peer(interface, keypair["public_key"])
         raise
