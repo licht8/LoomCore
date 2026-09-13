@@ -122,6 +122,11 @@ class AIRouter:
         content, _tool_name, _tool_args, _raw = self._parse_completion(llm_response)
         return content
 
+    async def known_tool_names(self) -> set[str]:
+        """Return the names of every tool currently offered to the planner."""
+        tools_schema, _extra = await self._collect_tools()
+        return {tool["name"] for tool in tools_schema}
+
     async def _begin_turn(self, session_id: str, user_message: str) -> list[dict]:
         """Load recent history and persist the user message; return history dicts."""
         async with async_session_factory() as db:

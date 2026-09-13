@@ -6,20 +6,30 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from src.core.core_tools import CORE_TOOL_NAMES, dispatch_core_tool
-from src.core.security import classify_tool_risk
-from src.db.database import async_session_factory
-from src.db.session import ensure_session
-from src.interfaces.tool_events import (
-    approval_request_payload,
-    tool_call_payload,
-    tool_success_payload,
+from src.core.agent import (
+    execute_plan,
+    next_revision,
+    plan_requires_approval,
+    validate_plan,
 )
+from src.core.core_tools import CORE_TOOL_NAMES, dispatch_core_tool
+from src.db.database import async_session_factory
+from src.db.session import add_assistant_message, ensure_session
 from src.interfaces.tool_events import (
     build_artifacts as _build_artifacts,
 )
 from src.interfaces.tool_events import (
     extract_text as _extract_text,
+)
+from src.interfaces.tool_events import (
+    plan_done_payload,
+    plan_proposed_payload,
+    plan_step_payload,
+    tool_call_payload,
+    tool_success_payload,
+)
+from src.interfaces.tool_events import (
+    save_plan_message as _save_plan_message,
 )
 from src.interfaces.tool_events import (
     save_tool_message as _save_tool_message,
@@ -47,71 +57,107 @@ async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
     return await plugin_manager.execute_tool_by_name(tool_name, arguments)
 
 
-async def _run_tool_and_notify(
+async def _run_plan(
     send: Send,
     session_id: str,
-    tool_name: str,
-    arguments: dict | None,
-    risk: str | None = None,
-) -> None:
-    """Run a tool, save the result, and send it to the UI."""
-    raw_result = await _execute_tool(tool_name, arguments)
-    content_text = _extract_text(raw_result)
-    artifacts = _build_artifacts(raw_result)
-
-    await _save_tool_message(
-        session_id,
-        tool_name,
-        arguments,
-        content_text,
-        status="success",
-        summary="Done",
-        risk=risk,
-        artifacts=artifacts,
-    )
-
-    await send(tool_success_payload(tool_name, content_text, risk, artifacts))
-
-
-async def _run_tool_safely(
-    send: Send,
-    session_id: str,
-    tool_name: str,
-    arguments: dict | None,
-    risk: str | None = None,
+    user_text: str,
+    plan: dict,
     tracker: dict | None = None,
 ) -> None:
-    """Run a tool and always emit a terminal event, even on failure.
+    """Replay an approved (or all-safe) plan, then summarize the outcome.
 
-    ``tracker`` is a connection-local dict the receive loop watches so it can
-    persist a cancellation; it is left set when the task is cancelled.
+    Each step is mirrored to the UI as a tool card plus a plan_step event, and
+    persisted so the cards survive a reload. The plan is the sole dispatch path:
+    the executor replays exactly the stored tool and arguments.
     """
     if tracker is not None:
-        tracker["tool"] = {"name": tool_name, "args": arguments, "risk": risk}
-    try:
-        await _run_tool_and_notify(send, session_id, tool_name, arguments, risk=risk)
-    except asyncio.CancelledError:
-        # Leave ``tracker`` set so the receive loop can persist the cancellation.
-        raise
-    except Exception as exc:
-        if tracker is not None:
-            tracker["tool"] = None
-        logger.error(f"Failed to run tool '{tool_name}': {exc}")
-        message = f"Failed to call '{tool_name}': {exc}"
-        with contextlib.suppress(Exception):
+        tracker["plan"] = plan
+
+    async def emit(event: dict) -> None:
+        if event.get("type") != "plan_step":
+            return
+        step = event["step"]
+        phase = event["phase"]
+        if phase == "started":
+            if tracker is not None:
+                tracker["tool"] = {
+                    "name": step["tool"],
+                    "args": step.get("args"),
+                    "risk": step.get("risk"),
+                }
+            await send(tool_call_payload(step["tool"], step.get("args")))
+        elif phase == "done":
+            if tracker is not None:
+                tracker["tool"] = None
+            raw = event.get("result")
+            content = _extract_text(raw)
+            artifacts = _build_artifacts(raw)
             await _save_tool_message(
                 session_id,
-                tool_name,
-                arguments,
+                step["tool"],
+                step.get("args"),
+                content,
+                status="success",
+                summary="Done",
+                risk=step.get("risk"),
+                artifacts=artifacts,
+            )
+            await send(
+                tool_success_payload(step["tool"], content, step.get("risk"), artifacts)
+            )
+        elif phase == "failed":
+            if tracker is not None:
+                tracker["tool"] = None
+            message = event.get("error") or f"Step failed: {step.get('tool')}"
+            await _save_tool_message(
+                session_id,
+                step["tool"],
+                step.get("args"),
                 message,
                 status="error",
                 summary="Error",
-                risk=risk,
+                risk=step.get("risk"),
             )
-        await send(_tool_error_payload(tool_name, message, risk))
-    else:
-        if tracker is not None:
-            tracker["tool"] = None
+            await send(_tool_error_payload(step["tool"], message, step.get("risk")))
+        await send(plan_step_payload(plan, step, phase))
+
+    outcome = await execute_plan(plan, dispatch=_execute_tool, emit=emit)
+    final_plan = outcome["plan"]
+    observations = outcome["results"]
+
+    await _save_plan_message(session_id, final_plan)
+    await send(plan_done_payload(final_plan))
+
+    summary = await _summarize(user_text, final_plan, observations)
+    if summary:
+        with contextlib.suppress(Exception):
+            async with async_session_factory() as db:
+                await add_assistant_message(db, session_id, summary)
+        await send({"type": "response", "content": summary})
+
+    if tracker is not None:
+        tracker["plan"] = None
+
+
+async def _summarize(user_text: str, plan: dict, observations: list[dict]) -> str:
+    """Summarize a finished plan, falling back to a terse status on failure."""
+    try:
+        return await airouter_with_plugins.summarize_plan(user_text, plan, observations)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error(f"Plan summary failed: {exc}")
+        return _fallback_summary(plan)
+
+
+def _fallback_summary(plan: dict) -> str:
+    goal = plan.get("goal") or "Plan"
+    status = plan.get("status", "done")
+    lines = [f"{goal} ({status})."]
+    lines.extend(
+        f"- {step.get('tool')}: {step.get('status')}" for step in plan.get("steps", [])
+    )
+    return "\n".join(lines)
 
 
 async def _guarded(coro) -> None:
@@ -129,8 +175,13 @@ async def _process_user_message(
     session_id: str,
     user_text: str,
     tracker: dict | None = None,
+    pending: dict | None = None,
 ) -> None:
-    """Route a user message, then surface the response or run the chosen tool."""
+    """Plan or answer a user message, then run an all-safe plan immediately.
+
+    A plan containing any non-safe step is stored in ``pending`` and execution
+    waits for the user to approve, edit or reject it.
+    """
     await send({"type": "thinking", "status": "processing"})
     logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
 
@@ -158,23 +209,20 @@ async def _process_user_message(
         await send({"type": "response", "content": result.get("content", "")})
         return
 
-    if answer_type != "tool_call":
+    if answer_type != "plan":
         return
 
-    tool_name = result.get("tool_name", "unknown")
-    tool_args = result.get("tool_args")
+    plan = result.get("plan") or {}
+    requires_approval = plan_requires_approval(plan)
+    await send(plan_proposed_payload(plan, requires_approval))
 
-    # Classify the risk
-    risk = classify_tool_risk(tool_name)
-    await send(tool_call_payload(tool_name, tool_args))
+    if requires_approval:
+        if pending is not None:
+            pending["plan"] = plan
+            pending["user_text"] = user_text
+        return
 
-    if risk == "dangerous":
-        await send(approval_request_payload(tool_name, tool_args))
-    else:
-        # Safe/Moderate — run automatically through the plugin
-        await _run_tool_safely(
-            send, session_id, tool_name, tool_args, risk=risk, tracker=tracker
-        )
+    await _run_plan(send, session_id, user_text, plan, tracker)
 
 
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -182,11 +230,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     Logic:
       1. Accept the connection.
-      2. Loop reading JSON from the client (messages, approve/deny, cancel).
+      2. Loop reading JSON from the client (messages, plan actions, cancel).
       3. Run each request in a background task so the loop stays responsive.
-      4. For action=cancel — abort the in-flight request and notify the UI.
-      5. For action=approve/deny — run or refuse the plugin tool.
-      6. Safe/Moderate tools — run automatically; dangerous ones need approval.
+      4. action=cancel — abort the in-flight request and notify the UI.
+      5. action=plan_approve/plan_edit/plan_reject — act on the pending plan.
+      6. All-safe plans run immediately; plans with a risky step wait.
       7. On disconnect — abort the in-flight request.
     """
     await websocket.accept()
@@ -202,9 +250,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.send_json(payload)
 
     current: asyncio.Task | None = None
-    # Connection-local record of the tool currently running, so a cancel can
-    # persist a "cancelled" card even after the task is torn down.
-    tracker: dict = {"tool": None}
+    # Connection-local record of what is running, so a cancel can persist
+    # cancelled cards even after the task is torn down.
+    tracker: dict = {"tool": None, "plan": None}
+    # A plan waiting for the user's decision.
+    pending: dict = {"plan": None, "user_text": ""}
 
     async def cancel_current() -> None:
         nonlocal current
@@ -219,6 +269,33 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         nonlocal current
         current = asyncio.create_task(_guarded(coro))
 
+    def is_busy() -> bool:
+        return bool(current and not current.done())
+
+    async def persist_cancelled_tool() -> None:
+        active = tracker.get("tool")
+        tracker["tool"] = None
+        if active:
+            with contextlib.suppress(Exception):
+                await _save_tool_message(
+                    session_id,
+                    active["name"],
+                    active.get("args"),
+                    "",
+                    status="cancelled",
+                    summary="Cancelled",
+                    risk=active.get("risk"),
+                )
+
+    async def persist_cancelled_plan() -> None:
+        plan = tracker.get("plan")
+        tracker["plan"] = None
+        if plan:
+            plan["status"] = "cancelled"
+            with contextlib.suppress(Exception):
+                await _save_plan_message(session_id, plan)
+            await send(plan_done_payload(plan))
+
     try:
         while True:
             # Read JSON from the client
@@ -230,56 +307,76 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             # Cancel the request currently in flight, if any
             if action == "cancel":
                 await cancel_current()
-                active = tracker.get("tool")
-                tracker["tool"] = None
-                if active:
-                    with contextlib.suppress(Exception):
-                        await _save_tool_message(
-                            session_id,
-                            active["name"],
-                            active.get("args"),
-                            "",
-                            status="cancelled",
-                            summary="Cancelled",
-                            risk=active.get("risk"),
-                        )
+                await persist_cancelled_tool()
+                await persist_cancelled_plan()
+                pending["plan"] = None
                 await send({"type": "cancelled"})
                 continue
 
-            # User refused a dangerous tool
-            if action == "deny":
-                tool = data.get("tool")
-                if tool:
+            # User rejected the pending plan
+            if action == "plan_reject":
+                plan = pending.get("plan")
+                pending["plan"] = None
+                if plan:
+                    plan["status"] = "rejected"
                     with contextlib.suppress(Exception):
-                        await _save_tool_message(
-                            session_id,
-                            tool,
-                            data.get("args") or {},
-                            "",
-                            status="cancelled",
-                            summary="Denied",
-                        )
-                await send({"type": "tool_denied"})
+                        await _save_plan_message(session_id, plan)
+                    await send(plan_done_payload(plan))
                 continue
 
-            # User approved a dangerous tool
-            if action == "approve":
-                if current and not current.done():
+            # User approved the pending plan
+            if action == "plan_approve":
+                if is_busy():
                     await send({"type": "busy"})
                     continue
-                tool = data.get("tool", "unknown")
-                tool_args = data.get("args") or {}
-                start(_run_tool_safely(send, session_id, tool, tool_args, tracker=tracker))
+                plan = pending.get("plan")
+                if not plan:
+                    continue
+                user_text = pending.get("user_text", "")
+                pending["plan"] = None
+                plan["status"] = "approved"
+                with contextlib.suppress(Exception):
+                    await _save_plan_message(session_id, plan)
+                start(_run_plan(send, session_id, user_text, plan, tracker))
+                continue
+
+            # User edited the pending plan
+            if action == "plan_edit":
+                if is_busy():
+                    await send({"type": "busy"})
+                    continue
+                plan = pending.get("plan")
+                steps = data.get("steps")
+                if not plan or not isinstance(steps, list):
+                    continue
+                revised = next_revision(plan, steps)
+                known = await airouter_with_plugins.known_tool_names()
+                errors = validate_plan(revised, known)
+                if errors:
+                    await send(
+                        {"type": "error", "error": "Invalid plan: " + "; ".join(errors)}
+                    )
+                    continue
+                user_text = pending.get("user_text", "")
+                pending["plan"] = revised
+                with contextlib.suppress(Exception):
+                    await _save_plan_message(session_id, revised)
+                requires_approval = plan_requires_approval(revised)
+                await send(plan_proposed_payload(revised, requires_approval))
+                if not requires_approval:
+                    pending["plan"] = None
+                    start(_run_plan(send, session_id, user_text, revised, tracker))
                 continue
 
             # Regular text message from the user
             user_text = data if isinstance(data, str) else data.get("message", "")
             if not user_text:
                 continue
-            if current and not current.done():
+            if is_busy():
                 await send({"type": "busy"})
                 continue
-            start(_process_user_message(send, session_id, user_text, tracker))
+            pending["plan"] = None
+            start(_process_user_message(send, session_id, user_text, tracker, pending))
 
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket disconnected for session {session_id}")
