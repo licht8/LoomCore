@@ -80,7 +80,7 @@ export function ChatInput({
   }
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-10">
+    <div className="absolute inset-x-0 bottom-0 z-20 px-6 pb-8 pt-10">
       {/* Frosted panel behind the input: messages scroll under this bar and
           are softly blurred, while the field and buttons stay sharp. */}
       <div

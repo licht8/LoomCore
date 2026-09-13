@@ -85,7 +85,7 @@ export function ChatRoom() {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-6 pt-24 pb-36"
+        className="flex-1 overflow-y-auto px-6 pt-24 pb-40"
       >
         <div
           ref={contentRef}
@@ -99,7 +99,7 @@ export function ChatRoom() {
 
       {/* Error block — red banner above the input */}
       {error && (
-        <div className="absolute inset-x-0 bottom-[116px] mx-auto max-w-3xl px-6">
+        <div className="absolute inset-x-0 bottom-[132px] mx-auto max-w-3xl px-6">
           <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-2 text-center text-xs font-medium text-destructive">
             ⚠️ {error}
           </div>
