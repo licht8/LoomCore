@@ -2,7 +2,7 @@ import { Activity, ShieldCheck } from "lucide-react"
 
 export function DashboardHeader() {
   return (
-    <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-border bg-background/80 bg-gradient-to-b from-white/10 to-transparent px-6 py-4 backdrop-blur-xl dark:from-white/5">
+    <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-border bg-card/60 px-6 py-4 shadow-[inset_0_1px_0_0_oklch(1_0_0/10%)] backdrop-blur-xl">
       <div>
         <h1 className="text-xl font-bold tracking-tight text-primary text-balance">LoomCore Assistant</h1>
         <p className="text-sm text-muted-foreground">Conversational control for your AI infrastructure</p>
