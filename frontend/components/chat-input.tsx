@@ -3,6 +3,16 @@
 import { useState, useRef, useEffect } from "react"
 import { Eraser, Paperclip, Pause, SendHorizonal } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import type { ApprovalRequest } from "@/lib/chat-types"
 
 interface ChatInputProps {
@@ -35,6 +45,7 @@ export function ChatInput({
   onApprovalResponse,
 }: ChatInputProps) {
   const [text, setText] = useState("")
+  const [clearOpen, setClearOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const isRunning = isThinking || isSending
 
@@ -56,18 +67,16 @@ export function ChatInput({
     if (onApprovalResponse) onApprovalResponse(action)
   }
 
-  // Clear the stored conversation (also resets the assistant's memory)
+  // Open the confirmation dialog (the actual clear happens on confirm)
   const handleClear = () => {
     if (isRunning || !onClear) return
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Clear this conversation? This also resets the assistant's memory.",
-      )
-    ) {
-      return
-    }
-    onClear()
+    setClearOpen(true)
+  }
+
+  // The user confirmed: delete the stored conversation and close the dialog
+  const handleConfirmClear = () => {
+    onClear?.()
+    setClearOpen(false)
   }
 
   return (
@@ -162,6 +171,33 @@ export function ChatInput({
           </Button>
         )}
       </div>
+
+      <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+                <Eraser className="size-5" />
+              </span>
+              <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription>
+              This permanently deletes all messages in this conversation and
+              resets the assistant&apos;s memory. This can&apos;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmClear}
+              className="gap-2 bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/30"
+            >
+              <Eraser className="size-4" />
+              Clear conversation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
