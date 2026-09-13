@@ -298,9 +298,12 @@ Run this after sections 1-6. It exercises the product the way an end user would.
 3. Expected: chat dashboard appears; sidebar shows the LoomWG plugin; no error banner.
 - Wrong token -> login rejected. Empty `ADMIN_TOKEN` -> 503 "Admin access not configured".
 
-### 11.2 Read-only chat (safe tools auto-run)
-- `show wireguard status` -> `wg_interface_status` runs automatically and shows a tool result.
-- `list peers` -> `wg_list_peers`.
+### 11.2 Read-only chat (safe plans auto-run)
+- `show wireguard status` -> the assistant first shows a **plan card** (goal + ordered
+  steps with tool/why/risk). Every step is safe, so it runs automatically without
+  confirmation and each step reports a tool result.
+- `list peers` -> `wg_list_peers`, same auto-run flow.
+- The assistant never calls a tool without a plan; a text-only request just returns prose.
 
 Verify history:
 ```bash
@@ -308,17 +311,17 @@ docker compose exec db psql -U loomuser -d loomcore -c \
   "select role, left(content, 60) from messages order by created_at desc limit 10;"
 ```
 
-### 11.3 Set up the WireGuard server (approval)
-1. Type `install wireguard prerequisites` → approve `wg_install_dependencies`
-   (loads the kernel module, installs missing container tools).
+### 11.3 Set up the WireGuard server (plan approval)
+1. Type `install wireguard prerequisites` -> a plan card appears; click **Approve**
+   (the step `wg_install_dependencies` loads the kernel module, installs missing tools).
 2. Type `set up the wireguard server`.
-3. Approve the `wg_setup_server` request.
+3. Review the plan card and click **Approve** (`wg_setup_server`).
 4. With `LOOMWG_SKIP_FIREWALL=1`, apply the section 6 firewall rules.
 5. Verify: `ls -l /etc/wireguard/wg0.conf` and `docker compose exec hub wg show`.
 
-### 11.4 Create a peer/client (approval)
+### 11.4 Create a peer/client (plan approval)
 1. Type `create a wireguard client named phone1`.
-2. Approve `wg_create_client`.
+2. Review the plan card and click **Approve** (`wg_create_client`).
 3. Click the config and QR download buttons (`access_token` is appended automatically).
 4. Verify:
 ```bash
@@ -335,9 +338,9 @@ docker compose exec hub wg show wg0
 ```
 Expect a fresh `latest handshake` and non-zero transfer; `list peers` shows `online`.
 
-### 11.6 Delete the peer (approval)
+### 11.6 Delete the peer (plan approval)
 1. Type `remove the peer for phone1` (or paste the public key).
-2. Approve `wg_remove_peer`.
+2. Review the plan card and click **Approve** (`wg_remove_peer`).
 3. Verify:
 ```bash
 docker compose exec hub wg show wg0
@@ -347,17 +350,18 @@ ls -l /etc/wireguard/clients/conf /etc/wireguard/clients/qr_code
 Expect: peer gone, no matching `PublicKey`, client files removed.
 
 ### 11.7 Negative and UX checks
-- Deny a dangerous tool -> `tool_denied`, no server change.
-- Send a message, then click the rotating submit button (pause) -> `cancelled`, the tool card resolves, and the UI returns to idle.
-- A tool that fails (e.g. `wg_interface_status` on a down interface) -> `tool_response` with `status: error`, card shows the error instead of spinning forever.
+- Reject a plan that contains a non-safe step -> `plan_done` with status `rejected`, no server change.
+- Edit a plan's steps in the plan card before approving -> the card updates (`revision` +1) and only the edited steps run.
+- Send a message, then click the rotating submit button (pause) -> `cancelled`, the running step resolves, and the UI returns to idle.
+- A tool that fails (e.g. `wg_interface_status` on a down interface) -> `tool_response` with `status: error`, the plan stops with status `failed`, and the card shows the error instead of spinning forever.
 - While a request is running, sending another message -> `busy` (no overlapping runs).
 - Invalid name (`bad name!`) -> clear validation error, no client created.
 - Duplicate `phone1` -> "client already exists".
 - `http://SERVER_IP/api/tools` without token -> 401/503; with `?access_token=...` -> JSON.
 - Spam `/api/chat` 31x/min -> 429.
-- Refresh the page -> the whole conversation (messages, tool cards with status/artifacts, errors) is restored from Postgres.
+- Refresh the page -> the whole conversation (messages, plan cards, tool cards with status/artifacts, errors) is restored from Postgres.
 - Click "Clear conversation" -> confirm; the feed empties and the assistant's stored memory is deleted (no `alembic` needed).
-- Reload while an approval is pending -> the tool card shows "Interrupted".
+- Reload while a plan is awaiting approval -> the plan card is restored in its `proposed` state.
 - Token mode "logout": clear the `loomcore_admin_token` key in browser `localStorage`.
 
 ### 11.8 Evidence to collect
