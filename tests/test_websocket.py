@@ -182,7 +182,7 @@ async def test_process_user_message_reports_llm_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_process_user_message_auto_runs_safe_plan(monkeypatch):
+async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
@@ -202,25 +202,24 @@ async def test_process_user_message_auto_runs_safe_plan(monkeypatch):
     await ws_module._process_user_message(send, "sess", "check", tracker, pending)
 
     types = [payload["type"] for payload in sent]
-    proposed = next(p for p in sent if p["type"] == "plan_proposed")
-    assert proposed["requires_approval"] is False
+    assert "plan_proposed" not in types
+    assert "plan_done" not in types
     assert types.count("tool_call") == 1
     assert "tool_response" in types
-    assert "plan_done" in types
     assert types[-1] == "response"
     assert sent[-1]["content"] == "Summary"
     assert saved_tools[0]["status"] == "success"
-    assert saved_plans[-1]["status"] == "done"
+    assert saved_plans == []
     assert pending["plan"] is None
     assert tracker["plan"] is None
 
 
 @pytest.mark.asyncio
-async def test_process_user_message_waits_for_risky_plan(monkeypatch):
+async def test_process_user_message_direct_dangerous_asks_in_text(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
-            "goal": "disable",
+            "goal": "restart nginx",
             "steps": [
                 {
                     "tool": "core_disable_plugin",
@@ -242,9 +241,10 @@ async def test_process_user_message_waits_for_risky_plan(monkeypatch):
     await ws_module._process_user_message(send, "sess", "disable", tracker, pending)
 
     types = [payload["type"] for payload in sent]
-    proposed = next(p for p in sent if p["type"] == "plan_proposed")
-    assert proposed["requires_approval"] is True
+    assert "plan_proposed" not in types
     assert "tool_call" not in types
+    assert sent[-1]["type"] == "response"
+    assert "Reply yes to proceed." in sent[-1]["content"]
     assert pending["plan"]["plan_id"] == plan["plan_id"]
     assert pending["user_text"] == "disable"
 
@@ -263,7 +263,7 @@ async def test_process_user_message_reports_step_failure(monkeypatch):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
-    saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
+    saved_tools, _ = _patch_plan_runtime(monkeypatch)
 
     async def boom(tool_name, arguments=None):
         raise RuntimeError("nope")
@@ -275,8 +275,7 @@ async def test_process_user_message_reports_step_failure(monkeypatch):
     response = next(p for p in sent if p["type"] == "tool_response")
     assert response["status"] == "error"
     assert "nope" in response["content"]
-    done = next(p for p in sent if p["type"] == "plan_done")
-    assert done["status"] == "failed"
+    assert not any(p["type"] == "plan_done" for p in sent)
     assert saved_tools[-1]["status"] == "error"
 
 
@@ -291,13 +290,14 @@ async def test_websocket_plan_approve(monkeypatch):
     saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
     plan = build_plan(
         {
-            "goal": "disable",
+            "goal": "restart service and check",
             "steps": [
                 {
                     "tool": "core_disable_plugin",
                     "args": {"plugin": "LoomOps"},
                     "why": "stop it",
-                }
+                },
+                {"tool": "core_health", "args": {}, "why": "verify"},
             ],
         }
     )
@@ -316,7 +316,7 @@ async def test_websocket_plan_approve(monkeypatch):
 
     types = [payload["type"] for payload in ws.sent]
     assert "plan_proposed" in types
-    assert types.count("tool_call") == 1
+    assert types.count("tool_call") == 2
     assert "plan_done" in types
     assert "response" in types
     assert saved_tools[0]["status"] == "success"
@@ -329,13 +329,14 @@ async def test_websocket_plan_reject(monkeypatch):
     saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
     plan = build_plan(
         {
-            "goal": "disable",
+            "goal": "restart service and check",
             "steps": [
                 {
                     "tool": "core_disable_plugin",
                     "args": {"plugin": "LoomOps"},
                     "why": "stop it",
-                }
+                },
+                {"tool": "core_health", "args": {}, "why": "verify"},
             ],
         }
     )
@@ -391,7 +392,7 @@ async def test_websocket_plan_edit_auto_runs(monkeypatch):
     await ws_module.websocket_endpoint(ws, "sess")
 
     proposed = [p for p in ws.sent if p["type"] == "plan_proposed"]
-    assert len(proposed) == 2
+    assert len(proposed) == 1
     assert proposed[-1]["revision"] == 2
     assert proposed[-1]["requires_approval"] is False
     types = [payload["type"] for payload in ws.sent]
@@ -515,3 +516,161 @@ async def test_websocket_cancel_aborts_running_request(monkeypatch):
 
     assert started.is_set()
     assert any(payload.get("type") == "cancelled" for payload in ws.sent)
+
+
+# --------------------------------------------------------------------------- #
+# conversational-first direct confirmations
+# --------------------------------------------------------------------------- #
+
+
+def _dangerous_plan(goal="restart nginx"):
+    return build_plan(
+        {
+            "goal": goal,
+            "steps": [
+                {
+                    "tool": "core_disable_plugin",
+                    "args": {"plugin": "LoomOps"},
+                    "why": "stop it",
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_websocket_direct_confirm_yes_runs(monkeypatch):
+    _patch_db(monkeypatch)
+    saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
+    plan = _dangerous_plan()
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": "restart nginx"}, {"message": "yes"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    types = [payload["type"] for payload in ws.sent]
+    assert "plan_proposed" not in types
+    assert types.count("tool_call") == 1
+    assert "tool_response" in types
+    assert saved_tools[0]["status"] == "success"
+    assert saved_plans == []
+
+
+@pytest.mark.asyncio
+async def test_websocket_direct_confirm_no_rejects(monkeypatch):
+    _patch_db(monkeypatch)
+    saved_tools, _ = _patch_plan_runtime(monkeypatch)
+    plan = _dangerous_plan()
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": "restart nginx"}, {"message": "нет"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    types = [payload["type"] for payload in ws.sent]
+    assert "tool_call" not in types
+    assert any(
+        payload.get("content") == "Cancelled." for payload in ws.sent
+    )
+    assert any(tool.get("status") == "cancelled" for tool in saved_tools)
+
+
+@pytest.mark.asyncio
+async def test_websocket_direct_unclear_reasks_then_resets(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    plan = _dangerous_plan()
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket(
+        [{"message": "restart nginx"}, {"message": "maybe"}, {"message": "whatever"}],
+        delay=0.05,
+    )
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    contents = [payload.get("content") for payload in ws.sent]
+    assert "Reply yes to proceed, or no to cancel." in contents
+    assert not any(payload.get("type") == "tool_call" for payload in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_websocket_direct_confirm_timeout_routes_new_message(monkeypatch):
+    _patch_db(monkeypatch)
+    monkeypatch.setattr(ws_module, "CONFIRMATION_TIMEOUT_SECONDS", -1.0)
+    _patch_plan_runtime(monkeypatch)
+    plan = _dangerous_plan()
+    calls = []
+
+    async def fake_route(user_text, session_id):
+        calls.append(user_text)
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": "restart nginx"}, {"message": "yes"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert len(calls) == 2
+    assert not any(payload.get("type") == "tool_call" for payload in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_websocket_yes_without_pending_routes_normally(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_route(user_text, session_id):
+        calls.append(user_text)
+        return {"type": "text", "content": "hello"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": "yes"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert calls == ["yes"]
+    assert ws.sent[-1] == {"type": "response", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_websocket_confirmation_isolated_per_session(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    plan = _dangerous_plan()
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    first = FakeWebSocket([{"message": "restart nginx"}], delay=0.05)
+    first.allow_disconnect.set()
+    await ws_module.websocket_endpoint(first, "sess-a")
+
+    second = FakeWebSocket([{"message": "yes"}], delay=0.05)
+    second.allow_disconnect.set()
+    await ws_module.websocket_endpoint(second, "sess-b")
+
+    assert not any(payload.get("type") == "tool_call" for payload in second.sent)

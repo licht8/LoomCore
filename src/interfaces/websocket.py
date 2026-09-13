@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import time
 import traceback
 from collections.abc import Awaitable, Callable
 
@@ -9,8 +10,13 @@ from fastapi import WebSocket, WebSocketDisconnect
 from src.core.agent import (
     execute_plan,
     next_revision,
+    plan_is_direct,
     plan_requires_approval,
     validate_plan,
+)
+from src.core.confirmations import (
+    CONFIRMATION_TIMEOUT_SECONDS,
+    parse_confirmation,
 )
 from src.core.core_tools import CORE_TOOL_NAMES, dispatch_core_tool
 from src.db.database import async_session_factory
@@ -73,6 +79,10 @@ async def _run_plan(
     if tracker is not None:
         tracker["plan"] = plan
 
+    # A direct action is a single obvious call: it runs as a plain tool card,
+    # without a user-facing plan artifact or plan events.
+    show_plan = not plan_is_direct(plan)
+
     async def emit(event: dict) -> None:
         if event.get("type") != "plan_step":
             return
@@ -119,14 +129,16 @@ async def _run_plan(
                 risk=step.get("risk"),
             )
             await send(_tool_error_payload(step["tool"], message, step.get("risk")))
-        await send(plan_step_payload(plan, step, phase))
+        if show_plan:
+            await send(plan_step_payload(plan, step, phase))
 
     outcome = await execute_plan(plan, dispatch=_execute_tool, emit=emit)
     final_plan = outcome["plan"]
     observations = outcome["results"]
 
-    await _save_plan_message(session_id, final_plan)
-    await send(plan_done_payload(final_plan))
+    if show_plan:
+        await _save_plan_message(session_id, final_plan)
+        await send(plan_done_payload(final_plan))
 
     summary = await _summarize(user_text, final_plan, observations)
     if summary:
@@ -168,6 +180,16 @@ async def _guarded(coro) -> None:
         raise
     except Exception as exc:
         logger.error(f"Background request failed: {exc}")
+
+
+def _remember_pending(pending: dict | None, plan: dict, user_text: str) -> None:
+    """Record a plan awaiting the user's confirmation (with a fresh timeout)."""
+    if pending is None:
+        return
+    pending["plan"] = plan
+    pending["user_text"] = user_text
+    pending["created_at"] = time.monotonic()
+    pending["reasked"] = False
 
 
 async def _process_user_message(
@@ -214,12 +236,22 @@ async def _process_user_message(
 
     plan = result.get("plan") or {}
     requires_approval = plan_requires_approval(plan)
+
+    if plan_is_direct(plan):
+        if not requires_approval:
+            # One obvious, safe action: just do it, no plan card.
+            await _run_plan(send, session_id, user_text, plan, tracker)
+            return
+        # Direct but mutating: ask for a plain-language confirmation.
+        goal = plan.get("goal") or "Proceed"
+        await send({"type": "response", "content": f"{goal} Reply yes to proceed."})
+        _remember_pending(pending, plan, user_text)
+        return
+
     await send(plan_proposed_payload(plan, requires_approval))
 
     if requires_approval:
-        if pending is not None:
-            pending["plan"] = plan
-            pending["user_text"] = user_text
+        _remember_pending(pending, plan, user_text)
         return
 
     await _run_plan(send, session_id, user_text, plan, tracker)
@@ -254,7 +286,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     # cancelled cards even after the task is torn down.
     tracker: dict = {"tool": None, "plan": None}
     # A plan waiting for the user's decision.
-    pending: dict = {"plan": None, "user_text": ""}
+    pending: dict = {
+        "plan": None,
+        "user_text": "",
+        "created_at": 0.0,
+        "reasked": False,
+    }
 
     async def cancel_current() -> None:
         nonlocal current
@@ -296,6 +333,39 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await _save_plan_message(session_id, plan)
             await send(plan_done_payload(plan))
 
+    def clear_pending() -> None:
+        pending["plan"] = None
+        pending["user_text"] = ""
+        pending["created_at"] = 0.0
+        pending["reasked"] = False
+
+    async def approve_plan(plan: dict, user_text: str) -> None:
+        plan["status"] = "approved"
+        if not plan_is_direct(plan):
+            with contextlib.suppress(Exception):
+                await _save_plan_message(session_id, plan)
+        start(_run_plan(send, session_id, user_text, plan, tracker))
+
+    async def reject_plan(plan: dict) -> None:
+        plan["status"] = "rejected"
+        if plan_is_direct(plan):
+            step = (plan.get("steps") or [{}])[0]
+            with contextlib.suppress(Exception):
+                await _save_tool_message(
+                    session_id,
+                    step.get("tool", ""),
+                    step.get("args"),
+                    "",
+                    status="cancelled",
+                    summary="Rejected",
+                    risk=step.get("risk"),
+                )
+            await send({"type": "response", "content": "Cancelled."})
+            return
+        with contextlib.suppress(Exception):
+            await _save_plan_message(session_id, plan)
+        await send(plan_done_payload(plan))
+
     try:
         while True:
             # Read JSON from the client
@@ -309,19 +379,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await cancel_current()
                 await persist_cancelled_tool()
                 await persist_cancelled_plan()
-                pending["plan"] = None
+                clear_pending()
                 await send({"type": "cancelled"})
                 continue
 
             # User rejected the pending plan
             if action == "plan_reject":
                 plan = pending.get("plan")
-                pending["plan"] = None
+                clear_pending()
                 if plan:
-                    plan["status"] = "rejected"
-                    with contextlib.suppress(Exception):
-                        await _save_plan_message(session_id, plan)
-                    await send(plan_done_payload(plan))
+                    await reject_plan(plan)
                 continue
 
             # User approved the pending plan
@@ -333,11 +400,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 if not plan:
                     continue
                 user_text = pending.get("user_text", "")
-                pending["plan"] = None
-                plan["status"] = "approved"
-                with contextlib.suppress(Exception):
-                    await _save_plan_message(session_id, plan)
-                start(_run_plan(send, session_id, user_text, plan, tracker))
+                clear_pending()
+                await approve_plan(plan, user_text)
                 continue
 
             # User edited the pending plan
@@ -358,13 +422,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     )
                     continue
                 user_text = pending.get("user_text", "")
-                pending["plan"] = revised
+                _remember_pending(pending, revised, user_text)
                 with contextlib.suppress(Exception):
                     await _save_plan_message(session_id, revised)
                 requires_approval = plan_requires_approval(revised)
                 await send(plan_proposed_payload(revised, requires_approval))
                 if not requires_approval:
-                    pending["plan"] = None
+                    clear_pending()
                     start(_run_plan(send, session_id, user_text, revised, tracker))
                 continue
 
@@ -375,7 +439,36 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if is_busy():
                 await send({"type": "busy"})
                 continue
-            pending["plan"] = None
+
+            # A direct action awaiting a plain-text yes/no confirmation.
+            pending_plan = pending.get("plan")
+            if pending_plan is not None and plan_is_direct(pending_plan):
+                age = time.monotonic() - float(pending.get("created_at") or 0.0)
+                if age <= CONFIRMATION_TIMEOUT_SECONDS:
+                    decision = parse_confirmation(user_text)
+                    if decision == "approve":
+                        saved_text = pending.get("user_text", "")
+                        clear_pending()
+                        await approve_plan(pending_plan, saved_text)
+                        continue
+                    if decision == "reject":
+                        clear_pending()
+                        await reject_plan(pending_plan)
+                        continue
+                    if not pending.get("reasked"):
+                        pending["reasked"] = True
+                        pending["created_at"] = time.monotonic()
+                        await send(
+                            {
+                                "type": "response",
+                                "content": "Reply yes to proceed, or no to cancel.",
+                            }
+                        )
+                        continue
+                # Expired, or a second unclear reply: drop it and start fresh.
+                clear_pending()
+
+            clear_pending()
             start(_process_user_message(send, session_id, user_text, tracker, pending))
 
     except WebSocketDisconnect:

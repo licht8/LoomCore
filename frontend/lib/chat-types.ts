@@ -41,6 +41,7 @@ export interface Plan {
   goal: string
   steps: PlanStep[]
   status: PlanStatus
+  mode?: "direct" | "plan"
   created_at: string
 }
 
