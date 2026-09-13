@@ -48,6 +48,23 @@ Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
   reconciles the store against live peers and **reports** untracked/stale entries
   without changing anything.
 
+## Prerequisites & installation
+
+The plugin runs in the `hub` container, which already ships the userspace tools
+(`wireguard-tools`, `iproute2`, `qrencode`, `iptables`, `nftables`). The
+`wg_install_dependencies` tool (dangerous — admin approval) re-checks them and:
+
+1. installs anything missing **inside the container** with its own package
+   manager (`apt`/`dnf`/`yum`/`apk`);
+2. loads the WireGuard kernel module via `modprobe` and verifies support with a
+   throwaway `ip link add ... type wireguard` probe.
+
+The plugin cannot install packages or kernel modules on the **host** by design
+(no privileged/host escape). WireGuard is in-tree on Linux 5.6+; on older kernels
+the tool returns the host-side commands to run (e.g.
+`dnf install -y kmod-wireguard`) and no changes are made. `deploy/install.sh`
+does not install WireGuard at all.
+
 ## Tools
 
 | Tool | Risk | Description |
@@ -57,7 +74,8 @@ Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
 | `wg_show_interface_config` | safe | Show the live (or saved) config; keys masked unless `show_secrets`. |
 | `wg_check_interface_config` | safe | Validate a config without starting it (keys, CIDRs, duplicates, overlaps). |
 | `wg_interface_status` | safe | Interface status and peer online counts. |
-| `wg_diagnostics` | safe | In-depth check: wg installed, active, link, config present. |
+| `wg_diagnostics` | safe | In-depth check: wg installed, prerequisites, active, link, config present. |
+| `wg_install_dependencies` | dangerous | Install missing container tools + load the kernel module; returns host commands if the kernel lacks WireGuard. |
 | `wg_stats` | safe | Snapshot totals, per-peer share, top peers (no history). |
 | `wg_create_peer` | moderate | Create/track a client (generates keys when no `public_key`); idempotent. |
 | `wg_remove_peer` | dangerous | Remove by `name` (store) or `public_key`; deletes peer, files, record. |

@@ -33,6 +33,7 @@ def classify_tool_risk(tool_name: str) -> str:
         "wg_interface_restart",
         "wg_service_enable",
         "wg_service_disable",
+        "wg_install_dependencies",
     }
     if tool_name.lower() in explicit_dangerous:
         return "dangerous"

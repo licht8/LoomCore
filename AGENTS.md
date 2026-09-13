@@ -38,6 +38,7 @@ docker compose up -d --build         # VDS: sudo bash deploy/install.sh (nginx:8
 - A plugin is launched as `sys.executable <plugins/<name>/main.py>`; `plugins/LoomWG/main.py` imports the `LoomWG` package (`from LoomWG.server import run_server`), relying on the script directory being on sys.path.
 - The plugin's WireGuard config directory is `LOOMWG_CONFIG_DIR` (default `/etc/wireguard`); tests/e2e use a temp directory.
 - On firewalld hosts (RHEL/Rocky), set `LOOMWG_SKIP_FIREWALL=1`: `wg_setup_server` then skips firewall/NAT and you configure it manually.
+- `deploy/install.sh` does not install WireGuard: the `hub` image ships the userspace tools, and the `wg_install_dependencies` tool (dangerous — approval) installs/repairs missing ones in-container and loads the kernel module. Only host kernel support is required (in-tree since Linux 5.6; older kernels need `kmod-wireguard`).
 - Compose uses `network_mode: host` for `hub`/`frontend`/`nginx` so WireGuard + NAT live on the host; only `:80` is public, `8000`/`3000`/`5432` bind to `127.0.0.1`.
 - Auth has **two modes** (`src/core/security.py:require_admin_token`): `ADMIN_TOKEN` (bearer/query), or JWT cookie when `ADMIN_PASSWORD_HASH` + `ADMIN_TOTP_SECRET` + `SESSION_SECRET` are set. Password hash: `python -m src.auth <password>`.
 - The `/ws/{session_id}` route is not wrapped by slowapi (limits are on REST: chat 30/min, auth 5/min, etc.).

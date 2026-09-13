@@ -161,6 +161,109 @@ def test_setup_server_configures_firewall_by_default(load_loomwg, monkeypatch, t
     assert result["firewall"] == "firewalld"
 
 
+# === install.py: dependency installation (in-container) ===
+
+def test_dependency_report_all_present(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    monkeypatch.setattr(install.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+
+    report = install.dependency_report()
+
+    assert report["ready"] is True
+    assert report["missing"] == []
+    assert report["package_manager"] == "apt"
+
+
+def test_ensure_dependencies_noop_when_present(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    monkeypatch.setattr(install.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    called = {"install": False}
+    monkeypatch.setattr(
+        install,
+        "_container_shell",
+        lambda *args, **kwargs: called.__setitem__("install", True),
+    )
+
+    result = install.ensure_dependencies()
+
+    assert result["changed"] is False
+    assert called["install"] is False
+
+
+def test_ensure_dependencies_installs_missing(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    state = {"missing": "wg"}
+
+    def fake_which(tool):
+        return None if tool == state["missing"] else f"/usr/bin/{tool}"
+
+    monkeypatch.setattr(install.shutil, "which", fake_which)
+    calls: list[str] = []
+
+    def fake_shell(command, timeout=300):
+        calls.append(command)
+        state["missing"] = None
+        return ""
+
+    monkeypatch.setattr(install, "_container_shell", fake_shell)
+
+    result = install.ensure_dependencies()
+
+    assert result["changed"] is True
+    assert result["package_manager"] == "apt"
+    assert result["missing_before"] == ["wg"]
+    assert "wireguard-tools" in calls[0]
+    assert result["missing_after"] == []
+
+
+def test_ensure_dependencies_requires_package_manager(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    monkeypatch.setattr(install.shutil, "which", lambda tool: None)
+
+    with pytest.raises(RuntimeError, match="no supported package manager"):
+        install.ensure_dependencies()
+
+
+def test_ensure_kernel_module_reports_host_hint(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    monkeypatch.setattr(install, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(install, "_kernel_support_available", lambda: False)
+
+    result = install.ensure_kernel_module()
+
+    assert result["loaded"] is False
+    assert "kmod-wireguard" in result["message"]
+
+
+def test_ensure_kernel_module_available(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    monkeypatch.setattr(install, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(install, "_kernel_support_available", lambda: True)
+
+    result = install.ensure_kernel_module()
+
+    assert result["loaded"] is True
+
+
+def test_install_wireguard_returns_ready(load_loomwg, monkeypatch):
+    install = load_loomwg("install")["install"]
+    monkeypatch.setattr(
+        install,
+        "ensure_dependencies",
+        lambda: {"changed": False, "message": "deps ok"},
+    )
+    monkeypatch.setattr(
+        install,
+        "ensure_kernel_module",
+        lambda: {"loaded": True, "message": "module ok"},
+    )
+
+    result = install.install_wireguard({})
+
+    assert result["data"]["ready"] is True
+    assert "deps ok" in result["content"][0]["text"]
+
+
 # === wireguard.py: parsers ===
 
 def test_parse_transfer_bytes(load_loomwg):

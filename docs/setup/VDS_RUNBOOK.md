@@ -41,7 +41,7 @@ Required values:
 
 Store `ADMIN_TOKEN` somewhere safe — you need it for the UI/API.
 
-## 2. Install host packages and start
+## 2. Start the stack
 
 ```bash
 sudo bash deploy/install.sh
@@ -50,11 +50,14 @@ sudo bash deploy/install.sh
 Manual equivalent (if you prefer):
 
 ```bash
-sudo dnf install -y epel-release
-sudo dnf install -y wireguard-tools iproute qrencode iptables-nft nftables
-sudo modprobe wireguard   # in-tree on modern kernels; otherwise: dnf install -y kmod-wireguard
 sudo docker compose up -d --build
+sudo docker compose exec hub alembic upgrade head
 ```
+
+No host WireGuard packages are needed: the `hub` image ships the userspace tools
+and the LoomWG plugin installs/repairs anything missing inside its container. The
+kernel normally loads WireGuard on demand (in-tree since Linux 5.6); on an older
+kernel install `kmod-wireguard` on the host (see section 6).
 
 `deploy/install.sh` works from wherever you cloned the repo (it uses its own location).
 
@@ -129,9 +132,19 @@ Open the UI at `http://SERVER_IP/` and log in with the **Token** tab using
 
 ## 6. Configure WireGuard + firewalld
 
-In the UI (or via the `/api/chat` flow), call `wg_setup_server` (dangerous —
-approve it). Because `LOOMWG_SKIP_FIREWALL=1`, the port/NAT is **not** opened
-automatically; do it on the host:
+In the UI (or via the `/api/chat` flow), call `wg_install_dependencies` (approve
+it) to load the kernel module and install any missing container tools. If it
+reports that the host kernel lacks WireGuard, install `kmod-wireguard` on the
+host and retry:
+
+```bash
+sudo dnf install -y kmod-wireguard   # only for kernels older than Linux 5.6
+sudo modprobe wireguard
+```
+
+Then call `wg_setup_server` (dangerous — approve it). Because
+`LOOMWG_SKIP_FIREWALL=1`, the port/NAT is **not** opened automatically; do it on
+the host:
 
 ```bash
 sudo firewall-cmd --permanent --add-port=51820/udp
@@ -237,10 +250,12 @@ docker compose exec db psql -U loomuser -d loomcore -c \
 ```
 
 ### 11.3 Set up the WireGuard server (approval)
-1. Type `set up the wireguard server`.
-2. Approve the `wg_setup_server` request.
-3. With `LOOMWG_SKIP_FIREWALL=1`, apply the section 6 firewall rules.
-4. Verify: `ls -l /etc/wireguard/wg0.conf` and `docker compose exec hub wg show`.
+1. Type `install wireguard prerequisites` → approve `wg_install_dependencies`
+   (loads the kernel module, installs missing container tools).
+2. Type `set up the wireguard server`.
+3. Approve the `wg_setup_server` request.
+4. With `LOOMWG_SKIP_FIREWALL=1`, apply the section 6 firewall rules.
+5. Verify: `ls -l /etc/wireguard/wg0.conf` and `docker compose exec hub wg show`.
 
 ### 11.4 Create a peer/client (approval)
 1. Type `create a wireguard client named phone1`.

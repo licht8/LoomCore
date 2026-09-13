@@ -16,7 +16,7 @@ from .clients.client import (
     store_client_record,
 )
 from .ops import service as service_mode
-from .ops.install import setup_server
+from .ops.install import dependency_report, install_wireguard, setup_server
 from .ops.lifecycle import format_lifecycle, restart, start, stop
 from .ops.stats import stats as stats_tool
 from .peers.config import remove_peer as delete_peer
@@ -188,11 +188,27 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
     checks["link_present"] = has_link(interface)
     checks["config_present"] = config_exists
     checks["setup_required"] = not config_exists
+
+    prerequisites = dependency_report()
+    checks["prerequisites"] = prerequisites["ready"]
+    checks["missing_tools"] = prerequisites["missing"]
+    prerequisites_line = (
+        "Prerequisites: OK"
+        if prerequisites["ready"]
+        else "Prerequisites: missing "
+        + ", ".join(prerequisites["missing"])
+        + " — use wg_install_dependencies"
+    )
+
     checks["healthy"] = bool(
-        checks["wg_installed"] and checks["active"] and checks["link_present"]
+        checks["wg_installed"]
+        and checks["active"]
+        and checks["link_present"]
+        and prerequisites["ready"]
     )
     lines = [
         f"WireGuard installed: {'yes' if checks['wg_installed'] else 'no'}",
+        prerequisites_line,
         f"{interface} active: {'yes' if checks['active'] else 'no'}",
         f"Network link present: {'yes' if checks['link_present'] else 'no'}",
         f"Configuration found: {'yes' if checks['config_present'] else 'no'}",
@@ -386,6 +402,7 @@ HANDLERS = {
     "wg_interface_status": status,
     "wg_list_peers": list_peers,
     "wg_diagnostics": diagnostics,
+    "wg_install_dependencies": install_wireguard,
     "wg_show_interface_config": show_config,
     "wg_check_interface_config": check_config,
     "wg_stats": stats_tool,
@@ -461,6 +478,16 @@ TOOLS_SCHEMA = [
             "properties": {"interface": {"type": "string", "default": "wg0"}},
             "required": [],
         },
+    },
+    {
+        "name": "wg_install_dependencies",
+        "description": (
+            "Install missing WireGuard userspace tools inside the plugin's "
+            "container and load the WireGuard kernel module. If the host kernel "
+            "lacks WireGuard support it returns the host-side install commands. "
+            "Requires admin approval."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "wg_create_peer",

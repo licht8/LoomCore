@@ -32,6 +32,7 @@ def test_schema_exposes_new_tools(load_loomwg):
         "wg_show_interface_config",
         "wg_check_interface_config",
         "wg_stats",
+        "wg_install_dependencies",
         "wg_export_existing_clients",
         "wg_service_enable",
         "wg_service_disable",

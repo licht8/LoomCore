@@ -27,40 +27,6 @@ if [[ ! -f .env ]]; then
   exit 0
 fi
 
-# === Host packages (run on the host, not inside the container) ===
-
-echo "=== Installing WireGuard packages ==="
-if command -v apt-get >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update && apt-get install -y wireguard-tools iproute2 qrencode iptables nftables
-  echo "Installed via apt"
-elif command -v dnf >/dev/null 2>&1; then
-  # On RHEL/Rocky, wireguard-tools and qrencode live in EPEL.
-  dnf install -y epel-release
-  dnf install -y wireguard-tools iproute qrencode iptables-nft nftables
-  echo "Installed via dnf"
-elif command -v yum >/dev/null 2>&1; then
-  yum install -y epel-release
-  yum install -y wireguard-tools iproute qrencode iptables nftables
-  echo "Installed via yum"
-elif command -v apk >/dev/null 2>&1; then
-  apk add --no-cache wireguard-tools iproute2 qrencode iptables nftables
-  echo "Installed via apk"
-else
-  echo "No supported package manager found. Install wireguard-tools manually."
-  exit 1
-fi
-
-# WireGuard is in-tree on modern kernels; kmod-wireguard is only needed on
-# older RHEL/Rocky kernels.
-if command -v modprobe >/dev/null 2>&1; then
-  if modprobe wireguard 2>/dev/null; then
-    echo "wireguard kernel module available"
-  else
-    echo "WARNING: 'wireguard' kernel module not loaded. Install the EPEL kmod-wireguard package if wg-quick fails."
-  fi
-fi
-
 # === Build and start containers ===
 
 echo "=== Building and starting LoomCore ==="
@@ -72,4 +38,6 @@ docker compose exec -T hub alembic upgrade head
 
 echo "LoomCore is available on port 80."
 echo ""
-echo "Then configure WireGuard via the wg_setup_server tool in the LoomCore UI/chat."
+echo "WireGuard is installed by the LoomWG plugin: call wg_install_dependencies"
+echo "(loads the kernel module + installs container tools if needed), then configure"
+echo "the server with wg_setup_server in the LoomCore UI/chat."

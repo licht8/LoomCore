@@ -22,19 +22,22 @@ nano .env
 
 Fill in at least `POSTGRES_PASSWORD`, `ADMIN_TOKEN`, and `HETZNER_API_KEY`.
 
-### Step 1: Install host packages
+### Step 1: Start the stack
 
 ```bash
 sudo bash deploy/install.sh
 ```
 
 The script:
-- installs `wireguard-tools`, `iproute2`/`iproute`, `qrencode`, `iptables`, `nftables`
-  (on RHEL/Rocky it enables EPEL first);
 - creates `.env` if missing;
 - builds and starts the containers via `docker compose up -d --build`;
 - applies database migrations (`alembic upgrade head`);
 - prints the container status.
+
+It does **not** install WireGuard packages: the `hub` image already contains the
+userspace tools, and the LoomWG plugin installs/repairs anything missing inside
+its container. The only host requirement is kernel WireGuard support (in-tree on
+Linux 5.6+; see Step 3 for older kernels).
 
 If `.env` did not exist yet, the script creates it and exits — fill it in and
 rerun.
@@ -52,10 +55,14 @@ docker compose exec hub alembic upgrade head
 ### Step 3: Configure WireGuard
 
 1. Open the Web UI at `http://SERVER_IP/` and log in with the admin token.
-2. Call the `wg_setup_server` tool (it asks for admin approval). It creates
+2. Call the `wg_install_dependencies` tool (approve it). It loads the WireGuard
+   kernel module and installs any missing userspace tools inside the container.
+   If the host kernel has no WireGuard support, the tool returns the host-side
+   commands to run (e.g. `dnf install -y kmod-wireguard` on RHEL/Rocky).
+3. Call the `wg_setup_server` tool (it asks for admin approval). It creates
    `/etc/wireguard/wg0.conf`, enables IPv4/IPv6 forwarding, and configures
    firewall/NAT.
-3. On firewalld hosts (RHEL/Rocky), set `LOOMWG_SKIP_FIREWALL=1` and open the
+4. On firewalld hosts (RHEL/Rocky), set `LOOMWG_SKIP_FIREWALL=1` and open the
    port/NAT manually — see [VDS_RUNBOOK.md](VDS_RUNBOOK.md).
 
 ## Networking model
@@ -161,7 +168,7 @@ docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sq
 | `wg show/add-peer` | `privileged: true` | `NET_ADMIN` capability |
 | `wg-quick up/down` | `privileged` | `NET_ADMIN` + `SYS_MODULE` |
 | `/etc/wireguard` | via `/:/host` | direct bind mount |
-| Package install | `chroot /host` | `deploy/install.sh` on the host only |
+| Package install | `chroot /host` | `hub` image + LoomWG `wg_install_dependencies` (in-container) |
 | Firewall/NAT | inside container namespace | host namespace (`network_mode: host`) |
 | Full root to the host | ✅ | ❌ removed |
 | Docker socket | ✅ | ❌ removed |

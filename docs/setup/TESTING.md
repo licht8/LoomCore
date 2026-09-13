@@ -86,11 +86,12 @@ checklist below.
 
 ## VDS E2E checklist
 
-1. `sudo bash deploy/install.sh` (host WireGuard packages + `docker compose up`).
+1. `sudo bash deploy/install.sh` (builds/starts the stack; host WireGuard packages are not required — the image ships them).
 2. `docker compose exec hub alembic upgrade head`.
 3. Configure auth in `.env` (JWT or `ADMIN_TOKEN`) and restart.
-4. `wg_setup_server` (with admin approval) — creates `wg0.conf`, forwarding, firewall/NAT.
-5. `wg_create_client` — create a client.
+4. `wg_install_dependencies` (with admin approval) — loads the kernel module and installs missing container tools.
+5. `wg_setup_server` (with admin approval) — creates `wg0.conf`, forwarding, firewall/NAT.
+6. `wg_create_client` — create a client.
 6. Download the config and QR: `/api/artifacts/<token>/{config,qr}`.
 7. Connect a real client (phone/PC) with the config.
 8. `wg_list_peers` — confirm the peer is `online` (has a handshake).
