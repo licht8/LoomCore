@@ -138,7 +138,6 @@ async def _run_plan(
 
     if show_plan:
         await _save_plan_message(session_id, final_plan)
-        await send(plan_done_payload(final_plan))
 
     summary = await _summarize(user_text, final_plan, observations)
     if summary:
@@ -146,6 +145,11 @@ async def _run_plan(
             async with async_session_factory() as db:
                 await add_assistant_message(db, session_id, summary)
         await send({"type": "response", "content": summary})
+
+    # plan_done is terminal for the UI: send it only once the summary is out so
+    # the client keeps the turn busy until the whole request has finished.
+    if show_plan:
+        await send(plan_done_payload(final_plan))
 
     if tracker is not None:
         tracker["plan"] = None
@@ -292,6 +296,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         "created_at": 0.0,
         "reasked": False,
     }
+    # One message typed while a turn was running; newest wins, dispatched on
+    # completion instead of being dropped.
+    queued_text: str | None = None
 
     async def cancel_current() -> None:
         nonlocal current
@@ -302,9 +309,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+    def _drain_queue() -> None:
+        nonlocal queued_text
+        text = queued_text
+        queued_text = None
+        if text:
+            start(_process_user_message(send, session_id, text, tracker, pending))
+
+    def _on_task_done(task: asyncio.Task) -> None:
+        if current is task:
+            _drain_queue()
+
     def start(coro) -> None:
         nonlocal current
         current = asyncio.create_task(_guarded(coro))
+        current.add_done_callback(_on_task_done)
 
     def is_busy() -> bool:
         return bool(current and not current.done())
@@ -376,6 +395,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
             # Cancel the request currently in flight, if any
             if action == "cancel":
+                queued_text = None
                 await cancel_current()
                 await persist_cancelled_tool()
                 await persist_cancelled_plan()
@@ -437,7 +457,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if not user_text:
                 continue
             if is_busy():
-                await send({"type": "busy"})
+                # Keep the newest message; it runs when the current turn ends.
+                queued_text = user_text
                 continue
 
             # A direct action awaiting a plain-text yes/no confirmation.

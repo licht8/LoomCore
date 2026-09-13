@@ -438,22 +438,49 @@ async def test_websocket_plan_edit_rejects_unknown_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_websocket_busy_while_running(monkeypatch):
+async def test_websocket_busy_message_queued_and_runs(monkeypatch):
     _patch_db(monkeypatch)
-    started = asyncio.Event()
+    calls = []
 
-    async def slow_process(send, session_id, user_text, tracker=None, pending=None):
-        started.set()
-        await asyncio.Event().wait()
+    async def fake_process(send, session_id, user_text, tracker=None, pending=None):
+        calls.append(user_text)
+        if user_text == "one":
+            await asyncio.sleep(0.1)
 
-    monkeypatch.setattr(ws_module, "_process_user_message", slow_process)
+    monkeypatch.setattr(ws_module, "_process_user_message", fake_process)
 
-    ws = FakeWebSocket([{"message": "one"}, {"message": "two"}], delay=0.05)
-    ws.allow_disconnect.set()
+    ws = FakeWebSocket([{"message": "one"}, {"message": "two"}], delay=0.02)
+    asyncio.get_event_loop().call_later(0.6, ws.allow_disconnect.set)
 
     await ws_module.websocket_endpoint(ws, "sess")
 
-    assert any(payload.get("type") == "busy" for payload in ws.sent)
+    assert calls == ["one", "two"]
+    assert not any(payload.get("type") == "busy" for payload in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_summary_response_precedes_plan_done(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "inspect",
+            "steps": [
+                {"tool": "core_health", "args": {}, "why": "a"},
+                {"tool": "core_health", "args": {}, "why": "b"},
+            ],
+        }
+    )
+
+    await ws_module._run_plan(
+        send, "sess", "check", plan, {"tool": None, "plan": None}
+    )
+
+    types = [payload["type"] for payload in sent]
+    assert "plan_done" in types
+    assert "response" in types
+    assert types.index("response") < types.index("plan_done")
 
 
 @pytest.mark.asyncio
