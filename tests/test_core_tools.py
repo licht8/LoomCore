@@ -159,6 +159,7 @@ async def test_core_capabilities_reports_runtime(monkeypatch, fake_manager):
         "NET_ADMIN": True,
         "NET_RAW": False,
         "SYS_MODULE": False,
+        "SYSLOG": False,
     }
     assert data["host_networked"] is True
     assert data["plugins"][0]["id"] == "LoomOps"

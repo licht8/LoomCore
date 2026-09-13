@@ -2,8 +2,8 @@
   "schema_version": 1,
   "id": "LoomOps",
   "name": "System Operations",
-  "version": "0.1.0",
-  "description": "Baseline system operations: allow-listed commands, confined files, processes and services.",
+  "version": "0.2.0",
+  "description": "System operations and read-only host observability: allow-listed commands, confined files, processes, services, logs and health scans.",
   "entry": "main.py",
   "protocol": "2024-11-05",
   "tools_prefix": "ops_",
@@ -11,10 +11,16 @@
   "platforms": ["linux"],
   "default_enabled": true,
   "permissions": {
-    "cap_add": [],
+    "cap_add": ["SYSLOG"],
     "cap_add_optional": [],
     "network_mode": "host",
-    "mounts": []
+    "pid": "host",
+    "mounts": [
+      {"source": "/var/log", "target": "/host/var/log", "mode": "ro"},
+      {"source": "/var/log/journal", "target": "/host/journal", "mode": "ro"},
+      {"source": "/run/systemd", "target": "/run/systemd", "mode": "ro"},
+      {"source": "/etc", "target": "/host/etc", "mode": "ro"}
+    ]
   },
   "env": [
     {
@@ -37,6 +43,36 @@
       "required": false,
       "default": "30",
       "description": "Maximum seconds a command may run before it is terminated."
+    },
+    {
+      "name": "LOOMOPS_LOG_ROOTS",
+      "required": false,
+      "default": "/host/var/log",
+      "description": "Comma or ':' separated roots scanned by the file-log fallback."
+    },
+    {
+      "name": "LOOMOPS_MAX_LOG_LINES",
+      "required": false,
+      "default": "200",
+      "description": "Default number of log lines returned by log tools."
+    },
+    {
+      "name": "LOOMOPS_CPU_THRESHOLD",
+      "required": false,
+      "default": "80",
+      "description": "CPU percent above which ops_scan_health raises a finding."
+    },
+    {
+      "name": "LOOMOPS_DISK_THRESHOLD",
+      "required": false,
+      "default": "90",
+      "description": "Disk used percent above which ops_scan_health raises a finding."
+    },
+    {
+      "name": "LOOMOPS_LOAD_THRESHOLD",
+      "required": false,
+      "default": "2.0",
+      "description": "Load average per CPU above which ops_scan_health raises a finding."
     }
   ]
 }

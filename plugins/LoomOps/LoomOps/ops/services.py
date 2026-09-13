@@ -65,6 +65,24 @@ def systemctl_status(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def failed_units() -> list[str]:
+    """Return the names of failed systemd units (empty when none)."""
+    binary = _require_systemd()
+    completed = _systemctl(binary, "--failed", "--no-legend", "--plain")
+    units: list[str] = []
+    for line in (completed.stdout or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            units.append(stripped.split()[0])
+    return units
+
+
+def failed_units_handler(arguments: dict[str, Any]) -> dict[str, Any]:
+    units = failed_units()
+    lines = [f"{unit}" for unit in units] or ["No failed systemd units"]
+    return {"output": "\n".join(lines), "units": units, "count": len(units)}
+
+
 def systemctl_restart(arguments: dict[str, Any]) -> dict[str, Any]:
     binary = _require_systemd()
     service = _service(arguments)

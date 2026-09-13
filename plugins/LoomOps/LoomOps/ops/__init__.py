@@ -29,3 +29,14 @@ def audit_event(event: str, **fields: Any) -> str | None:
     except OSError as exc:
         return str(exc)
     return None
+
+
+def bounded_int(value: Any, default: int, maximum: int, minimum: int = 1) -> int:
+    """Coerce ``value`` to an int within ``[minimum, maximum]`` or return ``default``."""
+    if isinstance(value, bool):
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(number, maximum))

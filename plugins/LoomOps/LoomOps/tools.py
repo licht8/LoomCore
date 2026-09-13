@@ -6,7 +6,16 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
-from .ops import commands, files, processes, services, system_info
+from .ops import (
+    commands,
+    diagnostics,
+    files,
+    logs,
+    monitoring,
+    processes,
+    services,
+    system_info,
+)
 from .results import text_result
 from .schemas import TOOLS_SCHEMA  # noqa: F401  (re-exported for the server and tests)
 
@@ -31,4 +40,10 @@ HANDLERS = {
     "ops_systemctl_restart": _tool(services.systemctl_restart),
     "ops_disk_usage": _tool(system_info.disk_usage),
     "ops_network_status": _tool(system_info.network_status),
+    "ops_system_metrics": _tool(monitoring.system_metrics),
+    "ops_log_search": _tool(logs.log_search),
+    "ops_dmesg": _tool(monitoring.dmesg),
+    "ops_failed_units": _tool(services.failed_units_handler),
+    "ops_network_connections": _tool(monitoring.network_connections),
+    "ops_scan_health": _tool(diagnostics.scan_health),
 }

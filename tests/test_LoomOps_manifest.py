@@ -25,7 +25,24 @@ def test_manifest_declares_expected_env():
         "LOOMOPS_ALLOWED_PATHS",
         "LOOMOPS_AUDIT_LOG",
         "LOOMOPS_COMMAND_TIMEOUT",
+        "LOOMOPS_LOG_ROOTS",
+        "LOOMOPS_MAX_LOG_LINES",
+        "LOOMOPS_CPU_THRESHOLD",
+        "LOOMOPS_DISK_THRESHOLD",
+        "LOOMOPS_LOAD_THRESHOLD",
     } <= env_names
+
+
+def test_manifest_declares_host_observability():
+    data = load_manifest(LOOMOPS_DIR)
+    permissions = data["permissions"]
+    assert permissions["pid"] == "host"
+    assert "SYSLOG" in permissions["cap_add"]
+    assert "SYS_PTRACE" not in permissions["cap_add"]
+    assert "DAC_READ_SEARCH" not in permissions["cap_add"]
+    targets = {mount["target"] for mount in permissions["mounts"]}
+    assert "/host/var/log" in targets
+    assert all(mount["mode"] == "ro" for mount in permissions["mounts"])
 
 
 def test_manifest_permissions_check_returns_list():

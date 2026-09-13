@@ -16,6 +16,12 @@ EXPECTED_TOOLS = {
     "ops_systemctl_restart",
     "ops_disk_usage",
     "ops_network_status",
+    "ops_system_metrics",
+    "ops_log_search",
+    "ops_dmesg",
+    "ops_failed_units",
+    "ops_network_connections",
+    "ops_scan_health",
 }
 
 
@@ -412,3 +418,206 @@ def test_ip_addresses_parses_json(load_loomops, monkeypatch):
     )
 
     assert system_info._ip_addresses() == {"eth0": ["10.0.0.2"]}
+
+
+# === monitoring ===
+
+def _fake_host_proc(root, init_name="systemd"):
+    (root / "1").mkdir(parents=True, exist_ok=True)
+    (root / "1" / "comm").write_text(f"{init_name}\n", encoding="utf-8")
+
+
+def test_host_pid_active(load_loomops, monkeypatch, tmp_path):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    _fake_host_proc(tmp_path)
+    monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
+    assert monitoring.host_pid_active() is True
+
+
+def test_host_pid_inactive(load_loomops, monkeypatch, tmp_path):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    _fake_host_proc(tmp_path, "uvicorn")
+    monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
+    assert monitoring.host_pid_active() is False
+
+
+def test_system_metrics_shape(load_loomops, monkeypatch, tmp_path):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    (tmp_path / "loadavg").write_text("0.50 0.40 0.30 1/100 1234\n", encoding="utf-8")
+    (tmp_path / "uptime").write_text("12345.6 999.0\n", encoding="utf-8")
+    (tmp_path / "meminfo").write_text(
+        "MemTotal: 1000 kB\nMemAvailable: 400 kB\n", encoding="utf-8"
+    )
+    (tmp_path / "stat").write_text("cpu 1 2 3 4 5 6 7 8 9 10\n", encoding="utf-8")
+    monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
+    monkeypatch.setattr(monitoring, "cpu_percent", lambda: 12.5)
+
+    result = monitoring.system_metrics({})
+
+    assert result["cpu_percent"] == 12.5
+    assert result["memory_total_kb"] == 1000
+    assert result["memory_used_kb"] == 600
+    assert result["uptime_seconds"] == 12345.6
+    assert result["load_per_cpu"] is not None
+    assert "CPU:" in result["output"]
+
+
+def test_dmesg_truncates(load_loomops, monkeypatch):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
+    monkeypatch.setattr(
+        monitoring.subprocess, "run", lambda *a, **k: _Completed(stdout="a\nb\nc\n")
+    )
+
+    result = monitoring.dmesg({"lines": 2})
+
+    assert result["entries"] == ["b", "c"]
+    assert result["truncated"] is True
+
+
+def test_dmesg_missing_binary(load_loomops, monkeypatch):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="not installed"):
+        monitoring.dmesg({})
+
+
+def test_network_connections_shape(load_loomops, monkeypatch):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/usr/bin/ss")
+    monkeypatch.setattr(
+        monitoring.subprocess,
+        "run",
+        lambda *a, **k: _Completed(stdout="tcp ESTAB 0 0 1.2.3.4:22 5.6.7.8:5\n"),
+    )
+
+    result = monitoring.network_connections({})
+
+    assert result["count"] == 1
+    assert "tcp ESTAB" in result["output"]
+
+
+# === logs ===
+
+def test_log_search_files_fallback(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    (tmp_path / "syslog").write_text("hello\nERROR boom\n", encoding="utf-8")
+    monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(tmp_path))
+    monkeypatch.setattr(logs, "journal_available", lambda: False)
+
+    result = logs.log_search({"query": "error"})
+
+    assert result["source"] == "files"
+    assert result["count"] == 1
+    assert "boom" in result["output"]
+
+
+def test_log_search_journal(load_loomops, monkeypatch):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs, "journal_available", lambda: True)
+    monkeypatch.setattr(logs, "_run_journal", lambda args: "line one\nline two\n")
+
+    result = logs.log_search({"source": "journal", "query": "x"})
+
+    assert result["source"] == "journal"
+    assert result["count"] == 2
+
+
+def test_log_search_journal_unavailable_raises(load_loomops, monkeypatch):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs, "journal_available", lambda: False)
+    with pytest.raises(RuntimeError, match="journald is not available"):
+        logs.log_search({"source": "journal"})
+
+
+def test_journal_errors_files_fallback(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    (tmp_path / "app.log").write_text("all good\ncritical failure\n", encoding="utf-8")
+    monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(tmp_path))
+    monkeypatch.setattr(logs, "journal_available", lambda: False)
+
+    result = logs.journal_errors({})
+
+    assert result["source"] == "files"
+    assert result["count"] == 1
+
+
+def test_max_log_lines_clamps(load_loomops, monkeypatch):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setenv("LOOMOPS_MAX_LOG_LINES", "99999")
+    assert logs.max_log_lines() == logs.MAX_LINES
+
+
+# === diagnostics ===
+
+def _patch_quiet_health(diagnostics, monkeypatch, tmp_path):
+    monitoring = diagnostics.monitoring
+    monkeypatch.setattr(diagnostics, "failed_units", lambda: [])
+    monkeypatch.setattr(monitoring, "host_pid_active", lambda: True)
+    monkeypatch.setattr(monitoring, "cpu_percent", lambda: 1.0)
+    monkeypatch.setattr(monitoring, "load_average", lambda: (0.1, 0.1, 0.1))
+    monkeypatch.setattr(monitoring, "dmesg", lambda args: {"entries": []})
+    monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: True)
+    monkeypatch.setattr(diagnostics.logs, "_run_journal", lambda args: "")
+    monkeypatch.setattr(
+        diagnostics.logs,
+        "journal_errors",
+        lambda args: {"entries": [], "source": "journal"},
+    )
+    monkeypatch.setattr(diagnostics.logs, "log_roots", lambda: [tmp_path])
+    monkeypatch.setattr(diagnostics, "_read_mounts", lambda: [])
+
+
+def test_scan_health_healthy_report(load_loomops, monkeypatch, tmp_path):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    _patch_quiet_health(diagnostics, monkeypatch, tmp_path)
+
+    result = diagnostics.scan_health({})
+
+    assert result["summary"]["status"] == "healthy"
+    assert result["host_access"]["pid_namespace_host"] is True
+    assert result["thresholds"]["hours"] == 24
+    assert "Health scan: healthy" in result["output"]
+
+
+def test_scan_health_reports_missing_access(load_loomops, monkeypatch, tmp_path):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monitoring = diagnostics.monitoring
+    monkeypatch.setattr(diagnostics, "failed_units", lambda: ["nginx.service"])
+    monkeypatch.setattr(monitoring, "host_pid_active", lambda: False)
+    monkeypatch.setattr(monitoring, "cpu_percent", lambda: None)
+    monkeypatch.setattr(monitoring, "load_average", lambda: None)
+    monkeypatch.setattr(monitoring, "dmesg", lambda args: {"entries": []})
+    monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: False)
+    monkeypatch.setattr(
+        diagnostics.logs,
+        "journal_errors",
+        lambda args: {"entries": [], "source": "files"},
+    )
+    monkeypatch.setattr(diagnostics.logs, "log_roots", lambda: [tmp_path / "missing"])
+    monkeypatch.setattr(diagnostics, "_read_mounts", lambda: None)
+
+    result = diagnostics.scan_health({})
+
+    categories = {finding["category"] for finding in result["findings"]}
+    assert "service" in categories
+    assert result["summary"]["status"] == "critical"
+    missing = result["host_access"]["missing"]
+    assert any("PID namespace" in note for note in missing)
+    assert any("journald" in note for note in missing)
+    assert any("/proc/mounts" in note for note in missing)
+
+
+def test_failed_units_handler(load_loomops, monkeypatch, tmp_path):
+    services = load_loomops("services")["services"]
+    _patch_systemd(
+        services,
+        monkeypatch,
+        tmp_path,
+        lambda *a, **k: _Completed(stdout="nginx.service loaded failed failed\n"),
+    )
+
+    result = services.failed_units_handler({})
+
+    assert result["units"] == ["nginx.service"]
+    assert result["count"] == 1

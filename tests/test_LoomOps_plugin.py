@@ -19,6 +19,12 @@ EXPECTED_TOOLS = {
     "ops_systemctl_restart",
     "ops_disk_usage",
     "ops_network_status",
+    "ops_system_metrics",
+    "ops_log_search",
+    "ops_dmesg",
+    "ops_failed_units",
+    "ops_network_connections",
+    "ops_scan_health",
 }
 
 

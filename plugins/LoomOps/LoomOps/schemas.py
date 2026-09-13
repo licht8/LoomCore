@@ -52,7 +52,10 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "ops_list_processes",
-        "description": "List processes visible to the container from /proc, sorted by pid.",
+        "description": (
+            "List processes from /proc, sorted by pid (host-wide when the plugin "
+            "has pid: host)."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -122,5 +125,81 @@ TOOLS_SCHEMA = [
         "name": "ops_network_status",
         "description": "List network interfaces with traffic counters and addresses.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "ops_system_metrics",
+        "description": (
+            "Read-only host metrics: load average, CPU usage, memory and uptime."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "ops_log_search",
+        "description": (
+            "Search host logs — journald when reachable, otherwise files under "
+            "LOOMOPS_LOG_ROOTS. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "enum": ["auto", "journal", "files"],
+                    "default": "auto",
+                },
+                "query": {"type": "string"},
+                "since": {"type": "string", "description": "e.g. '1 hour ago'"},
+                "unit": {"type": "string"},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "ops_dmesg",
+        "description": (
+            "Read the kernel ring buffer. Read-only; may be restricted by "
+            "kernel.dmesg_restrict."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "lines": {"type": "integer", "default": 200, "maximum": 5000}
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "ops_failed_units",
+        "description": "List failed systemd units. Read-only.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "ops_network_connections",
+        "description": "List active network connections with ss. Read-only.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 200}},
+            "required": [],
+        },
+    },
+    {
+        "name": "ops_scan_health",
+        "description": (
+            "Run a read-only host health scan and return a structured report: "
+            "failed units, OOM events, high CPU, nearly-full disks, high load and "
+            "recent journal errors."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "hours": {"type": "integer", "default": 24, "maximum": 720},
+                "journal_window": {"type": "integer", "default": 60},
+                "cpu_threshold": {"type": "number", "default": 80},
+                "disk_threshold": {"type": "number", "default": 90},
+                "load_per_cpu": {"type": "number", "default": 2.0},
+            },
+            "required": [],
+        },
     },
 ]
