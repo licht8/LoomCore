@@ -162,12 +162,6 @@ export function ChatInput({
           </Button>
         )}
       </div>
-
-      {/* Static hint below the input. The submit button already rotates while
-          a request is running, so no second spinner is shown here. */}
-      <p className="relative z-10 mt-2 text-center text-xs text-muted-foreground">
-        LoomCore can execute infrastructure changes. Review tool calls before confirming.
-      </p>
     </div>
   )
 }
