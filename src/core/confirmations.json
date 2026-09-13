@@ -1,0 +1,42 @@
+{
+  "approve": [
+    "yes",
+    "yeah",
+    "yep",
+    "yup",
+    "ok",
+    "okay",
+    "sure",
+    "go",
+    "go ahead",
+    "proceed",
+    "confirm",
+    "confirmed",
+    "do it",
+    "make it so",
+    "да",
+    "ок",
+    "окей",
+    "ага",
+    "давай",
+    "го",
+    "подтверждаю"
+  ],
+  "reject": [
+    "no",
+    "nope",
+    "cancel",
+    "stop",
+    "abort",
+    "don't",
+    "do not",
+    "forget it",
+    "нет",
+    "не",
+    "стоп",
+    "отмена",
+    "отменить",
+    "не надо",
+    "не нужно"
+  ]
+}

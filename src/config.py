@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     session_secret: str = ""
     plugins_dir: str = "/app/plugins"
     plugins_state_file: str = ""
+    confirmations_file: str = ""
     model_config = {"env_file": ".env"}
 
 @lru_cache
