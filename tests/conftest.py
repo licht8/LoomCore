@@ -25,6 +25,7 @@ _MODULE_PATHS = {
     "protocol": "LoomWG.protocol",
     "server": "LoomWG.server",
     "results": "LoomWG.results",
+    "manifest": "LoomWG.manifest",
 }
 
 

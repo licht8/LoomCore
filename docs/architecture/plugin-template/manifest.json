@@ -1,0 +1,17 @@
+{
+  "id": "Example",
+  "name": "Example Plugin",
+  "version": "0.1.0",
+  "description": "Template plugin — replace with a real one.",
+  "entry": "main.py",
+  "protocol": "2024-11-05",
+  "tools_prefix": "example_",
+  "requires_core": ">=0.0.1",
+  "permissions": {
+    "cap_add": [],
+    "network_mode": "host",
+    "mounts": []
+  },
+  "env": [],
+  "internal_tools": []
+}

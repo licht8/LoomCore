@@ -15,6 +15,7 @@ from .clients.client import (
     remove_client_artifacts,
     store_client_record,
 )
+from .manifest import runtime_report
 from .ops import service as service_mode
 from .ops.install import dependency_report, install_wireguard, setup_server
 from .ops.lifecycle import format_lifecycle, restart, start, stop
@@ -206,20 +207,36 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         and checks["link_present"]
         and prerequisites["ready"]
     )
+
+    manifest_report = runtime_report()
+    manifest = manifest_report["manifest"] or {}
+    checks["manifest"] = manifest
+    checks["manifest_issues"] = manifest_report["issues"]
+    checks["permission_warnings"] = manifest_report["permission_warnings"]
+
     lines = [
         f"WireGuard installed: {'yes' if checks['wg_installed'] else 'no'}",
         prerequisites_line,
         f"{interface} active: {'yes' if checks['active'] else 'no'}",
         f"Network link present: {'yes' if checks['link_present'] else 'no'}",
         f"Configuration found: {'yes' if checks['config_present'] else 'no'}",
-        (
-            "Server setup required: use wg_setup_server "
-            "with defaults or provide your own"
-            if checks["setup_required"]
-            else ""
-        ),
-        f"Result: {'OK' if checks['healthy'] else 'PROBLEM'}",
     ]
+    if checks["setup_required"]:
+        lines.append(
+            "Server setup required: use wg_setup_server with defaults or provide your own"
+        )
+    if manifest:
+        lines.append(
+            f"Manifest: {manifest.get('name', '?')} {manifest.get('version', '')}".rstrip()
+        )
+    else:
+        lines.append("Manifest: not found")
+    lines.extend(f"Manifest issue: {issue}" for issue in manifest_report["issues"])
+    lines.extend(
+        f"Permission warning: {warning}"
+        for warning in manifest_report["permission_warnings"]
+    )
+    lines.append(f"Result: {'OK' if checks['healthy'] else 'PROBLEM'}")
     return text_result("\n".join(lines), **checks)
 
 

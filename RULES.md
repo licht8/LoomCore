@@ -153,6 +153,11 @@ The host (VDS) may run other containers.
 Each plugin is a separate project in `plugins/<id>/`.
 Main file: `main.py`.
 
+- **Manifest:** every plugin ships a `manifest.json` (id, name, version,
+  description, entry, protocol, permissions, env) — see
+  `docs/architecture/PLUGIN_MANIFEST.md`. It is plugin-local metadata: the plugin
+  validates it against its own runtime and warns; the core does not enforce it.
+
 - **Start:** the script is launched by the hub -> reads `stdin`.
 - **Initialization:** it sends JSON `{"method": "initialize", ...}`.
 - **Tools Schema:** the plugin reports its tools (JSON Schema) to the hub via `tools/list`.

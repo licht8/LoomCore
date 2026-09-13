@@ -13,6 +13,16 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
   admin-only links (`/api/artifacts/<name>/{config,qr}`) and rebuilt from the
   stored key when missing.
 
+## Manifest & self-check
+
+`plugins/LoomWG/manifest.json` declares the plugin id/version, tool prefix, the
+capabilities/mounts/network mode it needs, and its environment variables (schema:
+`docs/architecture/PLUGIN_MANIFEST.md`). At startup `LoomWG/manifest.py` validates
+it against the folder name and the actual container runtime (effective caps,
+mounted paths, host networking) and logs a warning on every mismatch — startup is
+never blocked. `wg_diagnostics` reports the manifest version and the same
+warnings.
+
 ## Layout
 
 `plugins/LoomWG/main.py` is a thin launcher (`from LoomWG.server import run_server`).

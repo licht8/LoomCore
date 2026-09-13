@@ -1,0 +1,38 @@
+{
+  "id": "LoomWG",
+  "name": "WireGuard",
+  "version": "0.1.0",
+  "description": "Manage WireGuard interfaces, peers and client configs.",
+  "entry": "main.py",
+  "protocol": "2024-11-05",
+  "tools_prefix": "wg_",
+  "requires_core": ">=0.0.1",
+  "permissions": {
+    "cap_add": ["NET_ADMIN", "NET_RAW", "SYS_MODULE"],
+    "network_mode": "host",
+    "mounts": [
+      {"source": "/etc/wireguard", "target": "/etc/wireguard", "mode": "rw"},
+      {"source": "/lib/modules", "target": "/lib/modules", "mode": "ro"}
+    ]
+  },
+  "env": [
+    {
+      "name": "LOOMWG_ENDPOINT",
+      "required": false,
+      "description": "Public endpoint host for generated client configs (auto-detected when empty)."
+    },
+    {
+      "name": "LOOMWG_CONFIG_DIR",
+      "required": false,
+      "default": "/etc/wireguard",
+      "description": "WireGuard config directory."
+    },
+    {
+      "name": "LOOMWG_SKIP_FIREWALL",
+      "required": false,
+      "default": "0",
+      "description": "Set to 1 on firewalld hosts to skip automatic firewall/NAT setup."
+    }
+  ],
+  "internal_tools": ["wg_get_client_artifact"]
+}
