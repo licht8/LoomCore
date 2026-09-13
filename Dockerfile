@@ -10,6 +10,7 @@ RUN apt-get update \
         qrencode \
         iptables \
         nftables \
+        systemd \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .

@@ -33,11 +33,15 @@ services:
     # Host networking is required so the WireGuard interface and firewall/NAT
     # live in the host network namespace and external peers can connect.
     network_mode: host
-    # Least privilege: only what WireGuard needs.
+    # Host PID namespace lets LoomOps read the host's processes and systemd units
+    # (read-only observability; see docs/plugins/LoomOps.md).
+    pid: host
+    # Least privilege: only what WireGuard and LoomOps observability need.
     cap_add:
       - NET_ADMIN
       - NET_RAW
       - SYS_MODULE
+      - SYSLOG
     security_opt:
       - no-new-privileges:false
     environment:
@@ -57,12 +61,33 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       ADMIN_TOTP_SECRET: ${ADMIN_TOTP_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # LoomOps is deny-by-default; empty command/path allowlists allow nothing.
+      LOOMOPS_ALLOWED_COMMANDS: ${LOOMOPS_ALLOWED_COMMANDS:-}
+      LOOMOPS_ALLOWED_PATHS: ${LOOMOPS_ALLOWED_PATHS:-}
+      LOOMOPS_AUDIT_LOG: ${LOOMOPS_AUDIT_LOG:-}
+      LOOMOPS_COMMAND_TIMEOUT: ${LOOMOPS_COMMAND_TIMEOUT:-30}
+      # Host observability defaults (read-only); see docs/plugins/LoomOps.md.
+      LOOMOPS_LOG_ROOTS: ${LOOMOPS_LOG_ROOTS:-/host/var/log}
+      LOOMOPS_MAX_LOG_LINES: ${LOOMOPS_MAX_LOG_LINES:-200}
+      LOOMOPS_CPU_THRESHOLD: ${LOOMOPS_CPU_THRESHOLD:-80}
+      LOOMOPS_DISK_THRESHOLD: ${LOOMOPS_DISK_THRESHOLD:-90}
+      LOOMOPS_LOAD_THRESHOLD: ${LOOMOPS_LOAD_THRESHOLD:-2.0}
+      PLUGINS_STATE_FILE: ${PLUGINS_STATE_FILE:-}
     # API binds to loopback only; nginx is the single public entrypoint.
     command: uvicorn src.main:app --host 127.0.0.1 --port 8000
     volumes:
       # :z relabels for SELinux (RHEL/Rocky); harmless on other distros.
       - /etc/wireguard:/etc/wireguard:z
       - /lib/modules:/lib/modules:ro
+      # Read-only host observability for LoomOps. Host paths are mounted under
+      # /host/... so the container's own /etc and /var are not shadowed. On
+      # SELinux hosts, relabel with `chcon`/`ausearch` — never `:z` on host
+      # /etc or /var/log.
+      - /var/log:/host/var/log:ro
+      - /var/log/journal:/host/journal:ro
+      - /run/systemd:/run/systemd:ro
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /etc:/host/etc:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 15s
