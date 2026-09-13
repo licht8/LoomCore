@@ -6,8 +6,7 @@ import logging
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from src.api.deps import extract_admin_token
-from src.core.security import require_admin_token
+from src.api.deps import require_admin_token_from_request
 from src.plugins import plugin_manager
 
 logger = logging.getLogger("loomcore.api.artifacts")
@@ -23,7 +22,7 @@ async def download_artifact(
     access_token: str | None = Query(default=None),
 ):
     """Serve a client's config/QR by name (admin-only, rebuilt on demand)."""
-    require_admin_token(extract_admin_token(request, access_token=access_token))
+    require_admin_token_from_request(request, access_token=access_token)
     if kind not in {"config", "qr"}:
         return JSONResponse(status_code=404, content={"error": "Artifact not found"})
     try:

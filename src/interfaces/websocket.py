@@ -3,13 +3,29 @@ import contextlib
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
-from urllib.parse import quote
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from src.core.security import classify_tool_risk
 from src.db.database import async_session_factory
-from src.db.session import add_message, ensure_session
+from src.db.session import ensure_session
+from src.interfaces.tool_events import (
+    approval_request_payload,
+    tool_call_payload,
+    tool_success_payload,
+)
+from src.interfaces.tool_events import (
+    build_artifacts as _build_artifacts,
+)
+from src.interfaces.tool_events import (
+    extract_text as _extract_text,
+)
+from src.interfaces.tool_events import (
+    save_tool_message as _save_tool_message,
+)
+from src.interfaces.tool_events import (
+    tool_error_payload as _tool_error_payload,
+)
 from src.llm.client import LlmError
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
@@ -26,108 +42,6 @@ Send = Callable[[dict], Awaitable[None]]
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
     """Run a tool through the plugin that owns it."""
     return await plugin_manager.execute_tool_by_name(tool_name, arguments)
-
-
-def _extract_text(raw_result: dict) -> str:
-    """Extract text from an MCP result ({"content": [{"type": "text", ...}]})."""
-    if isinstance(raw_result, dict) and "content" in raw_result:
-        return "".join(
-            item.get("text", "")
-            for item in raw_result["content"]
-            if item.get("type") == "text"
-        )
-    return str(raw_result)
-
-
-def _build_artifacts(raw_result: dict) -> list[dict] | None:
-    """Build durable download links for any tool result exposing client artifacts.
-
-    Links are keyed by client name (``/api/artifacts/<name>/<kind>``), so they
-    survive plugin restarts and browser reloads.
-    """
-    if not isinstance(raw_result, dict):
-        return None
-    data = raw_result.get("data")
-    if not isinstance(data, dict):
-        return None
-
-    entries: list[dict] = []
-    clients = data.get("clients")
-    if isinstance(clients, list):
-        entries.extend(entry for entry in clients if isinstance(entry, dict))
-    elif data.get("name"):
-        entries.append(data)
-
-    artifacts: list[dict] = []
-    for entry in entries:
-        name = str(entry.get("name") or "").strip()
-        if not name:
-            continue
-        quoted = quote(name, safe="")
-        config_ready = bool(entry.get("config_ready") or entry.get("client_config"))
-        qr_ready = bool(entry.get("qr_ready") or entry.get("qr_code"))
-        if config_ready:
-            artifacts.append(
-                {
-                    "label": f"Configuration: {name}",
-                    "url": f"/api/artifacts/{quoted}/config",
-                }
-            )
-        if qr_ready:
-            artifacts.append(
-                {
-                    "label": f"QR code: {name}",
-                    "url": f"/api/artifacts/{quoted}/qr",
-                }
-            )
-    return artifacts or None
-
-
-async def _save_tool_message(
-    session_id: str,
-    tool_name: str,
-    arguments: dict | None,
-    content: str,
-    *,
-    status: str = "success",
-    summary: str = "Done",
-    risk: str | None = None,
-    artifacts: list[dict] | None = None,
-) -> None:
-    """Save a tool call and its terminal state to the session history.
-
-    The UI restores tool cards from ``tool_calls`` after a reload, so status,
-    summary, risk and artifacts all live inside that JSON (no schema change).
-    """
-    entry: dict = {
-        "name": tool_name,
-        "arguments": arguments,
-        "status": status,
-        "summary": summary,
-    }
-    if risk:
-        entry["risk"] = risk
-    if artifacts:
-        entry["artifacts"] = artifacts
-    async with async_session_factory() as db:
-        await add_message(db, session_id, "tool", content, tool_calls=[entry])
-
-
-def _tool_error_payload(
-    tool_name: str, message: str, risk: str | None = None
-) -> dict:
-    """Terminal tool_response marking a tool call as failed."""
-    payload = {
-        "type": "tool_response",
-        "tool": tool_name,
-        "content": message,
-        "result": message,
-        "status": "error",
-        "summary": "Error",
-    }
-    if risk:
-        payload["risk"] = risk
-    return payload
 
 
 async def _run_tool_and_notify(
@@ -153,18 +67,7 @@ async def _run_tool_and_notify(
         artifacts=artifacts,
     )
 
-    payload = {
-        "type": "tool_response",
-        "tool": tool_name,
-        "content": content_text,
-        "result": content_text,
-        "status": "success",
-        "summary": "Done",
-        "artifacts": artifacts,
-    }
-    if risk:
-        payload["risk"] = risk
-    await send(payload)
+    await send(tool_success_payload(tool_name, content_text, risk, artifacts))
 
 
 async def _run_tool_safely(
@@ -206,18 +109,6 @@ async def _run_tool_safely(
     else:
         if tracker is not None:
             tracker["tool"] = None
-
-
-async def _process_approve(
-    send: Send,
-    session_id: str,
-    tool_name: str,
-    arguments: dict | None,
-    tracker: dict | None = None,
-) -> None:
-    await _run_tool_safely(
-        send, session_id, tool_name, arguments, tracker=tracker
-    )
 
 
 async def _guarded(coro) -> None:
@@ -272,28 +163,10 @@ async def _process_user_message(
 
     # Classify the risk
     risk = classify_tool_risk(tool_name)
-    await send(
-        {
-            "type": "tool_call",
-            "tool": tool_name,
-            "args": tool_args,
-            "content": f"Calling tool: {tool_name}",
-            "status": "running",
-            "summary": "Running…",
-        }
-    )
+    await send(tool_call_payload(tool_name, tool_args))
 
     if risk == "dangerous":
-        await send(
-            {
-                "type": "approval_request",
-                "tool": tool_name,
-                "args": tool_args,
-                "risk": "dangerous",
-                "action": tool_name,
-                "content": f"Confirm running tool: {tool_name}",
-            }
-        )
+        await send(approval_request_payload(tool_name, tool_args))
     else:
         # Safe/Moderate — run automatically through the plugin
         await _run_tool_safely(
@@ -393,7 +266,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     continue
                 tool = data.get("tool", "unknown")
                 tool_args = data.get("args") or {}
-                start(_process_approve(send, session_id, tool, tool_args, tracker))
+                start(_run_tool_safely(send, session_id, tool, tool_args, tracker=tracker))
                 continue
 
             # Regular text message from the user

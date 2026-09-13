@@ -34,8 +34,9 @@ class _DummyContext:
 
 
 def _patch_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sessions_api, "extract_admin_token", lambda *a, **k: None)
-    monkeypatch.setattr(sessions_api, "require_admin_token", lambda token: None)
+    monkeypatch.setattr(
+        sessions_api, "require_admin_token_from_request", lambda *a, **k: None
+    )
 
 
 def _patch_history(monkeypatch: pytest.MonkeyPatch, messages: list) -> None:

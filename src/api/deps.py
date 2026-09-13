@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from src.auth import SESSION_COOKIE
+from src.core.security import require_admin_token
 
 
 def extract_admin_token(
@@ -18,6 +19,15 @@ def extract_admin_token(
         if authorization and authorization.startswith("Bearer ")
         else None
     )
+
+
+def require_admin_token_from_request(
+    request: Request,
+    authorization: str | None = None,
+    access_token: str | None = None,
+) -> None:
+    """Validate the admin token extracted from a request (shared helper)."""
+    require_admin_token(extract_admin_token(request, authorization, access_token))
 
 
 def chat_key_func(request: Request) -> str:

@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from src.plugins.manager import PluginManager, PluginState
+from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
 
 
 class _FakeStdin:
@@ -45,17 +45,17 @@ class _FakeProc:
 
 
 def _add_plugin(manager, name="demo", *, state=PluginState.IDLE, proc=None, **extra):
-    manager._plugins[name] = {
-        "proc": proc or _FakeProc(),
-        "state": state,
-        "config": {"command": ["python"], "working_dir": None},
-        "restart_attempt": 0,
-        "max_restarts": 3,
-        "restart_delay_base": 0.0,
-        "restart_delay_max": 0.0,
-        **extra,
-    }
-    return manager._plugins[name]
+    options = {"restart_delay_base": 0.0, "restart_delay_max": 0.0, **extra}
+    plugin = ManagedPlugin(
+        name=name,
+        command=["python"],
+        working_dir=None,
+        proc=proc or _FakeProc(),
+        state=state,
+        **options,
+    )
+    manager._plugins[name] = plugin
+    return plugin
 
 
 async def _false(*args, **kwargs):
@@ -145,11 +145,9 @@ async def test_execute_tool_cancelled_restarts_plugin(monkeypatch):
             return 0
 
     proc = FakeProc()
-    manager._plugins["demo"] = {
-        "proc": proc,
-        "state": PluginState.IDLE,
-        "config": {},
-    }
+    manager._plugins["demo"] = ManagedPlugin(
+        name="demo", proc=proc, state=PluginState.IDLE
+    )
 
     async def blocking_write(plugin_name, request):
         await asyncio.Event().wait()
@@ -164,7 +162,7 @@ async def test_execute_tool_cancelled_restarts_plugin(monkeypatch):
         await task
 
     assert proc.killed is True
-    assert manager._plugins["demo"]["state"] == PluginState.STOPPED
+    assert manager._plugins["demo"].state == PluginState.STOPPED
 
 
 # === discovery ===
@@ -192,7 +190,7 @@ def test_discover_plugins_skips_already_registered(monkeypatch, tmp_path):
     (tmp_path / "alpha" / "main.py").write_text("", encoding="utf-8")
 
     manager = PluginManager()
-    manager._plugins["alpha"] = {}
+    manager._plugins["alpha"] = ManagedPlugin(name="alpha")
     monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("should not register"))
 
     assert manager.discover_plugins(str(tmp_path)) == []
@@ -213,7 +211,7 @@ def test_is_healthy_marks_dead_process_stopped():
     plugin = _add_plugin(manager, proc=_FakeProc(alive=False))
 
     assert manager.is_healthy("demo") is False
-    assert plugin["state"] == PluginState.STOPPED
+    assert plugin.state == PluginState.STOPPED
 
 
 def test_is_healthy_true_for_alive():
@@ -257,7 +255,7 @@ async def test_restart_exhausts_attempts():
     plugin = _add_plugin(manager, restart_attempt=3, max_restarts=3)
 
     assert await manager._restart_plugin("demo") is False
-    assert plugin["state"] == PluginState.STOPPED
+    assert plugin.state == PluginState.STOPPED
 
 
 @pytest.mark.asyncio
@@ -272,8 +270,8 @@ async def test_restart_success(monkeypatch):
     monkeypatch.setattr(manager, "_rebuild_tool_cache", lambda name, tools: rebuilt.append(name))
 
     assert await manager._restart_plugin("demo") is True
-    assert plugin["state"] == PluginState.IDLE
-    assert plugin["restart_attempt"] == 1
+    assert plugin.state == PluginState.IDLE
+    assert plugin.restart_attempt == 1
     assert rebuilt == ["demo"]
 
 
@@ -292,7 +290,7 @@ async def test_restart_failure_marks_stopped(monkeypatch):
     monkeypatch.setattr(manager, "_rebuild_tool_cache", boom)
 
     assert await manager._restart_plugin("demo") is False
-    assert plugin["state"] == PluginState.STOPPED
+    assert plugin.state == PluginState.STOPPED
 
 
 # === _write_request ===
@@ -320,7 +318,7 @@ async def test_write_request_dead_process_raises():
 
     with pytest.raises(RuntimeError, match="unavailable"):
         await manager._write_request("demo", {"method": "x"})
-    assert plugin["state"] == PluginState.STOPPED
+    assert plugin.state == PluginState.STOPPED
 
 
 @pytest.mark.asyncio
@@ -378,7 +376,7 @@ async def test_execute_tool_success(monkeypatch):
     result = await manager.execute_tool("demo", "wg_interface_status")
 
     assert result == {"ok": True}
-    assert manager._plugins["demo"]["state"] == PluginState.IDLE
+    assert manager._plugins["demo"].state == PluginState.IDLE
 
 
 @pytest.mark.asyncio
@@ -422,7 +420,7 @@ async def test_execute_tool_timeout_kills_process(monkeypatch):
         await manager.execute_tool("demo", "wg_interface_status")
 
     assert proc.killed is True
-    assert manager._plugins["demo"]["state"] == PluginState.STOPPED
+    assert manager._plugins["demo"].state == PluginState.STOPPED
 
 
 @pytest.mark.asyncio

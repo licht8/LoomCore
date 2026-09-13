@@ -58,8 +58,9 @@ def test_build_artifacts_quotes_names():
 
 
 def _patch_auth(monkeypatch):
-    monkeypatch.setattr(artifacts_api, "extract_admin_token", lambda *a, **k: None)
-    monkeypatch.setattr(artifacts_api, "require_admin_token", lambda token: None)
+    monkeypatch.setattr(
+        artifacts_api, "require_admin_token_from_request", lambda *a, **k: None
+    )
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from time import time
@@ -26,12 +27,27 @@ class PluginState(StrEnum):
     STOPPED = "stopped"
 
 
+@dataclass
+class ManagedPlugin:
+    """Runtime record for a single launched plugin subprocess."""
+
+    name: str
+    command: list[str] = field(default_factory=list)
+    working_dir: str | None = None
+    proc: subprocess.Popen | None = None
+    state: PluginState = PluginState.IDLE
+    restart_attempt: int = 0
+    max_restarts: int = 3
+    restart_delay_base: float = 1.0
+    restart_delay_max: float = 30.0
+    tools: list[dict] = field(default_factory=list)
+
+
 class PluginManager:
     """Manage plugins: launch, MCP transport, tool invocation."""
 
     def __init__(self):
-        # name -> {"proc": subprocess, "state": PluginState, "config": {...}}
-        self._plugins: dict[str, dict] = {}
+        self._plugins: dict[str, ManagedPlugin] = {}
         self._tool_plugins: dict[str, str] = {}
         # Tools marked "internal": True (available only to the core, not the LLM)
         self._internal_tools: dict[str, str] = {}
@@ -39,6 +55,17 @@ class PluginManager:
         # Tool call limit: tool_name -> [timestamps]
         self._tool_calls: dict[str, list[float]] = defaultdict(list)
         self._max_tool_calls_per_minute = 10
+
+    def _spawn(self, command: list[str], working_dir: str | None) -> subprocess.Popen:
+        """Launch a plugin subprocess with the standard stdio pipes."""
+        return subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=working_dir,
+        )
 
     def register(
         self,
@@ -53,26 +80,13 @@ class PluginManager:
             command: Launch command [python, path_to_main.py].
             working_dir: Plugin working directory.
         """
-        proc = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=working_dir,
+        proc = self._spawn(command, working_dir)
+        self._plugins[name] = ManagedPlugin(
+            name=name,
+            command=command,
+            working_dir=working_dir,
+            proc=proc,
         )
-        self._plugins[name] = {
-            "proc": proc,
-            "state": PluginState.IDLE,
-            "config": {
-                "command": command,
-                "working_dir": working_dir,
-            },
-            "restart_attempt": 0,
-            "max_restarts": 3,
-            "restart_delay_base": 1.0,
-            "restart_delay_max": 30.0,
-        }
         logger.info(f"Plugin '{name}' started (PID: {proc.pid})")
 
     def discover_plugins(self, plugins_dir: str = "plugins") -> list[str]:
@@ -90,6 +104,24 @@ class PluginManager:
 
     def plugin_names(self) -> list[str]:
         return list(self._plugins)
+
+    # ------------------------------------------------------------------
+    # Process state helpers
+    # ------------------------------------------------------------------
+
+    def _mark_stopped_if_dead(self, plugin: ManagedPlugin, *, detail: str = "") -> bool:
+        """Mark a plugin STOPPED if its subprocess has exited.
+
+        Returns True when the process is dead (or already STOPPED), so callers
+        can react uniformly instead of repeating the same poll() check.
+        """
+        if plugin.proc is not None and plugin.proc.poll() is not None:
+            if plugin.state != PluginState.STOPPED:
+                suffix = f" {detail}" if detail else ""
+                logger.warning(f"Plugin '{plugin.name}' process is dead{suffix}; marking STOPPED")
+                plugin.state = PluginState.STOPPED
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Task 1: Plugin auto-restart
@@ -112,22 +144,22 @@ class PluginManager:
             return False
 
         # Check the restart limit
-        if plugin["restart_attempt"] >= plugin["max_restarts"]:
+        if plugin.restart_attempt >= plugin.max_restarts:
             logger.error(
                 f"Plugin '{plugin_name}' exhausted restart attempts "
-                f"({plugin['restart_attempt']}/{plugin['max_restarts']})"
+                f"({plugin.restart_attempt}/{plugin.max_restarts})"
             )
-            plugin["state"] = PluginState.STOPPED
+            plugin.state = PluginState.STOPPED
             return False
 
-        plugin["restart_attempt"] += 1
-        attempt = plugin["restart_attempt"]
-        base_delay = plugin["restart_delay_base"]
-        max_delay = plugin["restart_delay_max"]
-        delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+        plugin.restart_attempt += 1
+        attempt = plugin.restart_attempt
+        delay = min(
+            plugin.restart_delay_base * (2 ** (attempt - 1)), plugin.restart_delay_max
+        )
 
         logger.info(
-            f"Restarting plugin '{plugin_name}' ({attempt}/{plugin['max_restarts']}), "
+            f"Restarting plugin '{plugin_name}' ({attempt}/{plugin.max_restarts}), "
             f"delay {delay:.1f}s"
         )
 
@@ -136,7 +168,7 @@ class PluginManager:
 
         try:
             # Kill the old process if it is still alive
-            old_proc = plugin["proc"]
+            old_proc = plugin.proc
             if old_proc and old_proc.poll() is None:
                 old_proc.terminate()
                 try:
@@ -145,12 +177,8 @@ class PluginManager:
                     old_proc.kill()
                     old_proc.wait()
 
-            # Launch the subprocess again via register (update the dict)
-            self._do_register_inplace(
-                plugin_name,
-                plugin["config"]["command"],
-                plugin["config"]["working_dir"],
-            )
+            # Launch the subprocess again in place
+            self._do_register_inplace(plugin_name, plugin.command, plugin.working_dir)
 
             # Wait for initialize
             await self._initialize_plugin(plugin_name)
@@ -161,28 +189,21 @@ class PluginManager:
             # Refresh the tool cache
             self._rebuild_tool_cache(plugin_name, tools)
 
-            plugin["state"] = PluginState.IDLE
+            plugin.state = PluginState.IDLE
             logger.info(f"Plugin '{plugin_name}' restarted successfully")
             return True
 
         except Exception as exc:
             logger.error(f"Failed to restart plugin '{plugin_name}': {exc}")
-            plugin["state"] = PluginState.STOPPED
+            plugin.state = PluginState.STOPPED
             return False
 
     def _do_register_inplace(self, name: str, command: list[str], working_dir: str | None):
-        """Launch the subprocess again, keeping the dict keys (not replacing the ref)."""
-        proc = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=working_dir,
-        )
+        """Launch the subprocess again, keeping the same ManagedPlugin record."""
+        proc = self._spawn(command, working_dir)
         plugin = self._plugins[name]
-        plugin["proc"] = proc
-        plugin["state"] = PluginState.IDLE
+        plugin.proc = proc
+        plugin.state = PluginState.IDLE
         logger.info(f"Plugin '{name}' subprocess restarted (PID: {proc.pid})")
 
     async def _initialize_plugin(self, plugin_name: str) -> None:
@@ -191,8 +212,8 @@ class PluginManager:
         line = json.dumps(request, ensure_ascii=False) + "\n"
 
         plugin = self._plugins[plugin_name]
-        plugin["proc"].stdin.write(line)
-        plugin["proc"].stdin.flush()
+        plugin.proc.stdin.write(line)
+        plugin.proc.stdin.flush()
 
         # Wait for the response for up to 10 seconds
         try:
@@ -205,6 +226,20 @@ class PluginManager:
             logger.warning(f"Plugin '{plugin_name}' initialization timed out (10s)")
             raise
 
+    def _index_tools(self, plugin_name: str, tools: list[dict]) -> list[dict]:
+        """Cache a plugin's tools; return the LLM-facing (non-internal) tools."""
+        external: list[dict] = []
+        for tool in tools:
+            tool_name = tool.get("name")
+            if not tool_name:
+                continue
+            if tool.get("internal"):
+                self._internal_tools[tool_name] = plugin_name
+            else:
+                self._tool_plugins[tool_name] = plugin_name
+                external.append(tool)
+        return external
+
     def _rebuild_tool_cache(self, plugin_name: str, tools: list[dict]) -> None:
         """Rebuild the plugin's tool caches (drop old entries, add new ones)."""
         # Remove this plugin's old entries
@@ -214,12 +249,7 @@ class PluginManager:
                 del cache[name]
 
         # Add new ones: internal — core only, the rest — for the LLM
-        for tool in tools:
-            tool_name = tool.get("name")
-            if not tool_name:
-                continue
-            cache = self._internal_tools if tool.get("internal") else self._tool_plugins
-            cache[tool_name] = plugin_name
+        self._index_tools(plugin_name, tools)
 
     # ------------------------------------------------------------------
     # Task 2: is_healthy / get_plugin_status methods
@@ -236,14 +266,9 @@ class PluginManager:
             False — the plugin is missing, dead, or stopped.
         """
         plugin = self._plugins.get(plugin_name)
-        if not plugin:
+        if not plugin or plugin.state == PluginState.STOPPED:
             return False
-        if plugin["state"] == PluginState.STOPPED:
-            return False
-        if plugin["proc"].poll() is not None:
-            plugin["state"] = PluginState.STOPPED
-            return False
-        return True
+        return not self._mark_stopped_if_dead(plugin)
 
     def get_plugin_status(self, plugin_name: str) -> dict:
         """Return plugin status in the API format.
@@ -261,13 +286,13 @@ class PluginManager:
                 "is_healthy": False,
             }
 
-        pid = plugin["proc"].pid
+        pid = plugin.proc.pid
         healthy = self.is_healthy(plugin_name)
         return {
             "name": plugin_name,
-            "state": plugin["state"].value,
+            "state": plugin.state.value,
             "pid": pid,
-            "restart_attempt": plugin["restart_attempt"],
+            "restart_attempt": plugin.restart_attempt,
             "is_healthy": healthy,
         }
 
@@ -287,25 +312,22 @@ class PluginManager:
         if not plugin:
             raise ValueError(f"Plugin '{plugin_name}' is not registered")
 
-        if plugin["state"] == PluginState.BUSY:
+        if plugin.state == PluginState.BUSY:
             raise RuntimeError(f"Plugin '{plugin_name}' is busy (30s timeout)")
 
         # Check whether the process is dead
-        if plugin["proc"].poll() is not None:
-            if plugin["state"] != PluginState.STOPPED:
-                logger.warning(f"Plugin '{plugin_name}' process is dead; marking STOPPED")
-                plugin["state"] = PluginState.STOPPED
+        if self._mark_stopped_if_dead(plugin):
             raise RuntimeError(f"Plugin '{plugin_name}' is unavailable (dead process)")
 
         request["id"] = request.get("id") or str(uuid.uuid4())
         line = json.dumps(request, ensure_ascii=False)
 
         try:
-            plugin["proc"].stdin.write(line + "\n")
-            plugin["proc"].stdin.flush()
+            plugin.proc.stdin.write(line + "\n")
+            plugin.proc.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             logger.error(f"BrokenPipeError for plugin '{plugin_name}' on write: {exc}")
-            plugin["state"] = PluginState.STOPPED
+            plugin.state = PluginState.STOPPED
 
             # Try to restart
             logger.info(f"Attempting auto-restart of plugin '{plugin_name}' from _write_request")
@@ -317,8 +339,8 @@ class PluginManager:
             plugin = self._plugins[plugin_name]
             logger.info(f"Retrying write after restarting plugin '{plugin_name}'")
             try:
-                plugin["proc"].stdin.write(line + "\n")
-                plugin["proc"].stdin.flush()
+                plugin.proc.stdin.write(line + "\n")
+                plugin.proc.stdin.flush()
             except (BrokenPipeError, OSError) as retry_exc:
                 logger.error(f"BrokenPipeError on retry for plugin '{plugin_name}': {retry_exc}")
                 raise RuntimeError(f"Plugin '{plugin_name}' is unavailable (broken input stream)") from retry_exc
@@ -332,10 +354,10 @@ class PluginManager:
             raise ValueError(f"Plugin '{plugin_name}' is not registered")
 
         while True:
-            line = plugin["proc"].stdout.readline()
+            line = plugin.proc.stdout.readline()
             if not line:
                 logger.error(f"Plugin '{plugin_name}' terminated")
-                plugin["state"] = PluginState.STOPPED
+                plugin.state = PluginState.STOPPED
                 raise RuntimeError(f"Plugin '{plugin_name}' terminated")
 
             response = json.loads(line.strip())
@@ -349,16 +371,7 @@ class PluginManager:
         """
         plugin = self._plugins.get(plugin_name)
 
-        # Check whether the process is dead
-        if (
-            plugin
-            and plugin["proc"].poll() is not None
-            and plugin["state"] != PluginState.STOPPED
-        ):
-            logger.warning(f"Plugin '{plugin_name}' process is dead; marking STOPPED")
-            plugin["state"] = PluginState.STOPPED
-
-        if not plugin or plugin["state"] == PluginState.STOPPED:
+        if not plugin or self._mark_stopped_if_dead(plugin) or plugin.state == PluginState.STOPPED:
             logger.info(f"Attempting auto-restart of plugin '{plugin_name}' before get_tools")
             success = await self._restart_plugin(plugin_name)
             if not success:
@@ -366,13 +379,13 @@ class PluginManager:
             plugin = self._plugins[plugin_name]
 
         # Check again — in case the restart failed
-        if plugin["state"] == PluginState.STOPPED or plugin["proc"].poll() is not None:
+        if self._mark_stopped_if_dead(plugin) or plugin.state == PluginState.STOPPED:
             raise RuntimeError(f"Plugin '{plugin_name}' is unavailable (dead process)")
 
         try:
             request = {"jsonrpc": "2.0", "method": "tools/list"}
             await self._write_request(plugin_name, request)
-            plugin["state"] = PluginState.BUSY
+            plugin.state = PluginState.BUSY
             response = await asyncio.wait_for(
                 asyncio.to_thread(self._read_response, plugin_name),
                 timeout=30,
@@ -380,8 +393,8 @@ class PluginManager:
             result = response.get("result", {})
             return result.get("tools", [])
         finally:
-            if plugin["state"] == PluginState.BUSY:
-                plugin["state"] = PluginState.IDLE
+            if plugin.state == PluginState.BUSY:
+                plugin.state = PluginState.IDLE
 
     async def get_all_tools(self) -> list[dict]:
         """Fetch tools from all registered plugins.
@@ -393,15 +406,8 @@ class PluginManager:
         failed_plugins: list[str] = []
         for plugin_name in self.plugin_names():
             try:
-                for tool in await self.get_tools(plugin_name):
-                    tool_name = tool.get("name")
-                    if not tool_name:
-                        continue
-                    if tool.get("internal"):
-                        self._internal_tools[tool_name] = plugin_name
-                        continue
-                    self._tool_plugins[tool_name] = plugin_name
-                    all_tools.append(tool)
+                tools = await self.get_tools(plugin_name)
+                all_tools.extend(self._index_tools(plugin_name, tools))
             except Exception as exc:
                 logger.warning(f"Failed to fetch tools for plugin '{plugin_name}': {exc}")
                 failed_plugins.append(plugin_name)
@@ -410,19 +416,11 @@ class PluginManager:
         for plugin_name in failed_plugins:
             logger.info(f"Attempting auto-restart of plugin '{plugin_name}' from get_all_tools")
             try:
-                success = await self._restart_plugin(plugin_name)
-                if success:
-                    # The _tool_plugins cache was already refreshed via _rebuild_tool_cache()
-                    # Re-read tools only to return them in all_tools
-                    for tool in await self.get_tools(plugin_name):
-                        tool_name = tool.get("name")
-                        if not tool_name:
-                            continue
-                        if tool.get("internal"):
-                            self._internal_tools[tool_name] = plugin_name
-                            continue
-                        self._tool_plugins[tool_name] = plugin_name
-                        all_tools.append(tool)
+                if await self._restart_plugin(plugin_name):
+                    # _restart_plugin already refreshed the tool cache; re-read the
+                    # tools only to include them in the returned list.
+                    tools = await self.get_tools(plugin_name)
+                    all_tools.extend(self._index_tools(plugin_name, tools))
             except Exception as inner_exc:
                 logger.error(f"Failed to restart plugin '{plugin_name}' from get_all_tools: {inner_exc}")
 
@@ -467,12 +465,9 @@ class PluginManager:
         """
         plugin = self._plugins.get(plugin_name)
 
-        # Check whether the process is dead (unless STOPPED)
-        if plugin and plugin["proc"].poll() is not None and plugin["state"] != PluginState.STOPPED:
-            logger.warning(f"Plugin '{plugin_name}' process is dead while calling '{tool_name}'")
-            plugin["state"] = PluginState.STOPPED
-
-        if not plugin or plugin["state"] == PluginState.STOPPED:
+        if not plugin or self._mark_stopped_if_dead(
+            plugin, detail=f"while calling '{tool_name}'"
+        ) or plugin.state == PluginState.STOPPED:
             # Try auto-restart
             logger.info(f"Attempting auto-restart of plugin '{plugin_name}' before calling '{tool_name}'")
             success = await self._restart_plugin(plugin_name)
@@ -507,7 +502,7 @@ class PluginManager:
 
         try:
             await self._write_request(plugin_name, request)
-            plugin["state"] = PluginState.BUSY
+            plugin.state = PluginState.BUSY
             response = await asyncio.wait_for(
                 asyncio.to_thread(self._read_response, plugin_name),
                 timeout=30,
@@ -528,15 +523,15 @@ class PluginManager:
             raise
         except TimeoutError:
             logger.warning(f"30s timeout for plugin '{plugin_name}' — killing process")
-            plugin["proc"].kill()
-            plugin["state"] = PluginState.STOPPED
+            plugin.proc.kill()
+            plugin.state = PluginState.STOPPED
             raise TimeoutError(
                 f"Call to '{tool_name}' in '{plugin_name}' timed out (30s)"
             ) from None
 
         finally:
-            if plugin["state"] == PluginState.BUSY:
-                plugin["state"] = PluginState.IDLE
+            if plugin.state == PluginState.BUSY:
+                plugin.state = PluginState.IDLE
 
     def _kill_and_stop(self, plugin_name: str) -> None:
         """Kill a plugin subprocess and mark it STOPPED for the next auto-restart.
@@ -548,14 +543,14 @@ class PluginManager:
         plugin = self._plugins.get(plugin_name)
         if not plugin:
             return
-        proc = plugin.get("proc")
+        proc = plugin.proc
         if proc and proc.poll() is None:
             try:
                 proc.kill()
                 proc.wait(timeout=5)
             except Exception:
                 logger.exception(f"Failed to kill plugin '{plugin_name}'")
-        plugin["state"] = PluginState.STOPPED
+        plugin.state = PluginState.STOPPED
 
     async def execute_tool_by_name(
         self, tool_name: str, arguments: dict | None = None

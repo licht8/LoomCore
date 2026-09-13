@@ -4,8 +4,7 @@ import logging
 
 from fastapi import APIRouter, Header, Query, Request
 
-from src.api.deps import extract_admin_token
-from src.core.security import require_admin_token
+from src.api.deps import require_admin_token_from_request
 from src.db.database import async_session_factory
 from src.db.session import clear_session_history, get_session_history
 
@@ -35,7 +34,7 @@ async def get_messages(
     access_token: str | None = Query(default=None),
 ):
     """Return the stored history of a chat session (oldest first)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token_from_request(request, authorization, access_token)
     async with async_session_factory() as db:
         messages = await get_session_history(db, session_id, limit=limit)
     return {"session_id": session_id, "messages": [_serialize(m) for m in messages]}
@@ -49,7 +48,7 @@ async def delete_messages(
     access_token: str | None = Query(default=None),
 ):
     """Delete all messages in a session (resets the assistant's memory)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token_from_request(request, authorization, access_token)
     async with async_session_factory() as db:
         deleted = await clear_session_history(db, session_id)
     logger.info("Cleared %s messages for session %s", deleted, session_id)

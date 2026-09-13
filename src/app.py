@@ -1,7 +1,10 @@
 """LoomCore FastAPI application assembly."""
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,12 +20,31 @@ from src.plugins.health import healthcheck_loop
 logger = logging.getLogger("loomcore.app")
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Discover plugins and run the background healthcheck for the app lifetime."""
+    print("🚀 LoomCore starting up...")
+
+    discovered = plugin_manager.discover_plugins(settings.plugins_dir)
+    print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
+
+    # Start the background healthcheck every 30 seconds
+    healthcheck_task = asyncio.create_task(healthcheck_loop())
+    try:
+        yield
+    finally:
+        healthcheck_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await healthcheck_task
+
+
 def create_app() -> FastAPI:
     """Create and configure the application instance."""
     app = FastAPI(
         title="LoomCore",
         version="0.0.1",
         docs_url="/docs" if settings.debug else None,
+        lifespan=lifespan,
     )
 
     # Register the 429 handler
@@ -48,15 +70,5 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(artifacts.router)
     app.include_router(websocket.router)
-
-    @app.on_event("startup")
-    async def startup():
-        print("🚀 LoomCore starting up...")
-
-        discovered = plugin_manager.discover_plugins(settings.plugins_dir)
-        print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
-
-        # Start the background healthcheck every 30 seconds
-        asyncio.create_task(healthcheck_loop())
 
     return app
