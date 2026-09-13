@@ -85,6 +85,7 @@ async def test_core_health_shape(fake_manager):
     assert data["status"] == "ok"
     assert data["uptime_seconds"] >= 0
     assert data["plugin_counts"] == {"total": 1, "enabled": 1, "healthy": 1}
+    assert "Plugins enabled: LoomOps." in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -99,6 +100,9 @@ async def test_core_list_plugins_passes_question(fake_manager):
             "healthy": True,
         }
     ]
+    text = result["content"][0]["text"]
+    assert "1 plugins discovered:" in text
+    assert "- LoomOps v0.1.0 — enabled, healthy (idle)" in text
 
 
 @pytest.mark.asyncio
@@ -129,6 +133,9 @@ async def test_core_list_tools_includes_core_and_plugin(fake_manager):
     assert data["plugin_tools"] == [
         {"name": "ops_disk_usage", "plugin": "LoomOps"}
     ]
+    text = result["content"][0]["text"]
+    assert text.startswith("8 core tools: core_health, core_list_plugins")
+    assert "LoomOps (1): ops_disk_usage" in text
 
 
 @pytest.mark.asyncio
@@ -137,6 +144,7 @@ async def test_core_list_tools_skips_disabled(monkeypatch):
     monkeypatch.setattr(core_tools, "plugin_manager", manager)
     result = await core_tools.dispatch_core_tool("core_list_tools", {})
     assert result["data"]["plugin_tools"] == []
+    assert "LoomOps (disabled)" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio

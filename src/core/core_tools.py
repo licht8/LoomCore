@@ -127,6 +127,8 @@ async def _core_health(arguments: dict) -> dict:
         f"Core is healthy. {len(enabled)}/{len(names)} plugins enabled, "
         f"{len(healthy)} healthy."
     )
+    if enabled:
+        text += " Plugins enabled: " + ", ".join(enabled) + "."
     return _result(text, **data)
 
 
@@ -143,7 +145,19 @@ async def _core_list_plugins(arguments: dict) -> dict:
                 "healthy": status["is_healthy"],
             }
         )
-    text = f"{len(plugins)} plugins discovered."
+    text_lines = [f"{len(plugins)} plugins discovered:"]
+    for plugin in plugins:
+        version = plugin["version"] or "unknown"
+        if not plugin["enabled"]:
+            condition = "disabled"
+        elif plugin["healthy"]:
+            condition = "enabled, healthy"
+        else:
+            condition = "enabled, unhealthy"
+        text_lines.append(
+            f"- {plugin['id']} v{version} — {condition} ({plugin['state']})"
+        )
+    text = "\n".join(text_lines)
     return _result(text, plugins=plugins)
 
 
@@ -172,19 +186,27 @@ async def _core_list_tools(arguments: dict) -> dict:
         {"name": tool["name"], "description": tool["description"]}
         for tool in CORE_TOOLS_SCHEMA
     ]
+    lines = [
+        f"{len(core_tools)} core tools: "
+        + ", ".join(tool["name"] for tool in core_tools)
+    ]
     plugin_tools: list[dict] = []
     for name in plugin_manager.plugin_names():
         if not plugin_manager.is_enabled(name):
+            lines.append(f"{name} (disabled)")
             continue
         try:
             tools = await plugin_manager.get_tools(name)
         except Exception as exc:  # noqa: BLE001 - best-effort catalog
             logger.warning(f"Cannot list tools of plugin '{name}': {exc}")
+            lines.append(f"{name} (unavailable)")
             continue
+        names = [tool["name"] for tool in tools]
         plugin_tools.extend(
-            {"name": tool["name"], "plugin": name} for tool in tools
+            {"name": tool_name, "plugin": name} for tool_name in names
         )
-    text = f"{len(core_tools)} core tools and {len(plugin_tools)} plugin tools."
+        lines.append(f"{name} ({len(names)}): " + ", ".join(names))
+    text = "\n".join(lines)
     return _result(text, core_tools=core_tools, plugin_tools=plugin_tools)
 
 
