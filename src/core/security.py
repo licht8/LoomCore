@@ -11,17 +11,33 @@ def admin_jwt_mode_enabled() -> bool:
     return bool(settings.admin_password_hash and settings.admin_totp_secret)
 
 
+def _valid_jwt(token: str | None) -> bool:
+    """Return True when the token is a valid admin session JWT."""
+    if not admin_jwt_mode_enabled():
+        return False
+    return decode_jwt_token(token, settings.session_secret) is not None
+
+
+def _valid_static_token(token: str | None) -> bool:
+    """Return True when the token matches the configured static admin token."""
+    if not settings.admin_token or not token:
+        return False
+    return secrets.compare_digest(token, settings.admin_token)
+
+
 def require_admin_token(token: str | None) -> None:
-    """Verify admin access (JWT cookie or bearer token)."""
-    if admin_jwt_mode_enabled():
-        payload = decode_jwt_token(token, settings.session_secret)
-        if not payload:
-            raise HTTPException(status_code=401, detail="Admin login required")
+    """Verify admin access via a JWT session or the static admin token.
+
+    Both credentials are accepted regardless of the configured auth mode, so an
+    operator can hand out the static token even when password+TOTP is enabled.
+    """
+    if _valid_jwt(token) or _valid_static_token(token):
         return
-    if not settings.admin_token:
+    if not admin_jwt_mode_enabled() and not settings.admin_token:
         raise HTTPException(status_code=503, detail="Admin access is not configured")
-    if not token or not secrets.compare_digest(token, settings.admin_token):
-        raise HTTPException(status_code=401, detail="Admin token required")
+    if admin_jwt_mode_enabled():
+        raise HTTPException(status_code=401, detail="Admin login required")
+    raise HTTPException(status_code=401, detail="Admin token required")
 
 
 def classify_tool_risk(tool_name: str) -> str:

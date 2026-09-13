@@ -102,6 +102,22 @@ def test_require_admin_token_503_when_unconfigured(monkeypatch):
     assert exc.value.status_code == 503
 
 
+def test_require_admin_token_accepts_static_token_in_jwt_mode(monkeypatch):
+    _clear_admin_settings(
+        monkeypatch,
+        admin_password_hash="hash",
+        admin_totp_secret="secret",
+        session_secret="jwt-session-secret-long-enough-hs256",
+        admin_token="shared-token",
+    )
+
+    assert require_admin_token("shared-token") is None
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_token("wrong")
+    assert exc.value.status_code == 401
+
+
 def test_require_admin_token_jwt_mode(monkeypatch):
     _clear_admin_settings(
         monkeypatch,

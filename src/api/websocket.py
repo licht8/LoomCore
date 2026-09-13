@@ -7,7 +7,6 @@ from fastapi import APIRouter, Query, WebSocket
 
 from src.auth import SESSION_COOKIE, decode_jwt_token
 from src.config import settings
-from src.core.security import admin_jwt_mode_enabled
 from src.interfaces.websocket import websocket_endpoint
 
 logger = logging.getLogger("loomcore.api.websocket")
@@ -23,16 +22,13 @@ async def ws_proxy(
 ):
     """Proxy route: verify access, then hand off to the chat interface."""
     cookie = websocket.cookies.get(SESSION_COOKIE)
-    authorized = (
-        decode_jwt_token(cookie, settings.session_secret) is not None
-        if admin_jwt_mode_enabled()
-        else bool(
-            settings.admin_token
-            and access_token
-            and secrets.compare_digest(access_token, settings.admin_token)
-        )
+    jwt_ok = decode_jwt_token(cookie, settings.session_secret) is not None
+    token_ok = bool(
+        settings.admin_token
+        and access_token
+        and secrets.compare_digest(access_token, settings.admin_token)
     )
-    if not authorized:
+    if not (jwt_ok or token_ok):
         await websocket.close(code=1008, reason="Admin token required")
         return
     await websocket_endpoint(websocket, session_id)

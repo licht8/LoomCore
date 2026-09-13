@@ -118,7 +118,7 @@ If timeouts persist at 300s, the provider/model is the bottleneck.
 
 ## Admin authentication
 
-Two modes are supported (`src/core/security.py:require_admin_token`):
+Both credentials are accepted **at the same time** (`src/core/security.py:require_admin_token`):
 
 1. **Bearer token:** set a long random `ADMIN_TOKEN` in `.env`. The token is
    passed via the `access_token` query parameter or the `Authorization: Bearer
@@ -130,6 +130,11 @@ Two modes are supported (`src/core/security.py:require_admin_token`):
    ```bash
    python -m src.auth 'your-password'
    ```
+
+The static token keeps working even when JWT login is configured, so you can
+still hand it to another admin. Because a leaked `ADMIN_TOKEN` then grants full
+admin access regardless of password+TOTP, leave `ADMIN_TOKEN` empty if you want
+JWT-only authentication.
 
 Never publish tokens and never leave access unconfigured. WebSocket, chat, the
 tool list, and artifact downloads (`/api/artifacts/...`) all require auth.

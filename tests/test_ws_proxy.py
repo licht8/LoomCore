@@ -75,6 +75,30 @@ async def test_proxy_jwt_mode_authorized(monkeypatch, captured):
 
 
 @pytest.mark.asyncio
+async def test_proxy_jwt_mode_accepts_static_token(monkeypatch, captured):
+    _jwt_mode(monkeypatch)
+    monkeypatch.setattr(settings, "admin_token", "shared-token")
+    websocket = _FakeWebSocket()
+
+    await ws_api.ws_proxy(websocket, "sess-3", access_token="shared-token")
+
+    assert captured == [(websocket, "sess-3")]
+    assert websocket.closed is None
+
+
+@pytest.mark.asyncio
+async def test_proxy_jwt_mode_rejects_wrong_static_token(monkeypatch, captured):
+    _jwt_mode(monkeypatch)
+    monkeypatch.setattr(settings, "admin_token", "shared-token")
+    websocket = _FakeWebSocket()
+
+    await ws_api.ws_proxy(websocket, "sess-3", access_token="wrong")
+
+    assert captured == []
+    assert websocket.closed == (1008, "Admin token required")
+
+
+@pytest.mark.asyncio
 async def test_proxy_jwt_mode_rejects_missing_cookie(monkeypatch, captured):
     _jwt_mode(monkeypatch)
     websocket = _FakeWebSocket()
