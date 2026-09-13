@@ -22,11 +22,16 @@ _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _KNOWN_SCHEMA_VERSION = 1
 
 # Linux capability numbers (see <linux/capability.h>).
-CAPABILITIES = {"NET_ADMIN": 12, "NET_RAW": 13, "SYS_MODULE": 16}
+CAPABILITIES = {"NET_ADMIN": 12, "NET_RAW": 13, "SYS_MODULE": 16, "SYSLOG": 34}
+
+PROC_ROOT = Path("/proc")
 
 # Docker sets the hostname to the short container id (12 hex chars) on bridge
 # networks; host networking keeps the host's hostname.
 _CONTAINER_HOSTNAME_RE = re.compile(r"^[0-9a-f]{12}$")
+
+# PID 1 names that indicate the host PID namespace (`pid: host`) is mounted.
+_HOST_INIT_NAMES = {"systemd", "init"}
 
 
 class ManifestError(ValueError):
@@ -158,6 +163,9 @@ def _validate_permissions(permissions: Any) -> list[str]:
     cap_add_optional = permissions.get("cap_add_optional", [])
     if not isinstance(cap_add_optional, list):
         issues.append("permissions.cap_add_optional must be a list")
+    pid = permissions.get("pid")
+    if pid is not None and pid not in ("host", "container"):
+        issues.append("permissions.pid must be 'host' or 'container'")
     mounts = permissions.get("mounts", [])
     if not isinstance(mounts, list):
         issues.append("permissions.mounts must be a list")
@@ -175,7 +183,7 @@ def _validate_permissions(permissions: Any) -> list[str]:
 def effective_capabilities() -> int | None:
     """Read the effective capability bitmask from /proc/self/status."""
     try:
-        status = Path("/proc/self/status").read_text(encoding="utf-8")
+        status = (PROC_ROOT / "self" / "status").read_text(encoding="utf-8")
     except OSError:
         return None
     for line in status.splitlines():
@@ -231,6 +239,24 @@ def host_network_looks_active() -> bool:
     return not bool(_CONTAINER_HOSTNAME_RE.match(socket.gethostname()))
 
 
+def host_pid_looks_active() -> bool:
+    """Heuristic: with ``pid: host`` init is systemd/init, not the container's."""
+    try:
+        name = (PROC_ROOT / "1" / "comm").read_text(encoding="utf-8").strip()
+    except OSError:
+        name = ""
+    if name:
+        return name in _HOST_INIT_NAMES
+    try:
+        status = (PROC_ROOT / "1" / "status").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for line in status.splitlines():
+        if line.startswith("Name:"):
+            return line.partition(":")[2].strip() in _HOST_INIT_NAMES
+    return False
+
+
 def check_permissions(manifest: dict[str, Any]) -> list[str]:
     """Compare required permissions with the core's actual runtime."""
     permissions = _permissions(manifest)
@@ -243,5 +269,10 @@ def check_permissions(manifest: dict[str, Any]) -> list[str]:
     if permissions.get("network_mode") == "host" and not host_network_looks_active():
         warnings.append(
             "network_mode 'host' is declared but the container looks bridge-networked"
+        )
+    if permissions.get("pid") == "host" and not host_pid_looks_active():
+        warnings.append(
+            "pid namespace 'host' is declared but /proc does not look like the "
+            "host PID namespace"
         )
     return warnings

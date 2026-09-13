@@ -138,6 +138,71 @@ def test_check_permissions_host_network_heuristic(monkeypatch):
     assert any("bridge-networked" in warning for warning in warnings)
 
 
+# === pid namespace + SYSLOG ===
+
+
+def test_syslog_is_a_known_capability():
+    assert manifest_module.CAPABILITIES["SYSLOG"] == 34
+
+
+def test_validate_manifest_accepts_pid_host():
+    data = _valid()
+    data["permissions"] = {"pid": "host"}
+    assert manifest_module.validate_manifest(data) == []
+
+
+def test_validate_manifest_rejects_bad_pid():
+    data = _valid()
+    data["permissions"] = {"pid": "maybe"}
+    issues = manifest_module.validate_manifest(data)
+    assert any("permissions.pid must be" in issue for issue in issues)
+
+
+def _fake_proc1(root: Path, name: str | None) -> None:
+    (root / "1").mkdir(parents=True, exist_ok=True)
+    if name is not None:
+        (root / "1" / "comm").write_text(f"{name}\n", encoding="utf-8")
+
+
+def test_host_pid_looks_active_true(monkeypatch, tmp_path):
+    _fake_proc1(tmp_path, "systemd")
+    monkeypatch.setattr(manifest_module, "PROC_ROOT", tmp_path)
+    assert manifest_module.host_pid_looks_active() is True
+
+
+def test_host_pid_looks_active_false(monkeypatch, tmp_path):
+    _fake_proc1(tmp_path, "uvicorn")
+    monkeypatch.setattr(manifest_module, "PROC_ROOT", tmp_path)
+    assert manifest_module.host_pid_looks_active() is False
+
+
+def test_host_pid_looks_active_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(manifest_module, "PROC_ROOT", tmp_path)
+    assert manifest_module.host_pid_looks_active() is False
+
+
+def test_host_pid_looks_active_status_fallback(monkeypatch, tmp_path):
+    (tmp_path / "1").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "1" / "status").write_text("Name:\tsystemd\nState:\tS\n", encoding="utf-8")
+    monkeypatch.setattr(manifest_module, "PROC_ROOT", tmp_path)
+    assert manifest_module.host_pid_looks_active() is True
+
+
+def test_check_permissions_warns_on_missing_host_pid(monkeypatch):
+    monkeypatch.setattr(manifest_module, "host_pid_looks_active", lambda: False)
+    data = _valid()
+    data["permissions"] = {"pid": "host"}
+    warnings = manifest_module.check_permissions(data)
+    assert any("PID namespace" in warning for warning in warnings)
+
+
+def test_check_permissions_pid_host_silent_when_active(monkeypatch):
+    monkeypatch.setattr(manifest_module, "host_pid_looks_active", lambda: True)
+    data = _valid()
+    data["permissions"] = {"pid": "host"}
+    assert manifest_module.check_permissions(data) == []
+
+
 # === PluginManifest view ===
 
 

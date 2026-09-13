@@ -47,6 +47,7 @@ overridable with the `PLUGINS_STATE_FILE` setting.
   "cap_add": ["NET_ADMIN", "NET_RAW"],
   "cap_add_optional": ["SYS_MODULE"],
   "network_mode": "host",
+  "pid": "host",
   "mounts": [
     {"source": "/etc/wireguard", "target": "/etc/wireguard", "mode": "rw"},
     {"source": "/lib/modules", "target": "/lib/modules", "mode": "ro"}
@@ -57,13 +58,18 @@ overridable with the `PLUGINS_STATE_FILE` setting.
 The plugin checks these against its runtime at startup:
 
 - `cap_add` — required effective Linux capabilities (`/proc/self/status`
-  `CapEff`); a missing one is a warning.
+  `CapEff`); a missing one is a warning. Known names: `NET_ADMIN` (12),
+  `NET_RAW` (13), `SYS_MODULE` (16), `SYSLOG` (34, needed to read the kernel
+  ring buffer with `dmesg`). `SYS_PTRACE` and `DAC_READ_SEARCH` are intentionally
+  **not** recognised — a plugin must not request them.
 - `cap_add_optional` — capabilities the plugin can run without; a missing one is
   only an informational note. (LoomWG loads the WireGuard module on demand, so it
   works without `SYS_MODULE` when the module is built-in or already loaded.)
 - `mounts` — target path exists and is writable (`rw`) / readable (`ro`).
 - `network_mode` — best-effort host-network heuristic (a 12-hex hostname means
   a bridge network).
+- `pid` — `"host"` or `"container"`; `"host"` warns when `/proc/1` is not
+  `systemd`/`init` (i.e. the host PID namespace is not actually mounted).
 
 Mismatches are logged and returned by diagnostics; they never block startup.
 
