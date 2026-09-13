@@ -67,8 +67,6 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
     case "tool_response":
       return {
         ...state,
-        isThinking: false,
-        isSending: false,
         planRequest: null,
         messages: finalizePendingTool(state.messages, {
           toolStatus: msg.status === "error" ? "error" : "success",
@@ -89,7 +87,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
       const requiresApproval = Boolean(msg.requires_approval)
       return {
         ...state,
-        isThinking: true,
+        isThinking: !requiresApproval,
         error: null,
         planRequest: requiresApproval ? { id: plan.plan_id, plan } : null,
         messages: upsertPlanMessage(state.messages, plan),
