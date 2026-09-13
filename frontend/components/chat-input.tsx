@@ -19,7 +19,6 @@ interface ChatInputProps {
  * - Sends on Enter or the "Send" button
  * - The submit button rotates and morphs into a pause control while running;
  *   clicking it cancels the in-flight request
- * - Shows a "typing…" indicator while the backend processes the request
  * - Shows a confirmation dialog (approve/deny) when an approval_request arrives
  * - Disables sending while a request is running
  *
@@ -132,35 +131,10 @@ export function ChatInput({
         )}
       </form>
 
-      {/* "Typing…" indicator above the input */}
+      {/* Static hint below the input. The submit button already rotates while
+          a request is running, so no second spinner is shown here. */}
       <p className="mt-2 text-center text-xs text-muted-foreground">
-        {isThinking ? (
-          <span className="inline-flex items-center gap-1.5">
-            <svg
-              className="size-3 animate-spin text-muted-foreground"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
-            LoomCore is typing…
-          </span>
-        ) : (
-          "LoomCore can execute infrastructure changes. Review tool calls before confirming."
-        )}
+        LoomCore can execute infrastructure changes. Review tool calls before confirming.
       </p>
     </div>
   )
