@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef } from "react"
 import { useChat } from "@/lib/use-chat"
 import { ChatMessageItem } from "@/components/chat-message"
 import { ChatInput } from "@/components/chat-input"
@@ -21,14 +22,41 @@ export function ChatRoom() {
     clearConversation,
   } = useChat()
 
+  // --- Auto-scroll to the newest message ---
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  // Only auto-scroll while the user is near the bottom, so reading history
+  // is not interrupted by incoming messages.
+  const stickToBottom = useRef(true)
+  const hasHydrated = useRef(false)
+
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    stickToBottom.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }
+
+  useEffect(() => {
+    if (!stickToBottom.current) return
+    const behavior: ScrollBehavior = hasHydrated.current ? "smooth" : "auto"
+    endRef.current?.scrollIntoView({ behavior, block: "end" })
+    hasHydrated.current = true
+  }, [messages.length, isThinking, approvalRequest])
+
   return (
     <>
       {/* Message container — overflow-y-auto for scrolling */}
-      <div className="flex-1 overflow-y-auto px-6 pt-6 pb-32">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-6 pt-6 pb-32"
+      >
         <div className="mx-auto flex max-w-[61rem] flex-col gap-6 px-[6.5rem]">
           {messages.map((message) => (
             <ChatMessageItem key={message.id} message={message} />
           ))}
+          <div ref={endRef} />
         </div>
       </div>
 

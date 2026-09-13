@@ -38,24 +38,18 @@ export function DashboardSidebar() {
             <button
               key={item.label}
               className={cn(
-                "group relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-300",
+                "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-300",
                 item.active
-                  ? "bg-gradient-to-r from-sidebar-accent to-sidebar-accent/40 text-sidebar-accent-foreground shadow-lg shadow-sidebar-accent/20"
+                  ? "bg-gradient-to-r from-sidebar-accent to-sidebar-accent/40 text-sidebar-accent-foreground"
                   : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-sidebar-foreground",
               )}
               aria-current={item.active ? "page" : undefined}
             >
               <span
                 className={cn(
-                  "absolute left-0 top-1/2 h-5 -translate-y-1/2 rounded-r-full bg-sidebar-accent-foreground transition-all duration-300",
-                  item.active ? "w-1 opacity-100" : "w-0 opacity-0",
-                )}
-              />
-              <span
-                className={cn(
                   "flex size-8 items-center justify-center rounded-lg transition-all duration-300",
                   item.active
-                    ? "bg-sidebar-accent-foreground/15 text-sidebar-accent-foreground"
+                    ? "bg-white/15 text-sidebar-accent-foreground"
                     : "bg-white/5 text-sidebar-foreground/60 group-hover:bg-white/10 group-hover:text-sidebar-foreground",
                 )}
               >

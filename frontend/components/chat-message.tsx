@@ -17,7 +17,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[75%]">
-          <div className="rounded-2xl rounded-br-md bg-[oklch(0.72_0.07_305)] px-4 py-3 text-sm leading-relaxed text-[oklch(0.18_0.02_295)] shadow-sm">
+          <div className="rounded-2xl rounded-br-md bg-[oklch(0.72_0.07_305)] px-3 py-2 text-sm leading-relaxed text-[oklch(0.18_0.02_295)] shadow-sm">
             <Markdown content={message.content} />
           </div>
           <p className="mt-1 pr-1 text-right text-xs text-muted-foreground">{message.timestamp}</p>
@@ -34,7 +34,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
           <Sparkles className="size-4" />
         </div>
         <div className="max-w-[75%]">
-          <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 text-sm leading-relaxed text-card-foreground shadow-sm backdrop-blur-md">
+          <div className="rounded-2xl rounded-tl-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-card-foreground shadow-sm backdrop-blur-md">
             <Markdown content={message.content} />
           </div>
           <p className="mt-1 pl-1 text-xs text-muted-foreground">{message.timestamp}</p>

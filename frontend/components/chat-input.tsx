@@ -75,7 +75,7 @@ export function ChatInput({
       {/* Gradient background — unchanged */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/60 via-background/30 to-transparent backdrop-blur-2xl [mask-image:linear-gradient(to_top,black_55%,transparent)]"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/70 via-background/30 to-transparent backdrop-blur-xl [mask-image:linear-gradient(to_top,black_25%,transparent_75%)]"
       />
 
       {/* Confirmation request block — above the input */}
@@ -151,10 +151,10 @@ export function ChatInput({
         {onClear && (
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             onClick={handleClear}
             disabled={isRunning}
-            className="h-auto w-24 shrink-0 self-stretch rounded-2xl"
+            className="h-auto w-24 shrink-0 self-stretch gap-2 rounded-2xl border border-input bg-background/50 text-sm font-medium shadow-sm backdrop-blur-md transition-shadow hover:bg-background/70 focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Eraser className="size-4" />
             Clear
