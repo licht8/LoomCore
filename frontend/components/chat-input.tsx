@@ -8,6 +8,7 @@ import type { ApprovalRequest } from "@/lib/chat-types"
 interface ChatInputProps {
   onSend: (text: string) => void
   onCancel?: () => void
+  onClear?: () => void
   isThinking?: boolean
   isSending?: boolean
   approvalRequest?: ApprovalRequest | null
@@ -27,6 +28,7 @@ interface ChatInputProps {
 export function ChatInput({
   onSend,
   onCancel,
+  onClear,
   isThinking = false,
   isSending = false,
   approvalRequest,
@@ -52,6 +54,20 @@ export function ChatInput({
   // Handle approval (approve/deny)
   const handleApproval = (action: "approve" | "deny") => {
     if (onApprovalResponse) onApprovalResponse(action)
+  }
+
+  // Clear the stored conversation (also resets the assistant's memory)
+  const handleClear = () => {
+    if (isRunning || !onClear) return
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Clear this conversation? This also resets the assistant's memory.",
+      )
+    ) {
+      return
+    }
+    onClear()
   }
 
   return (
@@ -133,9 +149,21 @@ export function ChatInput({
 
       {/* Static hint below the input. The submit button already rotates while
           a request is running, so no second spinner is shown here. */}
-      <p className="mt-2 text-center text-xs text-muted-foreground">
-        LoomCore can execute infrastructure changes. Review tool calls before confirming.
-      </p>
+      <div className="mt-2 flex items-center justify-center gap-3">
+        <p className="text-center text-xs text-muted-foreground">
+          LoomCore can execute infrastructure changes. Review tool calls before confirming.
+        </p>
+        {onClear && (
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={isRunning}
+            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Clear conversation
+          </button>
+        )}
+      </div>
     </div>
   )
 }

@@ -87,16 +87,29 @@ async def _save_tool_message(
     tool_name: str,
     arguments: dict | None,
     content: str,
+    *,
+    status: str = "success",
+    summary: str = "Done",
+    risk: str | None = None,
+    artifacts: list[dict] | None = None,
 ) -> None:
-    """Save a tool call result to the session history."""
+    """Save a tool call and its terminal state to the session history.
+
+    The UI restores tool cards from ``tool_calls`` after a reload, so status,
+    summary, risk and artifacts all live inside that JSON (no schema change).
+    """
+    entry: dict = {
+        "name": tool_name,
+        "arguments": arguments,
+        "status": status,
+        "summary": summary,
+    }
+    if risk:
+        entry["risk"] = risk
+    if artifacts:
+        entry["artifacts"] = artifacts
     async with async_session_factory() as db:
-        await add_message(
-            db,
-            session_id,
-            "tool",
-            content,
-            tool_calls=[{"name": tool_name, "arguments": arguments}],
-        )
+        await add_message(db, session_id, "tool", content, tool_calls=[entry])
 
 
 def _tool_error_payload(
@@ -128,7 +141,16 @@ async def _run_tool_and_notify(
     content_text = _extract_text(raw_result)
     artifacts = _build_artifacts(raw_result)
 
-    await _save_tool_message(session_id, tool_name, arguments, content_text)
+    await _save_tool_message(
+        session_id,
+        tool_name,
+        arguments,
+        content_text,
+        status="success",
+        summary="Done",
+        risk=risk,
+        artifacts=artifacts,
+    )
 
     payload = {
         "type": "tool_response",
@@ -150,24 +172,51 @@ async def _run_tool_safely(
     tool_name: str,
     arguments: dict | None,
     risk: str | None = None,
+    tracker: dict | None = None,
 ) -> None:
-    """Run a tool and always emit a terminal event, even on failure."""
+    """Run a tool and always emit a terminal event, even on failure.
+
+    ``tracker`` is a connection-local dict the receive loop watches so it can
+    persist a cancellation; it is left set when the task is cancelled.
+    """
+    if tracker is not None:
+        tracker["tool"] = {"name": tool_name, "args": arguments, "risk": risk}
     try:
         await _run_tool_and_notify(send, session_id, tool_name, arguments, risk=risk)
     except asyncio.CancelledError:
-        # The receive loop owns the ``cancelled`` notification.
+        # Leave ``tracker`` set so the receive loop can persist the cancellation.
         raise
     except Exception as exc:
+        if tracker is not None:
+            tracker["tool"] = None
         logger.error(f"Failed to run tool '{tool_name}': {exc}")
-        await send(
-            _tool_error_payload(tool_name, f"Failed to call '{tool_name}': {exc}", risk)
-        )
+        message = f"Failed to call '{tool_name}': {exc}"
+        with contextlib.suppress(Exception):
+            await _save_tool_message(
+                session_id,
+                tool_name,
+                arguments,
+                message,
+                status="error",
+                summary="Error",
+                risk=risk,
+            )
+        await send(_tool_error_payload(tool_name, message, risk))
+    else:
+        if tracker is not None:
+            tracker["tool"] = None
 
 
 async def _process_approve(
-    send: Send, session_id: str, tool_name: str, arguments: dict | None
+    send: Send,
+    session_id: str,
+    tool_name: str,
+    arguments: dict | None,
+    tracker: dict | None = None,
 ) -> None:
-    await _run_tool_safely(send, session_id, tool_name, arguments)
+    await _run_tool_safely(
+        send, session_id, tool_name, arguments, tracker=tracker
+    )
 
 
 async def _guarded(coro) -> None:
@@ -180,7 +229,12 @@ async def _guarded(coro) -> None:
         logger.error(f"Background request failed: {exc}")
 
 
-async def _process_user_message(send: Send, session_id: str, user_text: str) -> None:
+async def _process_user_message(
+    send: Send,
+    session_id: str,
+    user_text: str,
+    tracker: dict | None = None,
+) -> None:
     """Route a user message, then surface the response or run the chosen tool."""
     await send({"type": "thinking", "status": "processing"})
     logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
@@ -241,7 +295,9 @@ async def _process_user_message(send: Send, session_id: str, user_text: str) -> 
         )
     else:
         # Safe/Moderate — run automatically through the plugin
-        await _run_tool_safely(send, session_id, tool_name, tool_args, risk=risk)
+        await _run_tool_safely(
+            send, session_id, tool_name, tool_args, risk=risk, tracker=tracker
+        )
 
 
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -269,6 +325,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.send_json(payload)
 
     current: asyncio.Task | None = None
+    # Connection-local record of the tool currently running, so a cancel can
+    # persist a "cancelled" card even after the task is torn down.
+    tracker: dict = {"tool": None}
 
     async def cancel_current() -> None:
         nonlocal current
@@ -294,11 +353,35 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             # Cancel the request currently in flight, if any
             if action == "cancel":
                 await cancel_current()
+                active = tracker.get("tool")
+                tracker["tool"] = None
+                if active:
+                    with contextlib.suppress(Exception):
+                        await _save_tool_message(
+                            session_id,
+                            active["name"],
+                            active.get("args"),
+                            "",
+                            status="cancelled",
+                            summary="Cancelled",
+                            risk=active.get("risk"),
+                        )
                 await send({"type": "cancelled"})
                 continue
 
             # User refused a dangerous tool
             if action == "deny":
+                tool = data.get("tool")
+                if tool:
+                    with contextlib.suppress(Exception):
+                        await _save_tool_message(
+                            session_id,
+                            tool,
+                            data.get("args") or {},
+                            "",
+                            status="cancelled",
+                            summary="Denied",
+                        )
                 await send({"type": "tool_denied"})
                 continue
 
@@ -309,7 +392,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     continue
                 tool = data.get("tool", "unknown")
                 tool_args = data.get("args") or {}
-                start(_process_approve(send, session_id, tool, tool_args))
+                start(_process_approve(send, session_id, tool, tool_args, tracker))
                 continue
 
             # Regular text message from the user
@@ -319,7 +402,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if current and not current.done():
                 await send({"type": "busy"})
                 continue
-            start(_process_user_message(send, session_id, user_text))
+            start(_process_user_message(send, session_id, user_text, tracker))
 
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket disconnected for session {session_id}")

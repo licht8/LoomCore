@@ -3,7 +3,16 @@
 import pytest
 
 from src.llm import router as router_module
+from src.llm.prompt import SYSTEM_PROMPT
 from src.llm.router import AIRouter
+
+
+def test_system_prompt_requires_reverification():
+    """The assistant must treat live tool output as the only source of truth."""
+    lowered = SYSTEM_PROMPT.lower()
+    assert "re-run" in lowered or "re run" in lowered or "re-run the relevant read tool" in lowered
+    assert "current state" in lowered
+    assert "never treat" in lowered
 
 
 class _FakeSession:

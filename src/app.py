@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
-from src.api import artifacts, auth, chat, health, plugins, websocket
+from src.api import artifacts, auth, chat, health, plugins, sessions, websocket
 from src.api.deps import rate_limit_exceeded_handler
 from src.config import settings
 from src.core.rate_limit import limiter
@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(plugins.router)
     app.include_router(chat.router)
+    app.include_router(sessions.router)
     app.include_router(artifacts.router)
     app.include_router(websocket.router)
 

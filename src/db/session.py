@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Message, Session, User
@@ -133,12 +133,28 @@ async def get_session_history(
     session_id: str,
     limit: int = 50,
 ) -> list[Message]:
-    """Read the last N messages of a session."""
+    """Read the newest ``limit`` messages of a session (oldest first).
+
+    We sort descending to keep the most recent turns, then reverse so callers
+    receive them in chronological order.
+    """
     stmt = (
         select(Message)
         .where(Message.session_id == session_id)
-        .order_by(Message.created_at)
+        .order_by(Message.created_at.desc())
         .limit(limit)
     )
     result = await session_db.execute(stmt)
-    return list(result.scalars().all())
+    return list(reversed(list(result.scalars().all())))
+
+
+async def clear_session_history(
+    session_db: AsyncSession,
+    session_id: str,
+) -> int:
+    """Delete every message in a session; return the number removed."""
+    result = await session_db.execute(
+        delete(Message).where(Message.session_id == session_id)
+    )
+    await session_db.commit()
+    return result.rowcount or 0

@@ -281,7 +281,9 @@ Expect: peer gone, no matching `PublicKey`, client files removed.
 - Duplicate `phone1` -> "client already exists".
 - `http://SERVER_IP/api/tools` without token -> 401/503; with `?access_token=...` -> JSON.
 - Spam `/api/chat` 31x/min -> 429.
-- Refresh the page -> history persists from Postgres.
+- Refresh the page -> the whole conversation (messages, tool cards with status/artifacts, errors) is restored from Postgres.
+- Click "Clear conversation" -> confirm; the feed empties and the assistant's stored memory is deleted (no `alembic` needed).
+- Reload while an approval is pending -> the tool card shows "Interrupted".
 - Token mode "logout": clear the `loomcore_admin_token` key in browser `localStorage`.
 
 ### 11.8 Evidence to collect

@@ -63,3 +63,23 @@ export interface ApprovalRequest {
   tool?: string
   args?: Record<string, unknown>
 }
+
+/** Metadata stored inside a persisted message's `tool_calls` JSON. */
+export interface StoredToolCall {
+  name: string
+  arguments?: Record<string, unknown> | null
+  status?: "success" | "error" | "cancelled"
+  summary?: string
+  risk?: string
+  artifacts?: Array<{ label: string; url: string }>
+}
+
+/** A stored message row returned by GET /api/sessions/{id}/messages. */
+export interface SessionMessage {
+  id: string
+  role: "user" | "assistant" | "tool" | "system"
+  content: string
+  created_at: string
+  tool_calls?: StoredToolCall[] | null
+  tool_result?: string | null
+}

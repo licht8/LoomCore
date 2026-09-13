@@ -52,6 +52,7 @@ def _patch_db(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_process_user_message_reports_tool_error(monkeypatch):
     sent: list[dict] = []
+    saved: list[dict] = []
 
     async def send(payload: dict) -> None:
         sent.append(payload)
@@ -63,11 +64,15 @@ async def test_process_user_message_reports_tool_error(monkeypatch):
             "tool_args": {"interface": "wg0"},
         }
 
+    async def fake_save(session_id, tool_name, arguments, content, **kwargs):
+        saved.append({"tool_name": tool_name, "content": content, **kwargs})
+
     async def boom(tool_name: str, arguments: dict | None = None) -> dict:
         raise RuntimeError("Interface wg0 is not active")
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
     monkeypatch.setattr(ws_module, "_execute_tool", boom)
+    monkeypatch.setattr(ws_module, "_save_tool_message", fake_save)
 
     await ws_module._process_user_message(send, "sess", "status")
 
@@ -77,6 +82,9 @@ async def test_process_user_message_reports_tool_error(monkeypatch):
     assert sent[-1]["status"] == "error"
     assert sent[-1]["tool"] == "wg_interface_status"
     assert "not active" in sent[-1]["content"]
+    # The failure must also be persisted so the card survives a reload.
+    assert saved and saved[0]["status"] == "error"
+    assert saved[0]["tool_name"] == "wg_interface_status"
 
 
 async def test_process_user_message_success(monkeypatch):
@@ -114,7 +122,7 @@ async def test_websocket_cancel_aborts_running_request(monkeypatch):
     started = asyncio.Event()
     cancelled = asyncio.Event()
 
-    async def slow_process(send, session_id: str, user_text: str) -> None:
+    async def slow_process(send, session_id: str, user_text: str, tracker=None) -> None:
         started.set()
         try:
             await asyncio.Event().wait()
@@ -139,7 +147,7 @@ async def test_websocket_cancel_aborts_running_request(monkeypatch):
 async def test_websocket_busy_while_running(monkeypatch):
     _patch_db(monkeypatch)
 
-    async def slow_process(send, session_id: str, user_text: str) -> None:
+    async def slow_process(send, session_id: str, user_text: str, tracker=None) -> None:
         await asyncio.Event().wait()
 
     monkeypatch.setattr(ws_module, "_process_user_message", slow_process)
@@ -152,3 +160,102 @@ async def test_websocket_busy_while_running(monkeypatch):
     await asyncio.wait_for(task, timeout=1)
 
     assert {"type": "busy"} in ws.sent
+
+
+@pytest.mark.asyncio
+async def test_run_tool_safely_persists_error(monkeypatch):
+    sent: list[dict] = []
+    saved: list[dict] = []
+
+    async def send(payload: dict) -> None:
+        sent.append(payload)
+
+    async def fake_save(session_id, tool_name, arguments, content, **kwargs):
+        saved.append({"tool_name": tool_name, "content": content, **kwargs})
+
+    async def boom(tool_name: str, arguments: dict | None = None) -> dict:
+        raise RuntimeError("plugin exploded")
+
+    monkeypatch.setattr(ws_module, "_execute_tool", boom)
+    monkeypatch.setattr(ws_module, "_save_tool_message", fake_save)
+
+    tracker: dict = {"tool": None}
+    await ws_module._run_tool_safely(
+        send, "sess", "wg_interface_status", {}, tracker=tracker
+    )
+
+    assert sent[-1]["status"] == "error"
+    assert saved and saved[0]["status"] == "error"
+    assert "plugin exploded" in saved[0]["content"]
+    # The tracker is cleared once the tool reaches a terminal (non-cancel) state.
+    assert tracker["tool"] is None
+
+
+@pytest.mark.asyncio
+async def test_websocket_cancel_persists_tool(monkeypatch):
+    _patch_db(monkeypatch)
+    started = asyncio.Event()
+    saved: list[dict] = []
+
+    async def fake_route(user_text: str, session_id: str) -> dict:
+        return {
+            "type": "tool_call",
+            "tool_name": "wg_interface_status",
+            "tool_args": {"interface": "wg0"},
+        }
+
+    async def slow_execute(tool_name: str, arguments: dict | None = None) -> dict:
+        started.set()
+        await asyncio.Event().wait()
+
+    async def fake_save(session_id, tool_name, arguments, content, **kwargs):
+        saved.append({"tool_name": tool_name, "content": content, **kwargs})
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    monkeypatch.setattr(ws_module, "_execute_tool", slow_execute)
+    monkeypatch.setattr(ws_module, "_save_tool_message", fake_save)
+
+    ws = FakeWebSocket([{"message": "status"}, {"action": "cancel"}])
+    task = asyncio.create_task(ws_module.websocket_endpoint(ws, "sess"))
+
+    await asyncio.wait_for(started.wait(), timeout=1)
+    ws.allow_disconnect.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert {"type": "cancelled"} in ws.sent
+    assert saved and saved[0]["tool_name"] == "wg_interface_status"
+    assert saved[0]["status"] == "cancelled"
+    assert saved[0]["summary"] == "Cancelled"
+
+
+@pytest.mark.asyncio
+async def test_websocket_deny_persists_tool(monkeypatch):
+    _patch_db(monkeypatch)
+    saved: list[dict] = []
+
+    async def fake_save(session_id, tool_name, arguments, content, **kwargs):
+        saved.append(
+            {
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "content": content,
+                **kwargs,
+            }
+        )
+
+    monkeypatch.setattr(ws_module, "_save_tool_message", fake_save)
+
+    ws = FakeWebSocket(
+        [{"action": "deny", "tool": "wg_remove_peer", "args": {"name": "laptop"}}]
+    )
+    task = asyncio.create_task(ws_module.websocket_endpoint(ws, "sess"))
+
+    await asyncio.sleep(0.05)
+    ws.allow_disconnect.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert {"type": "tool_denied"} in ws.sent
+    assert saved and saved[0]["tool_name"] == "wg_remove_peer"
+    assert saved[0]["status"] == "cancelled"
+    assert saved[0]["summary"] == "Denied"
+    assert saved[0]["arguments"] == {"name": "laptop"}

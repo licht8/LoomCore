@@ -1,7 +1,13 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import type { ChatMessage, WsMessage, ApprovalRequest, UseChatState } from "@/lib/chat-types"
+import type {
+  ChatMessage,
+  WsMessage,
+  ApprovalRequest,
+  SessionMessage,
+  UseChatState,
+} from "@/lib/chat-types"
 import { withAdminToken } from "@/lib/admin-token"
 
 /** Generate a random session ID */
@@ -44,6 +50,100 @@ function finalizePendingTool(
     }
   }
   return updated
+}
+
+/** Base URL for REST calls (empty string means same-origin via nginx). */
+function getApiBase(): string {
+  if (typeof window === "undefined") return ""
+  const configured = process.env.NEXT_PUBLIC_API_URL
+  if (configured) return configured.replace(/\/$/, "")
+  const protocol = window.location.protocol === "https:" ? "https" : "http"
+  // Next dev runs on :3000 while the backend listens on :8000.
+  return window.location.port === "3000"
+    ? `${protocol}://${window.location.hostname}:8000`
+    : ""
+}
+
+/** Format a stored UTC timestamp as a local HH:MM label. */
+function formatTimestampFromIso(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+}
+
+/** Build a tool card from a stored tool call. */
+function toolCardFromRow(row: SessionMessage, timestamp: string): ChatMessage {
+  const meta = Array.isArray(row.tool_calls) ? row.tool_calls[0] : null
+  const status = meta?.status ?? "success"
+  return {
+    id: row.id,
+    role: "tool",
+    content: row.content || "",
+    timestamp,
+    tool: meta?.name || "tool",
+    toolStatus: status,
+    toolSummary:
+      meta?.summary ||
+      (status === "error" ? "Error" : status === "cancelled" ? "Cancelled" : "Done"),
+    toolCode: row.tool_result || "",
+    artifacts: meta?.artifacts,
+  }
+}
+
+/**
+ * Convert stored DB rows into UI messages.
+ * - Assistant rows with empty content are tool-call decisions; they are
+ *   represented by the following tool row instead of a blank bubble.
+ * - A tool-call decision with no following tool row (e.g. reload while an
+ *   approval was pending) becomes an "Interrupted" card.
+ */
+function hydrateMessages(rows: SessionMessage[]): ChatMessage[] {
+  const hydrated: ChatMessage[] = []
+  let pendingDecision: ChatMessage | null = null
+
+  const flushDecision = () => {
+    if (pendingDecision) {
+      hydrated.push(pendingDecision)
+      pendingDecision = null
+    }
+  }
+
+  for (const row of rows) {
+    const timestamp = formatTimestampFromIso(row.created_at)
+
+    if (row.role === "tool") {
+      pendingDecision = null
+      hydrated.push(toolCardFromRow(row, timestamp))
+      continue
+    }
+
+    flushDecision()
+
+    if (row.role === "user") {
+      hydrated.push({ id: row.id, role: "user", content: row.content, timestamp })
+    } else if (row.role === "assistant" && (row.content || "").trim()) {
+      hydrated.push({
+        id: row.id,
+        role: "assistant",
+        content: row.content,
+        timestamp,
+      })
+    } else if (row.role === "assistant") {
+      const meta = Array.isArray(row.tool_calls) ? row.tool_calls[0] : null
+      pendingDecision = {
+        id: row.id,
+        role: "tool",
+        content: "",
+        timestamp,
+        tool: meta?.name || "tool",
+        toolStatus: "cancelled",
+        toolSummary: "Interrupted",
+      }
+    }
+  }
+
+  flushDecision()
+  return hydrated
 }
 
 /**
@@ -151,6 +251,35 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // === Restore stored history on mount (survives a page reload) ===
+  useEffect(() => {
+    let active = true
+
+    async function loadHistory() {
+      try {
+        const url = withAdminToken(
+          `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId.current)}/messages?limit=200`,
+        )
+        const response = await fetch(url, { credentials: "include" })
+        if (!response.ok) return
+        const data = await response.json()
+        if (!active || !Array.isArray(data.messages)) return
+        setState((prev) =>
+          prev.messages.length
+            ? prev
+            : { ...prev, messages: hydrateMessages(data.messages as SessionMessage[]) },
+        )
+      } catch (err) {
+        console.error("Failed to load chat history:", err)
+      }
+    }
+
+    loadHistory()
+    return () => {
+      active = false
+    }
   }, [])
 
   // === Handle incoming WS events ===
@@ -387,6 +516,26 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
     }))
   }, [])
 
+  /** Delete this session's stored history and clear the feed. */
+  const clearConversation = useCallback(async () => {
+    try {
+      const url = withAdminToken(
+        `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId.current)}/messages`,
+      )
+      await fetch(url, { method: "DELETE", credentials: "include" })
+    } catch (err) {
+      console.error("Failed to clear conversation:", err)
+    }
+    setState((prev) => ({
+      ...prev,
+      messages: [],
+      isThinking: false,
+      isSending: false,
+      approvalRequest: null,
+      error: null,
+    }))
+  }, [])
+
   return {
     messages: state.messages,
     isThinking: state.isThinking,
@@ -397,5 +546,6 @@ export function useChat(onApprovalResponse?: (action: "approve" | "deny") => voi
     sendMessage,
     sendApprovalResponse,
     cancelRequest,
+    clearConversation,
   }
 }
