@@ -102,7 +102,8 @@ export function ChatInput({
         </div>
       )}
 
-      <div className="relative z-10 mx-auto flex max-w-3xl items-stretch gap-2">
+      <div className="relative z-10 mx-auto flex max-w-[61rem] items-stretch gap-2">
+        {onClear && <div aria-hidden className="w-24 shrink-0" />}
         <form
           className="flex flex-1 items-center gap-2 rounded-2xl border border-input bg-background/50 px-3 py-2 shadow-sm backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-ring"
           onSubmit={handleSubmit}
@@ -153,7 +154,7 @@ export function ChatInput({
             variant="outline"
             onClick={handleClear}
             disabled={isRunning}
-            className="h-auto shrink-0 self-stretch rounded-2xl px-4"
+            className="h-auto w-24 shrink-0 self-stretch rounded-2xl"
           >
             <Eraser className="size-4" />
             Clear
