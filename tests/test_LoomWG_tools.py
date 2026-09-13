@@ -1,4 +1,4 @@
-"""Unit tests for the expanded loomwg toolset and the JSON client store."""
+"""Unit tests for the expanded LoomWG toolset and the JSON client store."""
 
 import base64
 
@@ -29,8 +29,8 @@ def test_schema_exposes_new_tools(load_loomwg):
     tools = load_loomwg("tools")["tools"]
     names = {tool["name"] for tool in tools.TOOLS_SCHEMA}
     expected = {
-        "wg_show_config",
-        "wg_check_config",
+        "wg_show_interface_config",
+        "wg_check_interface_config",
         "wg_stats",
         "wg_export_existing_clients",
         "wg_service_enable",
@@ -90,7 +90,7 @@ def test_resolve_name_rejects_ambiguous_prefix(load_loomwg, monkeypatch, tmp_pat
         store.resolve_name("AAAA")
 
 
-# === wg_show_config ===
+# === wg_show_interface_config ===
 
 def test_show_config_masks_secrets(load_loomwg, monkeypatch):
     view = load_loomwg("config_view")["config_view"]
@@ -109,7 +109,7 @@ def test_show_config_masks_secrets(load_loomwg, monkeypatch):
     assert private in shown["content"][0]["text"]
 
 
-# === wg_check_config ===
+# === wg_check_interface_config ===
 
 def test_check_config_valid(load_loomwg):
     check = load_loomwg("validate")["validate"]
@@ -146,7 +146,7 @@ def test_check_config_detects_problems(load_loomwg):
     assert any("overlap" in warning for warning in result["data"]["warnings"])
 
 
-# === wg_add_peer ===
+# === wg_create_peer ===
 
 def test_add_peer_idempotent_same_allowed_ips(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))

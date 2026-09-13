@@ -22,7 +22,7 @@ from ..wg.device import (
     validate_interface,
 )
 
-logger = logging.getLogger("loomwg.service")
+logger = logging.getLogger("LoomWG.service")
 
 
 def _state_path() -> Path:
@@ -70,7 +70,7 @@ def disable(arguments: dict[str, Any]) -> dict[str, Any]:
     _write_state(state)
     return text_result(
         f"Autostart disabled for {interface} "
-        "(interface left running; use wg_stop to stop it)",
+        "(interface left running; use wg_interface_stop to stop it)",
         interface=interface,
         autostart=False,
     )

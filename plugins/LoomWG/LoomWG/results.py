@@ -1,4 +1,4 @@
-"""Shared MCP result helper for loomwg tools."""
+"""Shared MCP result helper for LoomWG tools."""
 
 from __future__ import annotations
 

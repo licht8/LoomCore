@@ -29,7 +29,7 @@ def dispatch(
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "loomwg", "version": "0.1.0"},
+                "serverInfo": {"name": "LoomWG", "version": "0.1.0"},
             },
         )
     if method == "tools/list":

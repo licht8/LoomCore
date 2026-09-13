@@ -383,17 +383,17 @@ def get_artifact_tool(arguments: dict[str, Any]) -> dict[str, Any]:
 
 HANDLERS = {
     "wg_list_interfaces": list_interfaces,
-    "wg_status": status,
+    "wg_interface_status": status,
     "wg_list_peers": list_peers,
     "wg_diagnostics": diagnostics,
-    "wg_show_config": show_config,
-    "wg_check_config": check_config,
+    "wg_show_interface_config": show_config,
+    "wg_check_interface_config": check_config,
     "wg_stats": stats_tool,
-    "wg_add_peer": add_peer,
+    "wg_create_peer": add_peer,
     "wg_remove_peer": remove_peer,
-    "wg_start": lambda args: lifecycle_tool(start, args),
-    "wg_stop": lambda args: lifecycle_tool(stop, args),
-    "wg_restart": lambda args: lifecycle_tool(restart, args),
+    "wg_interface_start": lambda args: lifecycle_tool(start, args),
+    "wg_interface_stop": lambda args: lifecycle_tool(stop, args),
+    "wg_interface_restart": lambda args: lifecycle_tool(restart, args),
     "wg_service_enable": service_mode.enable,
     "wg_service_disable": service_mode.disable,
     "wg_export_existing_clients": export_existing_clients_tool,
@@ -436,7 +436,7 @@ TOOLS_SCHEMA = [
         },
     },
     {
-        "name": "wg_status",
+        "name": "wg_interface_status",
         "description": "Show the WireGuard interface status and peer activity",
         "inputSchema": {
             "type": "object",
@@ -463,7 +463,7 @@ TOOLS_SCHEMA = [
         },
     },
     {
-        "name": "wg_add_peer",
+        "name": "wg_create_peer",
         "description": (
             "Create/track a client. Without public_key a keypair is generated and "
             "the client is saved to the store; with public_key an existing peer is "
@@ -502,9 +502,9 @@ TOOLS_SCHEMA = [
 ]
 
 for _name, _description in (
-    ("wg_start", "Start the WireGuard interface"),
-    ("wg_stop", "Stop the WireGuard interface"),
-    ("wg_restart", "Restart the WireGuard interface"),
+    ("wg_interface_start", "Start the WireGuard interface"),
+    ("wg_interface_stop", "Stop the WireGuard interface"),
+    ("wg_interface_restart", "Restart the WireGuard interface"),
 ):
     TOOLS_SCHEMA.append(
         {
@@ -537,7 +537,7 @@ TOOLS_SCHEMA.append(
 TOOLS_SCHEMA.extend(
     [
         {
-            "name": "wg_show_config",
+            "name": "wg_show_interface_config",
             "description": (
                 "Show the interface configuration (live, or the saved file if the "
                 "interface is down). Keys are masked unless show_secrets is true."
@@ -552,7 +552,7 @@ TOOLS_SCHEMA.extend(
             },
         },
         {
-            "name": "wg_check_config",
+            "name": "wg_check_interface_config",
             "description": (
                 "Validate a WireGuard config without starting it: sections, keys, "
                 "CIDRs, duplicate peers, and subnet overlaps."
@@ -631,7 +631,7 @@ TOOLS_SCHEMA.extend(
         {
             "name": "wg_service_disable",
             "description": (
-                "Disable autostart for the interface (does not stop it; use wg_stop)."
+                "Disable autostart for the interface (does not stop it; use wg_interface_stop)."
             ),
             "inputSchema": {
                 "type": "object",

@@ -73,7 +73,7 @@ async def test_route_tool_call(patched_router):
                     "tool_calls": [
                         {
                             "function": {
-                                "name": "wg_status",
+                                "name": "wg_interface_status",
                                 "arguments": '{"interface": "wg0"}',
                             }
                         }
@@ -86,7 +86,7 @@ async def test_route_tool_call(patched_router):
     result = await router.route("status", "sess-1")
 
     assert result["type"] == "tool_call"
-    assert result["tool_name"] == "wg_status"
+    assert result["tool_name"] == "wg_interface_status"
     assert result["tool_args"] == {"interface": "wg0"}
 
 
@@ -109,7 +109,7 @@ async def test_route_broken_tool_arguments(patched_router):
             {
                 "message": {
                     "tool_calls": [
-                        {"function": {"name": "wg_status", "arguments": "not-json"}}
+                        {"function": {"name": "wg_interface_status", "arguments": "not-json"}}
                     ]
                 }
             }

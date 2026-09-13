@@ -7,7 +7,7 @@ from .ops.service import apply_autostart
 from .protocol import run
 from .tools import HANDLERS, TOOLS_SCHEMA
 
-logger = logging.getLogger("loomwg.server")
+logger = logging.getLogger("LoomWG.server")
 
 
 def run_server() -> None:

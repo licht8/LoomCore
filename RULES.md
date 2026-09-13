@@ -159,12 +159,12 @@ Main file: `main.py`.
   Example schema:
   ```json
   {
-    "name": "wg_status",
+    "name": "wg_interface_status",
     "description": "Show WireGuard status",
     "inputSchema": {"type": "object", "properties": {}, "required": []}
   }
   ```
-- **Call:** the hub writes to `stdin`: `{"method": "tools/call", "params": {"name": "wg_status"}}`.
+- **Call:** the hub writes to `stdin`: `{"method": "tools/call", "params": {"name": "wg_interface_status"}}`.
 - **Result:** the plugin writes to `stdout`: `{"result": {"content": [{"type": "text", "text": "Peers: ..."}]}}`.
 - **Security rule:** a plugin must **not** have root on the host unless strictly
   necessary. Prefer running the plugin as a regular user (or in a container with the required mounts).

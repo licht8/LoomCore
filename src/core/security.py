@@ -28,9 +28,9 @@ def classify_tool_risk(tool_name: str) -> str:
         "wg_remove_peer",
         "wg_export_existing_clients",
         "wg_setup_server",
-        "wg_start",
-        "wg_stop",
-        "wg_restart",
+        "wg_interface_start",
+        "wg_interface_stop",
+        "wg_interface_restart",
         "wg_service_enable",
         "wg_service_disable",
     }

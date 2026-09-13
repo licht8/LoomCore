@@ -8,7 +8,7 @@ only a terminal/editor — there is no Windows-native support.
 
 | Level | Marker | What it checks | Where to run |
 |---|---|---|---|
-| Unit | — (default) | core, LLM router, manager, loomwg logic, JSON-RPC protocol | anywhere (WSL2/CI) |
+| Unit | — (default) | core, LLM router, manager, LoomWG logic, JSON-RPC protocol | anywhere (WSL2/CI) |
 | Integration | `integration` | Postgres reachability | WSL2/Docker/CI |
 | E2E | `e2e` | real WireGuard (`wg-quick`) | WSL2/VDS |
 

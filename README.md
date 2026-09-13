@@ -26,7 +26,7 @@ Nginx is the only public entrypoint, and it also proxies the WebSocket.
 
 LoomCore loads plugins from `plugins/<name>/main.py` automatically. A plugin runs
 on the same Linux host in a host-networked container and can use the provided
-host integrations. `plugins/loomwg` manages WireGuard (server setup, peers,
+host integrations. `plugins/LoomWG` manages WireGuard (server setup, peers,
 client configs/QR).
 
 Detailed instructions: [VDS deploy](docs/setup/DEPLOY.md) and the

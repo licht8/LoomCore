@@ -1,4 +1,4 @@
-"""Plugin test: loomwg JSON-RPC contract (without calling wg)."""
+"""Plugin test: LoomWG JSON-RPC contract (without calling wg)."""
 
 import json
 import subprocess
@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = PROJECT_ROOT / "plugins" / "loomwg" / "main.py"
+PLUGIN = PROJECT_ROOT / "plugins" / "LoomWG" / "main.py"
 
 
 def _run_requests(*requests: dict) -> list[dict]:
@@ -35,10 +35,10 @@ def test_initialize_and_tools_list():
 
     tools = responses[1]["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert {"wg_status", "wg_list_peers", "wg_export_existing_clients"} <= names
+    assert {"wg_interface_status", "wg_list_peers", "wg_export_existing_clients"} <= names
     assert {
-        "wg_show_config",
-        "wg_check_config",
+        "wg_show_interface_config",
+        "wg_check_interface_config",
         "wg_stats",
         "wg_service_enable",
         "wg_service_disable",

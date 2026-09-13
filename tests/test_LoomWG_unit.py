@@ -1,4 +1,4 @@
-"""Unit tests for loomwg plugin logic without real WireGuard calls."""
+"""Unit tests for LoomWG plugin logic without real WireGuard calls."""
 
 import base64
 import time

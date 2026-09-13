@@ -1,6 +1,6 @@
 # LoomWG plugin
 
-WireGuard management plugin (`plugins/loomwg`). It runs as an MCP subprocess and
+WireGuard management plugin (`plugins/LoomWG`). It runs as an MCP subprocess and
 talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 (the `hub` container uses `network_mode: host`).
 
@@ -15,8 +15,8 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 
 ## Layout
 
-`plugins/loomwg/main.py` is a thin launcher (`from loomwg.server import run_server`).
-The implementation lives in the `loomwg` package:
+`plugins/LoomWG/main.py` is a thin launcher (`from LoomWG.server import run_server`).
+The implementation lives in the `LoomWG` package:
 
 - `server.py`, `protocol.py`, `results.py` — MCP wiring, JSON-RPC stdio, result helper.
 - `tools.py` — tool handlers and `TOOLS_SCHEMA`.
@@ -54,39 +54,39 @@ Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
 |---|---|---|
 | `wg_list_interfaces` | safe | Overview of all interfaces: active/config present. |
 | `wg_setup_server` | dangerous | Create the server config, enable forwarding, firewall/NAT. |
-| `wg_show_config` | safe | Show the live (or saved) config; keys masked unless `show_secrets`. |
-| `wg_check_config` | safe | Validate a config without starting it (keys, CIDRs, duplicates, overlaps). |
-| `wg_status` | safe | Interface status and peer online counts. |
+| `wg_show_interface_config` | safe | Show the live (or saved) config; keys masked unless `show_secrets`. |
+| `wg_check_interface_config` | safe | Validate a config without starting it (keys, CIDRs, duplicates, overlaps). |
+| `wg_interface_status` | safe | Interface status and peer online counts. |
 | `wg_diagnostics` | safe | In-depth check: wg installed, active, link, config present. |
 | `wg_stats` | safe | Snapshot totals, per-peer share, top peers (no history). |
-| `wg_add_peer` | moderate | Create/track a client (generates keys when no `public_key`); idempotent. |
+| `wg_create_peer` | moderate | Create/track a client (generates keys when no `public_key`); idempotent. |
 | `wg_remove_peer` | dangerous | Remove by `name` (store) or `public_key`; deletes peer, files, record. |
 | `wg_list_peers` | safe | Clients from the store merged with live peers (unmanaged/stale reported). |
-| `wg_start` / `wg_stop` / `wg_restart` | dangerous | Interface lifecycle. |
+| `wg_interface_start` / `wg_interface_stop` / `wg_interface_restart` | dangerous | Interface lifecycle. |
 | `wg_service_enable` / `wg_service_disable` | dangerous | App-managed autostart flag. |
 | `wg_export_existing_clients` | dangerous | Import untracked peers and (re)issue config + QR links for all clients. |
 | `wg_get_client_artifact` | internal | Artifact download by client name (not exposed to the LLM). |
 
 Risk is enforced by the core (`src/core/security.py:classify_tool_risk`);
 `dangerous` tools require explicit admin approval. `wg_create_client` no longer
-exists — use `wg_add_peer` + `wg_export_existing_clients`.
+exists — use `wg_create_peer` + `wg_export_existing_clients`.
 
 ## Parameters
 
-- `wg_add_peer`: `name` (required), `interface`, `public_key` (optional → keys are
+- `wg_create_peer`: `name` (required), `interface`, `public_key` (optional → keys are
   generated), `addresses` (optional → auto-allocated), `preshared_key`, `allowed_ips`.
 - `wg_remove_peer`: `name` or `public_key`.
 - `wg_list_peers`: `interface`.
 - `wg_export_existing_clients`: `interface`, `rotate` (default `true`),
   `kind` (`config`/`qr`/`both`), `names` (optional subset).
-- `wg_show_config`: `interface`, `show_secrets`.
-- `wg_check_config`: `interface` or `path` or `content`.
+- `wg_show_interface_config`: `interface`, `show_secrets`.
+- `wg_check_interface_config`: `interface` or `path` or `content`.
 - `wg_stats`: `interface`, `top`.
 - `wg_service_enable` / `wg_service_disable`: `interface`.
 
 ## Flows
 
-- **New client:** `wg_add_peer {name}` → generates keys, adds the peer, and writes
+- **New client:** `wg_create_peer {name}` → generates keys, adds the peer, and writes
   `clients/conf/<name>.conf` + `clients/qr_code/<name>.png`, returning links.
   `wg_export_existing_clients` re-issues links later.
 - **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored

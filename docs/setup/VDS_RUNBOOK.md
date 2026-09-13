@@ -227,7 +227,7 @@ Run this after sections 1-6. It exercises the product the way an end user would.
 - Wrong token -> login rejected. Empty `ADMIN_TOKEN` -> 503 "Admin access not configured".
 
 ### 11.2 Read-only chat (safe tools auto-run)
-- `show wireguard status` -> `wg_status` runs automatically and shows a tool result.
+- `show wireguard status` -> `wg_interface_status` runs automatically and shows a tool result.
 - `list peers` -> `wg_list_peers`.
 
 Verify history:

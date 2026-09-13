@@ -1,4 +1,4 @@
-"""E2E test for the loomwg plugin: real WireGuard (Linux + root).
+"""E2E test for the LoomWG plugin: real WireGuard (Linux + root).
 
 Skipped by default. Run with:
     sudo LOOMWG_E2E=1 pytest -m e2e
