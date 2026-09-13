@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
-import subprocess
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -15,80 +14,19 @@ from pathlib import Path
 from ..peers.config import add_peer, config_path, iter_peers, remove_peer
 from ..util.files import atomic_write_text
 from ..wg.config_parser import parse_sections
-from ..wg.device import CommandError, config_directory, run_command
+from ..wg.device import CommandError, run_command
 from ..wg.keys import generate_keypair
 from . import store as clients_store
-
-CLIENTS_DIR = config_directory() / "clients"
-CONF_DIR_NAME = "conf"
-QR_DIR_NAME = "qr_code"
-
-
-def _format_endpoint(endpoint: str, port: int) -> str:
-    """Format endpoint, bracketing IPv6 addresses per WireGuard spec."""
-    try:
-        ip_address(endpoint)
-    except ValueError:
-        pass
-    else:
-        if ":" in endpoint:
-            endpoint = f"[{endpoint}]"
-    return f"{endpoint}:{port}"
-
-
-def _generate_qr(client_config: str, qr_path: Path) -> None:
-    """Render a client config to a PNG QR code (mode 600)."""
-    qr_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        qrencode = subprocess.run(
-            ["qrencode", "-o", str(qr_path), "-t", "png"],
-            input=client_config,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-    except OSError as exc:
-        raise CommandError(f"qrencode is not available: {exc}") from exc
-    if qrencode.returncode != 0:
-        raise CommandError(qrencode.stderr.strip() or "qrencode failed")
-    os.chmod(qr_path, 0o600)
-
-
-def build_client_config(
-    server_public_key: str,
-    listen_port: int,
-    addresses: list[str],
-    private_key: str,
-    preshared_key: str,
-    endpoint: str,
-    dns: list[str] | None = None,
-) -> str:
-    """Render a full-tunnel client config (private key included)."""
-    return "\n".join(
-        [
-            "[Interface]",
-            f"Address = {', '.join(addresses)}",
-            f"PrivateKey = {private_key}",
-            f"DNS = {', '.join(dns or ['1.1.1.1', '1.0.0.1'])}",
-            "",
-            "[Peer]",
-            f"PublicKey = {server_public_key}",
-            f"PresharedKey = {preshared_key}",
-            f"Endpoint = {_format_endpoint(endpoint, listen_port)}",
-            "AllowedIPs = 0.0.0.0/0, ::/0",
-            "PersistentKeepalive = 25",
-            "",
-        ]
-    )
-
-
-def client_paths(name: str) -> tuple[Path, Path]:
-    directory = clients_directory()
-    return (
-        directory / CONF_DIR_NAME / f"{name}.conf",
-        directory / QR_DIR_NAME / f"{name}.png",
-    )
+from .paths import (
+    CONF_DIR_NAME,
+    QR_DIR_NAME,
+    client_paths,
+    clients_directory,
+    migrate_client_layout,
+)
+from .qr import generate_qr as _generate_qr
+from .render import build_client_config
+from .render import format_endpoint as _format_endpoint  # noqa: F401
 
 
 def rebuild_client(name: str, record: dict, interface: str) -> dict:
@@ -125,30 +63,6 @@ def rebuild_client(name: str, record: dict, interface: str) -> dict:
         "client_config": str(client_path),
         "qr_code": str(qr_path),
     }
-
-
-def clients_directory() -> Path:
-    return CLIENTS_DIR
-
-
-def migrate_client_layout() -> dict[str, int]:
-    """Move legacy flat ``clients/*.conf`` and ``*.png`` into the split dirs."""
-    directory = clients_directory()
-    moved = {"conf": 0, "qr": 0}
-    if not directory.is_dir():
-        return moved
-
-    conf_dir = directory / CONF_DIR_NAME
-    qr_dir = directory / QR_DIR_NAME
-    for conf_path in directory.glob("*.conf"):
-        conf_dir.mkdir(parents=True, exist_ok=True)
-        conf_path.replace(conf_dir / conf_path.name)
-        moved["conf"] += 1
-    for qr_path in directory.glob("*.png"):
-        qr_dir.mkdir(parents=True, exist_ok=True)
-        qr_path.replace(qr_dir / qr_path.name)
-        moved["qr"] += 1
-    return moved
 
 
 def _detect_endpoint() -> str:

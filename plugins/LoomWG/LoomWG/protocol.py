@@ -7,7 +7,24 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from . import __version__
+from .manifest import load_manifest
+
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+def _server_identity() -> tuple[str, str]:
+    """Return (name, version) from the manifest, falling back to defaults."""
+    try:
+        manifest = load_manifest()
+    except (OSError, ValueError):
+        return "LoomWG", __version__
+    name = str(manifest.get("name") or "LoomWG")
+    version = str(manifest.get("version") or __version__)
+    return name, version
+
+
+SERVER_NAME, SERVER_VERSION = _server_identity()
 
 
 def response(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -29,7 +46,7 @@ def dispatch(
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "LoomWG", "version": "0.1.0"},
+                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             },
         )
     if method == "tools/list":

@@ -116,25 +116,25 @@ def test_add_peer_rejects_bad_key(load_loomwg, monkeypatch, tmp_path):
         config.add_peer("wg0", "not-a-key", ["10.0.0.2/32"], None)
 
 
-# === install.py: LOOMWG_SKIP_FIREWALL ===
+# === provision.py: LOOMWG_SKIP_FIREWALL ===
 
-def _patch_setup_server(install, monkeypatch, tmp_path):
-    monkeypatch.setattr(install, "config_path", lambda interface: tmp_path / f"{interface}.conf")
-    monkeypatch.setattr(install, "run_command", lambda *args, **kwargs: "ok")
+def _patch_setup_server(provision, monkeypatch, tmp_path):
+    monkeypatch.setattr(provision, "config_path", lambda interface: tmp_path / f"{interface}.conf")
+    monkeypatch.setattr(provision, "run_command", lambda *args, **kwargs: "ok")
     monkeypatch.setattr(
-        install, "generate_keypair", lambda: {"private_key": "priv", "public_key": "pub"}
+        provision, "generate_keypair", lambda: {"private_key": "priv", "public_key": "pub"}
     )
     monkeypatch.setattr(
-        install,
-        "_detect_host",
+        provision,
+        "detect_host",
         lambda: {"os": "rocky 10", "external_interface": "eth0", "firewall": "firewalld"},
     )
-    monkeypatch.setattr(install, "_enable_forwarding", lambda: None)
+    monkeypatch.setattr(provision, "enable_forwarding", lambda: None)
 
 
 def test_setup_server_skips_firewall(load_loomwg, monkeypatch, tmp_path):
-    install = load_loomwg("install")["install"]
-    _patch_setup_server(install, monkeypatch, tmp_path)
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path)
     monkeypatch.setenv("LOOMWG_SKIP_FIREWALL", "1")
     called = {"firewall": False}
 
@@ -142,9 +142,9 @@ def test_setup_server_skips_firewall(load_loomwg, monkeypatch, tmp_path):
         called["firewall"] = True
         return "firewalld"
 
-    monkeypatch.setattr(install, "_configure_firewall", fake_configure)
+    monkeypatch.setattr(provision, "configure_firewall", fake_configure)
 
-    result = install.setup_server({"interface": "wgtest"})
+    result = provision.setup_server({"interface": "wgtest"})
 
     assert result["firewall"] == "skipped"
     assert called["firewall"] is False
@@ -152,20 +152,20 @@ def test_setup_server_skips_firewall(load_loomwg, monkeypatch, tmp_path):
 
 
 def test_setup_server_configures_firewall_by_default(load_loomwg, monkeypatch, tmp_path):
-    install = load_loomwg("install")["install"]
-    _patch_setup_server(install, monkeypatch, tmp_path)
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path)
     monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
-    monkeypatch.setattr(install, "_configure_firewall", lambda *args, **kwargs: "firewalld")
+    monkeypatch.setattr(provision, "configure_firewall", lambda *args, **kwargs: "firewalld")
 
-    result = install.setup_server({"interface": "wgtest"})
+    result = provision.setup_server({"interface": "wgtest"})
 
     assert result["firewall"] == "firewalld"
 
 
-# === install.py: dependency installation (in-container) ===
+# === dependencies.py: dependency installation (in-container) ===
 
 def test_dependency_report_all_present(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     monkeypatch.setattr(install.shutil, "which", lambda tool: f"/usr/bin/{tool}")
 
     report = install.dependency_report()
@@ -176,12 +176,12 @@ def test_dependency_report_all_present(load_loomwg, monkeypatch):
 
 
 def test_ensure_dependencies_noop_when_present(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     monkeypatch.setattr(install.shutil, "which", lambda tool: f"/usr/bin/{tool}")
     called = {"install": False}
     monkeypatch.setattr(
         install,
-        "_container_shell",
+        "run_shell",
         lambda *args, **kwargs: called.__setitem__("install", True),
     )
 
@@ -192,7 +192,7 @@ def test_ensure_dependencies_noop_when_present(load_loomwg, monkeypatch):
 
 
 def test_ensure_dependencies_installs_missing(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     state = {"missing": "wg"}
 
     def fake_which(tool):
@@ -206,7 +206,7 @@ def test_ensure_dependencies_installs_missing(load_loomwg, monkeypatch):
         state["missing"] = None
         return ""
 
-    monkeypatch.setattr(install, "_container_shell", fake_shell)
+    monkeypatch.setattr(install, "run_shell", fake_shell)
 
     result = install.ensure_dependencies()
 
@@ -218,7 +218,7 @@ def test_ensure_dependencies_installs_missing(load_loomwg, monkeypatch):
 
 
 def test_ensure_dependencies_requires_package_manager(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     monkeypatch.setattr(install.shutil, "which", lambda tool: None)
 
     with pytest.raises(RuntimeError, match="no supported package manager"):
@@ -226,7 +226,7 @@ def test_ensure_dependencies_requires_package_manager(load_loomwg, monkeypatch):
 
 
 def test_ensure_kernel_module_reports_host_hint(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     monkeypatch.setattr(install, "run_command", lambda *args, **kwargs: "")
     monkeypatch.setattr(install, "_kernel_support_available", lambda: False)
 
@@ -237,7 +237,7 @@ def test_ensure_kernel_module_reports_host_hint(load_loomwg, monkeypatch):
 
 
 def test_ensure_kernel_module_available(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     monkeypatch.setattr(install, "run_command", lambda *args, **kwargs: "")
     monkeypatch.setattr(install, "_kernel_support_available", lambda: True)
 
@@ -247,7 +247,7 @@ def test_ensure_kernel_module_available(load_loomwg, monkeypatch):
 
 
 def test_install_wireguard_returns_ready(load_loomwg, monkeypatch):
-    install = load_loomwg("install")["install"]
+    install = load_loomwg("dependencies")["dependencies"]
     monkeypatch.setattr(
         install,
         "ensure_dependencies",
