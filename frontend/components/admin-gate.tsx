@@ -1,16 +1,17 @@
 "use client"
 
 import { FormEvent, useEffect, useState, type ReactNode } from "react"
-import { getAdminToken, setAdminToken } from "@/lib/admin-token"
+import { getAdminToken, setAdminToken, withAdminToken } from "@/lib/admin-token"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 const STATUS_URL = "/api/plugins/status"
 
 async function validateToken(token: string): Promise<boolean> {
   try {
-    const response = await fetch(
-      `${STATUS_URL}?access_token=${encodeURIComponent(token)}`,
-      { credentials: "include" },
-    )
+    const response = await fetch(withAdminToken(STATUS_URL, token), {
+      credentials: "include",
+    })
     return response.ok
   } catch {
     return false
@@ -77,20 +78,22 @@ export function AdminGate({ children }: { children: ReactNode }) {
     <main className="flex min-h-screen items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm space-y-4">
         <div className="flex rounded-lg border border-border p-1 text-sm">
-          <button
-            className={`flex-1 rounded-md px-3 py-1.5 ${mode === "password" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+          <Button
+            variant={mode === "password" ? "default" : "ghost"}
+            className="flex-1"
             onClick={() => { setMode("password"); setError("") }}
             type="button"
           >
             Login and TOTP
-          </button>
-          <button
-            className={`flex-1 rounded-md px-3 py-1.5 ${mode === "token" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+          </Button>
+          <Button
+            variant={mode === "token" ? "default" : "ghost"}
+            className="flex-1"
             onClick={() => { setMode("token"); setError("") }}
             type="button"
           >
             Token
-          </button>
+          </Button>
         </div>
 
         {mode === "password" ? (
@@ -99,11 +102,11 @@ export function AdminGate({ children }: { children: ReactNode }) {
               <h1 className="text-xl font-semibold">LoomCore Admin</h1>
               <p className="mt-1 text-sm text-muted-foreground">Sign in to manage the server</p>
             </div>
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" />
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete="current-password" />
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={totp} onChange={(event) => setTotp(event.target.value)} placeholder="Authenticator app code" inputMode="numeric" />
+            <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" />
+            <Input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete="current-password" />
+            <Input value={totp} onChange={(event) => setTotp(event.target.value)} placeholder="Authenticator app code" inputMode="numeric" />
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <button className="w-full rounded-lg bg-primary px-3 py-2 text-primary-foreground" type="submit">Sign in</button>
+            <Button className="w-full" type="submit">Sign in</Button>
           </form>
         ) : (
           <form onSubmit={loginWithToken} className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-xl">
@@ -111,9 +114,9 @@ export function AdminGate({ children }: { children: ReactNode }) {
               <h1 className="text-xl font-semibold">LoomCore Admin</h1>
               <p className="mt-1 text-sm text-muted-foreground">Enter the admin token</p>
             </div>
-            <input className="w-full rounded-lg border bg-background px-3 py-2" value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_TOKEN" type="password" autoComplete="off" />
+            <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_TOKEN" type="password" autoComplete="off" />
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <button className="w-full rounded-lg bg-primary px-3 py-2 text-primary-foreground" type="submit">Sign in</button>
+            <Button className="w-full" type="submit">Sign in</Button>
           </form>
         )}
       </div>

@@ -14,9 +14,8 @@ export function setAdminToken(token: string): void {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
-/** Append access_token to the URL if a token is stored. */
-export function withAdminToken(url: string): string {
-  const token = getAdminToken()
+/** Append access_token to the URL if a token is given or stored. */
+export function withAdminToken(url: string, token = getAdminToken()): string {
   if (!token) return url
   const separator = url.includes("?") ? "&" : "?"
   return `${url}${separator}access_token=${encodeURIComponent(token)}`

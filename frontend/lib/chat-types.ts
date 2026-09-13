@@ -1,33 +1,48 @@
 // ===== Types for the WebSocket integration =====
 
-/** Event arriving from the backend over WebSocket */
-export interface WsMessage {
-  type:
-    | "thinking"
-    | "response"
-    | "tool_call"
-    | "tool_response"
-    | "approval_request"
-    | "schema_warning"
-    | "tool_denied"
-    | "cancelled"
-    | "busy"
-    | "error"
-  content?: string
-  text?: string
-  result?: string
-  tool?: string
-  args?: Record<string, unknown>
-  risk?: string
-  status?: "success" | "running" | "error"
-  summary?: string
-  code?: string
-  needs_approval?: boolean
-  action?: string
-  error?: string
-  artifacts?: Array<{ label: string; url: string }>
-  unavailable_plugins?: string[]
+/** Downloadable artifact attached to a tool result. */
+export interface ArtifactLink {
+  label: string
+  url: string
 }
+
+/** Event arriving from the backend over WebSocket (discriminated on `type`). */
+export type WsMessage =
+  | { type: "thinking" }
+  | { type: "response"; content?: string; text?: string }
+  | {
+      type: "tool_call"
+      content?: string
+      text?: string
+      tool?: string
+      args?: Record<string, unknown>
+      summary?: string
+      code?: string
+      artifacts?: ArtifactLink[]
+    }
+  | {
+      type: "tool_response"
+      status?: "success" | "running" | "error" | "cancelled"
+      content?: string
+      text?: string
+      error?: string
+      summary?: string
+      code?: string
+      artifacts?: ArtifactLink[]
+    }
+  | {
+      type: "approval_request"
+      action?: string
+      tool?: string
+      content?: string
+      text?: string
+      args?: Record<string, unknown>
+    }
+  | { type: "schema_warning"; unavailable_plugins?: string[] }
+  | { type: "tool_denied" }
+  | { type: "cancelled" }
+  | { type: "busy" }
+  | { type: "error"; error?: string; text?: string; content?: string }
 
 /** Chat message type in the UI feed */
 export type ChatMessageRole = "user" | "assistant" | "tool"
@@ -42,7 +57,7 @@ export interface ChatMessage {
   toolStatus?: "pending" | "success" | "error" | "cancelled"
   toolSummary?: string
   toolCode?: string
-  artifacts?: Array<{ label: string; url: string }>
+  artifacts?: ArtifactLink[]
 }
 
 /** Internal state of the useChat hook (not exported to the UI) */
@@ -71,7 +86,7 @@ export interface StoredToolCall {
   status?: "success" | "error" | "cancelled"
   summary?: string
   risk?: string
-  artifacts?: Array<{ label: string; url: string }>
+  artifacts?: ArtifactLink[]
 }
 
 /** A stored message row returned by GET /api/sessions/{id}/messages. */
