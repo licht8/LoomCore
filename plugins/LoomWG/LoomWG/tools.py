@@ -19,8 +19,9 @@ from .clients.client import (
 )
 from .manifest import runtime_report
 from .ops import service as service_mode
-from .ops.install import dependency_report, install_wireguard, setup_server
+from .ops.dependencies import dependency_report, install_wireguard
 from .ops.lifecycle import format_lifecycle, restart, start, stop
+from .ops.provision import setup_server
 from .ops.stats import stats as stats_tool
 from .peers.config import remove_peer as delete_peer
 from .peers.config import upsert_peer
