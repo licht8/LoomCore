@@ -5,7 +5,7 @@ import pytest
 
 from src.config import settings
 from src.llm import client as client_module
-from src.llm.client import HetznerClient, LlmTimeoutError
+from src.llm.client import HetznerClient, LlmError, LlmTimeoutError
 
 
 class _FakeResponse:
@@ -18,6 +18,22 @@ class _FakeResponse:
 
     def json(self):
         return {"choices": [{"message": {"content": "ok"}}]}
+
+
+class _ErrorResponse:
+    status_code = 500
+    content = b"oops"
+    text = "server error"
+
+    def raise_for_status(self):
+        raise httpx.HTTPStatusError(
+            "server error",
+            request=httpx.Request("POST", "http://llm.test"),
+            response=self,
+        )
+
+    def json(self):
+        return {}
 
 
 class _FakeClient:
@@ -72,3 +88,16 @@ async def test_retries_transport_error_then_succeeds(monkeypatch):
 
     assert result["choices"][0]["message"]["content"] == "ok"
     assert fake.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_http_status_error_is_not_retried(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 3)
+    fake = _install(monkeypatch, [_ErrorResponse()])
+
+    with pytest.raises(LlmError):
+        await HetznerClient(api_key="k").chat_completion(
+            [{"role": "user", "content": "hi"}]
+        )
+
+    assert fake.calls == 1

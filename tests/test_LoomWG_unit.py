@@ -3,6 +3,7 @@
 import base64
 import time
 from datetime import UTC, datetime
+from ipaddress import ip_address
 
 import pytest
 
@@ -354,3 +355,355 @@ def test_read_interface_handles_none_allowed_ips(load_loomwg, monkeypatch):
     peer = wg.read_interface("wg0")["peers"][0]
 
     assert peer["allowed_ips"] == []
+
+
+# === device.py: run_command / has_link / configured_interfaces ===
+
+class _Completed:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_run_command_raises_on_failure(load_loomwg, monkeypatch):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(
+        device.subprocess, "run", lambda *a, **k: _Completed(returncode=2, stderr="boom")
+    )
+
+    with pytest.raises(device.CommandError, match="boom"):
+        device.run_command(["wg", "show"])
+
+
+def test_run_command_wraps_oserror(load_loomwg, monkeypatch):
+    device = load_loomwg("wireguard")["wireguard"]
+
+    def explode(*args, **kwargs):
+        raise OSError("wg missing")
+
+    monkeypatch.setattr(device.subprocess, "run", explode)
+
+    with pytest.raises(device.CommandError, match="wg missing"):
+        device.run_command(["wg"])
+
+
+def test_run_command_strips_output(load_loomwg, monkeypatch):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(
+        device.subprocess, "run", lambda *a, **k: _Completed(stdout="  hi \n")
+    )
+
+    assert device.run_command(["wg"]) == "hi"
+
+
+def test_has_link_true_and_false(load_loomwg, monkeypatch):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(device, "run_command", lambda *a, **k: "1: wg0")
+    assert device.has_link("wg0") is True
+
+    def missing(*args, **kwargs):
+        raise device.CommandError("not found")
+
+    monkeypatch.setattr(device, "run_command", missing)
+    assert device.has_link("wg0") is False
+
+
+def test_configured_interfaces_filters_names(load_loomwg, monkeypatch, tmp_path):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(device, "CONFIG_DIR", tmp_path)
+    (tmp_path / "wg0.conf").write_text("", encoding="utf-8")
+    (tmp_path / "bad name.conf").write_text("", encoding="utf-8")
+
+    assert device.configured_interfaces() == ["wg0"]
+
+
+def test_configured_interfaces_missing_dir(load_loomwg, monkeypatch, tmp_path):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(device, "CONFIG_DIR", tmp_path / "nope")
+
+    assert device.configured_interfaces() == []
+
+
+def test_config_directory_exposes_config_dir(load_loomwg, monkeypatch, tmp_path):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(device, "CONFIG_DIR", tmp_path)
+
+    assert device.config_directory() == tmp_path
+
+
+# === keys.py ===
+
+def test_validate_public_key_strips_and_accepts(load_loomwg):
+    keys = load_loomwg("keys")["keys"]
+    key = _fake_key(5)
+
+    assert keys.validate_public_key(f"  {key}  ") == key
+
+
+def test_validate_public_key_rejects_non_base64(load_loomwg):
+    keys = load_loomwg("keys")["keys"]
+
+    with pytest.raises(ValueError, match="Invalid WireGuard public key"):
+        keys.validate_public_key("not-a-key")
+
+
+def test_validate_public_key_rejects_wrong_length(load_loomwg):
+    keys = load_loomwg("keys")["keys"]
+    short = base64.b64encode(b"short").decode()
+
+    with pytest.raises(ValueError, match="32 bytes"):
+        keys.validate_public_key(short)
+
+
+def test_generate_keypair(load_loomwg, monkeypatch):
+    keys = load_loomwg("keys")["keys"]
+
+    def fake_run(command, timeout=15, input_text=None):
+        return "PRIV" if command[1] == "genkey" else "PUB"
+
+    monkeypatch.setattr(keys, "run_command", fake_run)
+
+    assert keys.generate_keypair() == {"private_key": "PRIV", "public_key": "PUB"}
+
+
+def test_generate_keypair_empty_raises(load_loomwg, monkeypatch):
+    keys = load_loomwg("keys")["keys"]
+    monkeypatch.setattr(keys, "run_command", lambda *a, **k: "")
+
+    with pytest.raises(keys.CommandError):
+        keys.generate_keypair()
+
+
+# === lifecycle.py ===
+
+def test_lifecycle_start_already_running(load_loomwg, monkeypatch):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+    monkeypatch.setattr(lifecycle, "active_interfaces", lambda: ["wg0"])
+    called: list = []
+    monkeypatch.setattr(lifecycle, "run_command", lambda *a, **k: called.append(a))
+
+    assert lifecycle.start({"interface": "wg0"})["status"] == "already_running"
+    assert called == []
+
+
+def test_lifecycle_start_runs_wg_quick(load_loomwg, monkeypatch):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+    monkeypatch.setattr(lifecycle, "active_interfaces", lambda: [])
+    commands: list = []
+    monkeypatch.setattr(lifecycle, "run_command", lambda command, **k: commands.append(command))
+
+    assert lifecycle.start({"interface": "wg0"})["status"] == "started"
+    assert commands == [["wg-quick", "up", "wg0"]]
+
+
+def test_lifecycle_stop_runs_wg_quick(load_loomwg, monkeypatch):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+    monkeypatch.setattr(lifecycle, "active_interfaces", lambda: ["wg0"])
+    commands: list = []
+    monkeypatch.setattr(lifecycle, "run_command", lambda command, **k: commands.append(command))
+
+    assert lifecycle.stop({"interface": "wg0"})["status"] == "stopped"
+    assert commands == [["wg-quick", "down", "wg0"]]
+
+
+def test_lifecycle_stop_already_stopped(load_loomwg, monkeypatch):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+    monkeypatch.setattr(lifecycle, "active_interfaces", lambda: [])
+    called: list = []
+    monkeypatch.setattr(lifecycle, "run_command", lambda *a, **k: called.append(a))
+
+    assert lifecycle.stop({"interface": "wg0"})["status"] == "already_stopped"
+    assert called == []
+
+
+def test_lifecycle_restart_down_then_up(load_loomwg, monkeypatch):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+    monkeypatch.setattr(lifecycle, "active_interfaces", lambda: ["wg0"])
+    commands: list = []
+    monkeypatch.setattr(lifecycle, "run_command", lambda command, **k: commands.append(command))
+
+    assert lifecycle.restart({"interface": "wg0"})["status"] == "restarted"
+    assert commands == [["wg-quick", "down", "wg0"], ["wg-quick", "up", "wg0"]]
+
+
+def test_lifecycle_rejects_bad_interface(load_loomwg, monkeypatch):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+    monkeypatch.setattr(lifecycle, "active_interfaces", lambda: [])
+
+    with pytest.raises(ValueError):
+        lifecycle.start({"interface": "bad iface!"})
+
+
+def test_format_lifecycle(load_loomwg):
+    lifecycle = load_loomwg("lifecycle")["lifecycle"]
+
+    assert (
+        lifecycle.format_lifecycle({"interface": "wg0", "status": "already_running"})
+        == "wg0: already running"
+    )
+    assert lifecycle.format_lifecycle({"interface": "wg0", "status": "odd"}) == "wg0: odd"
+
+
+# === peers/config.py: more cases ===
+
+def test_config_path_uses_config_directory(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+
+    assert config.config_path("wg0") == tmp_path / "wg0.conf"
+
+
+def test_iter_peers_parses_blocks(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    key_a = _fake_key(11)
+    key_b = _fake_key(12)
+    (tmp_path / "wg0.conf").write_text(
+        "[Interface]\nPrivateKey = x\n\n"
+        f"[Peer]\nPublicKey = {key_a}\n"
+        "AllowedIPs = 10.0.0.2/32, fd00::2/128\nPresharedKey = psk\n\n"
+        "[Peer]\nAllowedIPs = 10.0.0.3/32\n\n"
+        f"[Peer]\nPublicKey = {key_b}\nAllowedIPs = 10.0.0.4/32\n",
+        encoding="utf-8",
+    )
+
+    peers = config.iter_peers("wg0")
+
+    assert [peer["public_key"] for peer in peers] == [key_a, key_b]
+    assert peers[0]["allowed_ips"] == ["10.0.0.2/32", "fd00::2/128"]
+    assert peers[0]["preshared_key"] == "psk"
+    assert peers[1]["preshared_key"] is None
+
+
+def test_iter_peers_missing_file(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+
+    assert config.iter_peers("wg0") == []
+
+
+def test_add_peer_missing_config(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        config.add_peer("wg0", _fake_key(1), ["10.0.0.2/32"], None)
+
+
+def test_upsert_peer_adds_then_detects_no_change(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    (tmp_path / "wg0.conf").write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+    key = _fake_key(13)
+
+    assert config.upsert_peer("wg0", key, ["10.0.0.2/32"], None) is True
+    assert config.upsert_peer("wg0", key, ["10.0.0.2/32"], None) is False
+    assert config.upsert_peer("wg0", key, ["10.0.0.9/32"], None) is True
+    assert config.iter_peers("wg0")[0]["allowed_ips"] == ["10.0.0.9/32"]
+
+
+def test_remove_peer_unknown_raises(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    (tmp_path / "wg0.conf").write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        config.remove_peer("wg0", _fake_key(14))
+
+
+# === clients/client.py: allocation + create_client ===
+
+def test_allocate_addresses_exhaustion(load_loomwg, monkeypatch):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(
+        client,
+        "_used_addresses",
+        lambda interface: {ip_address("10.66.66.1"), ip_address("10.66.66.2")},
+    )
+
+    with pytest.raises(ValueError, match="No free"):
+        client._allocate_addresses("wg0", ["10.66.66.0/30"], [])
+
+
+def test_client_addresses_rejects_wide_prefix(load_loomwg):
+    client = load_loomwg("client")["client"]
+
+    with pytest.raises(ValueError, match="/32 or /128"):
+        client._client_addresses({"addresses": ["10.0.0.0/24"]}, "wg0", [], [])
+
+
+def test_client_addresses_rejects_duplicates(load_loomwg):
+    client = load_loomwg("client")["client"]
+
+    with pytest.raises(ValueError, match="duplicates"):
+        client._client_addresses(
+            {"addresses": ["10.0.0.2/32", "10.0.0.2/32"]}, "wg0", [], []
+        )
+
+
+def test_client_addresses_rejects_non_list(load_loomwg):
+    client = load_loomwg("client")["client"]
+
+    with pytest.raises(ValueError):
+        client._client_addresses({"addresses": "10.0.0.2/32"}, "wg0", [], [])
+
+
+def test_create_client_success(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(
+        client,
+        "_server_settings",
+        lambda interface: ("SERVERPUB", 51820, ["10.66.66.0/24"], ["10.66.66.1"]),
+    )
+    monkeypatch.setattr(
+        client, "_client_addresses", lambda *args, **kwargs: ["10.66.66.2/32"]
+    )
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+    monkeypatch.setattr(
+        client, "generate_keypair", lambda: {"private_key": "priv", "public_key": "pub"}
+    )
+    monkeypatch.setattr(client, "run_command", lambda *a, **k: "psk")
+    added: list = []
+    monkeypatch.setattr(client, "add_peer", lambda *a: added.append(a))
+    written: list = []
+    monkeypatch.setattr(client, "_write_secret", lambda path, content: written.append(path))
+    monkeypatch.setattr(client, "_generate_qr", lambda content, path: written.append(path))
+    conf = tmp_path / "alice.conf"
+    qr = tmp_path / "alice.png"
+    monkeypatch.setattr(client, "client_paths", lambda name: (conf, qr))
+
+    result = client.create_client(
+        {"interface": "wg0", "name": "alice", "endpoint": "1.2.3.4"}
+    )
+
+    assert result["public_key"] == "pub"
+    assert result["addresses"] == ["10.66.66.2/32"]
+    assert result["secret_persisted"] is True
+    assert added == [("wg0", "pub", ["10.66.66.2/32"], "psk")]
+    assert conf in written and qr in written
+
+
+def test_create_client_rejects_existing_name(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(
+        client,
+        "_server_settings",
+        lambda interface: ("SERVERPUB", 51820, ["10.66.66.0/24"], ["10.66.66.1"]),
+    )
+    monkeypatch.setattr(
+        client, "_client_addresses", lambda *args, **kwargs: ["10.66.66.2/32"]
+    )
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+    monkeypatch.setattr(
+        client, "generate_keypair", lambda: {"private_key": "priv", "public_key": "pub"}
+    )
+    monkeypatch.setattr(client, "run_command", lambda *a, **k: "psk")
+    conf = tmp_path / "alice.conf"
+    conf.write_text("existing", encoding="utf-8")
+    monkeypatch.setattr(client, "client_paths", lambda name: (conf, tmp_path / "alice.png"))
+
+    with pytest.raises(ValueError, match="already exists"):
+        client.create_client(
+            {"interface": "wg0", "name": "alice", "endpoint": "1.2.3.4"}
+        )
