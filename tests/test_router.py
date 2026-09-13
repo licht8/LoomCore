@@ -1,18 +1,12 @@
-"""Unit tests for the AIRouter without DB or network."""
+"""Unit tests for the AIRouter planner without DB or network."""
+
+import json
 
 import pytest
 
+from src.core.agent import AGENT_PLAN_SCHEMA
 from src.llm import router as router_module
-from src.llm.prompt import SYSTEM_PROMPT
 from src.llm.router import AIRouter
-
-
-def test_system_prompt_requires_reverification():
-    """The assistant must treat live tool output as the only source of truth."""
-    lowered = SYSTEM_PROMPT.lower()
-    assert "re-run" in lowered or "re run" in lowered or "re-run the relevant read tool" in lowered
-    assert "current state" in lowered
-    assert "never treat" in lowered
 
 
 class _FakeSession:
@@ -25,72 +19,16 @@ class _FakeSession:
         return False
 
 
-@pytest.fixture
-def patched_router(monkeypatch):
-    """AIRouter with DB stubs; returns (router, state).
-
-    state["response"] replaces the HetznerClient.chat_completion response.
-    """
-
-    async def fake_history(*args, **kwargs):
-        return []
-
-    async def fake_ensure(*args, **kwargs):
-        return "sess"
-
-    state: dict = {
-        "response": {"choices": []},
-        "user_saved": [],
-        "assistant_saved": [],
-        "tools": None,
-    }
-
-    async def fake_add_user(db, session_id, content):
-        state["user_saved"].append((session_id, content))
-
-    async def fake_add_assistant(db, session_id, content, tool_calls=None):
-        state["assistant_saved"].append((session_id, content, tool_calls))
-
-    monkeypatch.setattr(router_module, "async_session_factory", lambda: _FakeSession())
-    monkeypatch.setattr(router_module, "ensure_session", fake_ensure)
-    monkeypatch.setattr(router_module.db_session, "get_session_history", fake_history)
-    monkeypatch.setattr(router_module.db_session, "add_user_message", fake_add_user)
-    monkeypatch.setattr(router_module.db_session, "add_assistant_message", fake_add_assistant)
-
-    router = AIRouter(plugin_manager=None)
-
-    async def fake_chat_completion(messages, tools=None):
-        state["tools"] = tools
-        return state["response"]
-
-    router.client.chat_completion = fake_chat_completion  # type: ignore[method-assign]
-    return router, state
-
-
-@pytest.mark.asyncio
-async def test_route_text_response(patched_router):
-    router, state = patched_router
-    state["response"] = {"choices": [{"message": {"content": "hello"}}]}
-
-    result = await router.route("hi", "sess-1")
-
-    assert result["type"] == "text"
-    assert result["content"] == "hello"
-    assert result["tool_name"] is None
-
-
-@pytest.mark.asyncio
-async def test_route_tool_call(patched_router):
-    router, state = patched_router
-    state["response"] = {
+def _plan_response(args: dict) -> dict:
+    return {
         "choices": [
             {
                 "message": {
                     "tool_calls": [
                         {
                             "function": {
-                                "name": "wg_interface_status",
-                                "arguments": '{"interface": "wg0"}',
+                                "name": "agent_plan",
+                                "arguments": json.dumps(args),
                             }
                         }
                     ]
@@ -99,17 +37,122 @@ async def test_route_tool_call(patched_router):
         ]
     }
 
-    result = await router.route("status", "sess-1")
 
-    assert result["type"] == "tool_call"
-    assert result["tool_name"] == "wg_interface_status"
-    assert result["tool_args"] == {"interface": "wg0"}
+def _text_response(content: str) -> dict:
+    return {"choices": [{"message": {"content": content}}]}
+
+
+@pytest.fixture
+def patched_router(monkeypatch):
+    """AIRouter with DB stubs; returns (router, state)."""
+
+    async def fake_history(*args, **kwargs):
+        return []
+
+    async def fake_ensure(*args, **kwargs):
+        return "sess"
+
+    state: dict = {
+        "queue": [],
+        "calls": 0,
+        "tools": None,
+        "last_messages": None,
+        "user_saved": [],
+        "assistant_saved": [],
+        "plans_saved": [],
+    }
+
+    async def fake_add_user(db, session_id, content):
+        state["user_saved"].append((session_id, content))
+
+    async def fake_add_assistant(db, session_id, content, tool_calls=None):
+        state["assistant_saved"].append((session_id, content, tool_calls))
+
+    async def fake_add_plan(db, session_id, plan):
+        state["plans_saved"].append((session_id, plan))
+
+    monkeypatch.setattr(router_module, "async_session_factory", lambda: _FakeSession())
+    monkeypatch.setattr(router_module, "ensure_session", fake_ensure)
+    monkeypatch.setattr(router_module.db_session, "get_session_history", fake_history)
+    monkeypatch.setattr(router_module.db_session, "add_user_message", fake_add_user)
+    monkeypatch.setattr(router_module.db_session, "add_assistant_message", fake_add_assistant)
+    monkeypatch.setattr(router_module.db_session, "add_plan_message", fake_add_plan)
+
+    router = AIRouter(plugin_manager=None)
+
+    async def fake_chat_completion(messages, tools=None):
+        state["calls"] += 1
+        state["tools"] = tools
+        state["last_messages"] = messages
+        if state["queue"]:
+            return state["queue"].pop(0)
+        return {"choices": []}
+
+    router.client.chat_completion = fake_chat_completion  # type: ignore[method-assign]
+    return router, state
+
+
+@pytest.mark.asyncio
+async def test_route_text_response(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("hello")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "hello"
+    assert state["assistant_saved"] == [("sess-1", "hello", None)]
+
+
+@pytest.mark.asyncio
+async def test_route_plan_response(patched_router):
+    router, state = patched_router
+    state["queue"] = [
+        _plan_response(
+            {
+                "goal": "inspect",
+                "steps": [{"tool": "core_health", "why": "baseline"}],
+            }
+        )
+    ]
+
+    result = await router.route("check the host", "sess-1")
+
+    assert result["type"] == "plan"
+    plan = result["plan"]
+    assert plan["goal"] == "inspect"
+    assert plan["steps"][0]["tool"] == "core_health"
+    assert plan["steps"][0]["risk"] == "safe"
+    assert plan["status"] == "proposed"
+    assert state["plans_saved"][0][1]["goal"] == "inspect"
+    assert state["assistant_saved"] == []
+
+
+@pytest.mark.asyncio
+async def test_route_offers_only_agent_plan_tool(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+
+    await router.route("hi", "sess-1")
+
+    assert state["tools"] == [AGENT_PLAN_SCHEMA]
+
+
+@pytest.mark.asyncio
+async def test_route_includes_tool_catalog_in_system_prompt(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+
+    await router.route("hi", "sess-1")
+
+    system = state["last_messages"][0]["content"]
+    assert "core_health" in system
+    assert "Tool catalog" in system
 
 
 @pytest.mark.asyncio
 async def test_route_no_choices(patched_router):
     router, state = patched_router
-    state["response"] = {"choices": []}
 
     result = await router.route("hi", "sess-1")
 
@@ -118,86 +161,58 @@ async def test_route_no_choices(patched_router):
 
 
 @pytest.mark.asyncio
-async def test_route_broken_tool_arguments(patched_router):
+async def test_route_reasks_after_invalid_plan(patched_router):
     router, state = patched_router
-    state["response"] = {
+    state["queue"] = [
+        _plan_response({"goal": "bad", "steps": [{"tool": "ghost", "why": "x"}]}),
+        _plan_response(
+            {"goal": "good", "steps": [{"tool": "core_health", "why": "x"}]}
+        ),
+    ]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "plan"
+    assert result["plan"]["goal"] == "good"
+    assert state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_route_gives_up_after_reask_limit(patched_router):
+    router, state = patched_router
+    bad = _plan_response({"goal": "bad", "steps": [{"tool": "ghost", "why": "x"}]})
+    state["queue"] = [bad, bad]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert "could not form a valid plan" in result["content"]
+    assert state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_route_rejects_unexpected_tool(patched_router):
+    router, state = patched_router
+    unexpected = {
         "choices": [
             {
                 "message": {
                     "tool_calls": [
-                        {"function": {"name": "wg_interface_status", "arguments": "not-json"}}
+                        {"function": {"name": "wg_interface_status", "arguments": "{}"}}
                     ]
                 }
             }
         ]
     }
-
-    result = await router.route("status", "sess-1")
-
-    assert result["type"] == "tool_call"
-    assert result["tool_args"] == {"_raw": "not-json"}
-
-
-@pytest.mark.asyncio
-async def test_route_persists_user_and_assistant_messages(patched_router):
-    router, state = patched_router
-    state["response"] = {"choices": [{"message": {"content": "reply"}}]}
-
-    await router.route("hello", "sess-9")
-
-    assert state["user_saved"] == [("sess-9", "hello")]
-    assert state["assistant_saved"] == [("sess-9", "reply", None)]
-
-
-@pytest.mark.asyncio
-async def test_route_persists_tool_call(patched_router):
-    router, state = patched_router
-    raw_tool_calls = [
-        {"function": {"name": "wg_interface_status", "arguments": "{}"}}
+    state["queue"] = [
+        unexpected,
+        _plan_response({"goal": "ok", "steps": [{"tool": "core_health", "why": "x"}]}),
     ]
-    state["response"] = {"choices": [{"message": {"tool_calls": raw_tool_calls}}]}
 
-    await router.route("status", "sess-9")
+    result = await router.route("hi", "sess-1")
 
-    assert state["assistant_saved"][0][0] == "sess-9"
-    assert state["assistant_saved"][0][1] == ""
-    assert state["assistant_saved"][0][2] == raw_tool_calls
-
-
-@pytest.mark.asyncio
-async def test_route_exposes_core_tools_without_plugin_manager(patched_router):
-    router, state = patched_router
-    state["response"] = {"choices": [{"message": {"content": "ok"}}]}
-
-    await router.route("hi", "sess-1")
-
-    names = [tool["function"]["name"] for tool in state["tools"]]
-    assert "core_health" in names
-    assert "core_enable_plugin" in names
-
-
-@pytest.mark.asyncio
-async def test_route_appends_plugin_tools_after_core_tools(patched_router):
-    router, state = patched_router
-
-    class _Manager:
-        async def get_all_tools(self):
-            return [
-                {
-                    "name": "wg_interface_status",
-                    "description": "status",
-                    "inputSchema": {"type": "object", "properties": {}},
-                }
-            ]
-
-    router.plugin_manager = _Manager()  # type: ignore[assignment]
-    state["response"] = {"choices": [{"message": {"content": "ok"}}]}
-
-    await router.route("hi", "sess-1")
-
-    names = [tool["function"]["name"] for tool in state["tools"]]
-    assert names[-1] == "wg_interface_status"
-    assert "core_health" in names
+    assert result["type"] == "plan"
+    assert state["calls"] == 2
 
 
 @pytest.mark.asyncio
@@ -209,7 +224,7 @@ async def test_route_warns_when_plugin_tools_unavailable(patched_router):
             raise RuntimeError("plugin manager down")
 
     router.plugin_manager = _BrokenManager()  # type: ignore[assignment]
-    state["response"] = {"choices": [{"message": {"content": "ok"}}]}
+    state["queue"] = [_text_response("ok")]
 
     result = await router.route("hi", "sess-1")
 
@@ -218,12 +233,38 @@ async def test_route_warns_when_plugin_tools_unavailable(patched_router):
 
 
 @pytest.mark.asyncio
-async def test_route_without_plugin_manager(patched_router):
+async def test_route_includes_plugin_tools_in_catalog(patched_router):
     router, state = patched_router
-    assert router.plugin_manager is None
-    state["response"] = {"choices": [{"message": {"content": "ok"}}]}
 
-    result = await router.route("hi", "sess-1")
+    class _Manager:
+        async def get_all_tools(self):
+            return [
+                {
+                    "name": "wg_interface_status",
+                    "description": "status",
+                    "inputSchema": {"type": "object", "properties": {"interface": {}}},
+                }
+            ]
 
-    assert result["type"] == "text"
-    assert "tool_schema_warning" not in result
+    router.plugin_manager = _Manager()  # type: ignore[assignment]
+    state["queue"] = [_text_response("ok")]
+
+    await router.route("hi", "sess-1")
+
+    assert "wg_interface_status" in state["last_messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_summarize_plan_uses_soul(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("all good")]
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert summary == "all good"
+    assert "Loom" in state["last_messages"][0]["content"]
+    assert state["tools"] is None

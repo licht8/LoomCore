@@ -2,26 +2,35 @@ import json
 import logging
 
 from src.config import settings
+from src.core.agent import (
+    AGENT_PLAN_SCHEMA,
+    AGENT_PLAN_TOOL,
+    PLANNER_REASK_LIMIT,
+    build_plan,
+    validate_plan,
+)
 from src.core.core_tools import CORE_TOOLS_SCHEMA
 from src.db import session as db_session
 from src.db.database import async_session_factory
 from src.db.session import ensure_session
 from src.llm.client import HetznerClient
-from src.llm.prompt import build_messages
+from src.llm.prompt import build_planner_messages, build_summary_messages
 from src.plugins.manager import PluginManager
 
 logger = logging.getLogger("loomcore.router")
 
 
 class AIRouter:
-    """LLM request router: history -> prompt -> request -> parsing.
+    """LLM request router: history -> planner -> plan or text.
+
+    The model never receives callable tools. It either proposes a plan through
+    the single ``agent_plan`` tool or answers in plain text.
 
     Shape of the dict returned by route():
         {
-            "type": "text" | "tool_call",
-            "content": str | None,       # Text response
-            "tool_name": str | None,     # Set when a tool is called
-            "tool_args": dict | None,    # Tool call arguments
+            "type": "text" | "plan",
+            "content": str | None,      # Text response (type == "text")
+            "plan": dict | None,        # Plan object (type == "plan")
         }
     """
 
@@ -36,45 +45,82 @@ class AIRouter:
         user_message: str,
         session_id: str,
     ) -> dict:
-        """Handle a user request and return the response.
+        """Plan or answer a user request.
 
         1. Load history and persist the user message (short DB session).
-        2. Gather tools and build the messages.
-        3. Send the request to HetznerClient (no DB session held).
-        4. Parse the response: tool_calls or text.
-        5. Persist the assistant response (second short DB session).
+        2. Gather the tool catalog and build planner messages.
+        3. Ask the LLM for a plan (its only callable tool is ``agent_plan``).
+        4. Validate the plan; re-ask once when it is malformed.
+        5. Persist and return the plan, or the plain-text answer.
         """
         history_dicts = await self._begin_turn(session_id, user_message)
 
         tools_schema, message_extra = await self._collect_tools()
-        messages = build_messages(user_message, history_dicts)
-        llm_tools = self._build_llm_tools(tools_schema)
+        known_tools = {tool["name"] for tool in tools_schema}
+        catalog = self._catalog_text(tools_schema)
+        messages = build_planner_messages(user_message, history_dicts, catalog)
 
-        # Send the request to the LLM
         logger.info(
-            f"🚀 LLM call: user_msg='{user_message[:100]}...', "
+            "Planner call: "
+            f"user_msg='{user_message[:100]}...', "
             f"history_len={len(history_dicts)}, tools_count={len(tools_schema)}"
         )
-        llm_response = await self.client.chat_completion(messages, tools=llm_tools)
 
-        choices = llm_response.get("choices", [])
-        finish_reason = choices[0].get("finish_reason", "N/A") if choices else "N/A"
-        logger.info(f"✅ LLM API response: finish_reason={finish_reason}")
+        errors: list[str] = []
+        for attempt in range(PLANNER_REASK_LIMIT + 1):
+            llm_response = await self.client.chat_completion(
+                messages, tools=[AGENT_PLAN_SCHEMA]
+            )
+            choices = llm_response.get("choices", [])
+            if not choices:
+                return {"type": "text", "content": "No response from the LLM"} | message_extra
 
-        if not choices:
-            return {"type": "text", "content": "No response from the LLM"}
+            content, tool_name, tool_args, raw_tool_calls = self._parse_completion(
+                llm_response
+            )
 
-        content, tool_name, tool_args, raw_tool_calls = self._parse_completion(llm_response)
-        answer_type = "tool_call" if tool_name else "text"
+            if not raw_tool_calls:
+                await self._persist_assistant(session_id, content, None)
+                return {"type": "text", "content": content} | message_extra
 
-        await self._persist_assistant(session_id, content, raw_tool_calls)
+            if tool_name == AGENT_PLAN_TOOL:
+                plan = build_plan(tool_args or {})
+                errors = validate_plan(plan, known_tools)
+                if not errors:
+                    await self._persist_plan(session_id, plan)
+                    return {"type": "plan", "plan": plan} | message_extra
+            else:
+                errors = [f"unexpected tool: {tool_name}"]
 
-        return {
-            "type": answer_type,
-            "content": content if answer_type == "text" else None,
-            "tool_name": tool_name,
-            "tool_args": tool_args,
-        } | message_extra
+            if attempt < PLANNER_REASK_LIMIT:
+                messages.append({"role": "assistant", "content": content or ""})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "That plan was rejected: "
+                            + "; ".join(errors)
+                            + ". Call agent_plan again with a corrected plan that "
+                            "uses only catalog tool names."
+                        ),
+                    }
+                )
+
+        failure = "I could not form a valid plan: " + "; ".join(errors)
+        await self._persist_assistant(session_id, failure, None)
+        return {"type": "text", "content": failure} | message_extra
+
+    async def summarize_plan(
+        self,
+        user_message: str,
+        plan: dict,
+        observations: list[dict],
+    ) -> str:
+        """Produce the SOUL-voiced summary for a completed plan."""
+        messages = build_summary_messages(user_message, plan, observations)
+        llm_response = await self.client.chat_completion(messages)
+        content, _tool_name, _tool_args, _raw = self._parse_completion(llm_response)
+        return content
 
     async def _begin_turn(self, session_id: str, user_message: str) -> list[dict]:
         """Load recent history and persist the user message; return history dicts."""
@@ -106,6 +152,11 @@ class AIRouter:
                 db, session_id, content, raw_tool_calls
             )
 
+    async def _persist_plan(self, session_id: str, plan: dict) -> None:
+        """Persist the agent plan in its own short DB session."""
+        async with async_session_factory() as db:
+            await db_session.add_plan_message(db, session_id, plan)
+
     async def _collect_tools(self) -> tuple[list[dict], dict]:
         """Fetch the tool schema; return it with any 'unavailable' warning."""
         tools_schema: list[dict] = list(CORE_TOOLS_SCHEMA)
@@ -124,22 +175,19 @@ class AIRouter:
         return tools_schema, message_extra
 
     @staticmethod
-    def _build_llm_tools(tools_schema: list[dict]) -> list[dict]:
-        """Map MCP tool schemas to the OpenAI function-tool format."""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get(
-                        "inputSchema",
-                        {"type": "object", "properties": {}, "required": []},
-                    ),
-                },
-            }
-            for tool in tools_schema
-        ]
+    def _catalog_text(tools_schema: list[dict]) -> str:
+        """Render the tool catalog as plain text for the planner prompt."""
+        if not tools_schema:
+            return "(no tools available)"
+        lines = []
+        for tool in tools_schema:
+            schema = tool.get("inputSchema") or {}
+            properties = schema.get("properties") if isinstance(schema, dict) else None
+            arg_names = ", ".join(properties.keys()) if isinstance(properties, dict) else ""
+            lines.append(
+                f"- {tool.get('name')}({arg_names}): {tool.get('description', '')}"
+            )
+        return "\n".join(lines)
 
     @staticmethod
     def _parse_completion(

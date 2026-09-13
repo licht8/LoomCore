@@ -52,6 +52,21 @@ async def add_assistant_message(
     )
 
 
+async def add_plan_message(
+    session_db: AsyncSession,
+    session_id: str,
+    plan: dict,
+) -> Message:
+    """Append an agent plan to the history (role "plan", stored in tool_calls)."""
+    return await add_message(
+        session_db,
+        session_id,
+        "plan",
+        str(plan.get("goal") or ""),
+        tool_calls=[plan],
+    )
+
+
 async def ensure_session(
     session_db: AsyncSession,
     session_id: str,
