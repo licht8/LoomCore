@@ -20,6 +20,7 @@ PLUGIN_ID = MANIFEST_PATH.parent.name
 
 _REQUIRED_FIELDS = ("id", "name", "version", "description", "entry", "protocol")
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_KNOWN_SCHEMA_VERSION = 1
 
 # Linux capability numbers (see <linux/capability.h>).
 _CAPABILITIES = {"NET_ADMIN": 12, "NET_RAW": 13, "SYS_MODULE": 16}
@@ -66,6 +67,22 @@ def validate_manifest(
     if isinstance(version, str) and version and not _VERSION_RE.match(version):
         issues.append(f"version '{version}' is not MAJOR.MINOR.PATCH")
 
+    schema_version = data.get("schema_version", _KNOWN_SCHEMA_VERSION)
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        issues.append("schema_version must be an integer")
+    elif schema_version > _KNOWN_SCHEMA_VERSION:
+        issues.append(
+            f"schema_version {schema_version} is newer than supported "
+            f"({_KNOWN_SCHEMA_VERSION})"
+        )
+
+    platforms = data.get("platforms")
+    if platforms is not None and (
+        not isinstance(platforms, list)
+        or not all(isinstance(item, str) for item in platforms)
+    ):
+        issues.append("platforms must be a list of strings")
+
     permissions = data.get("permissions")
     if permissions is not None:
         issues.extend(_validate_permissions(permissions))
@@ -83,6 +100,9 @@ def _validate_permissions(permissions: Any) -> list[str]:
     cap_add = permissions.get("cap_add", [])
     if not isinstance(cap_add, list):
         issues.append("permissions.cap_add must be a list")
+    cap_add_optional = permissions.get("cap_add_optional", [])
+    if not isinstance(cap_add_optional, list):
+        issues.append("permissions.cap_add_optional must be a list")
     mounts = permissions.get("mounts", [])
     if not isinstance(mounts, list):
         issues.append("permissions.mounts must be a list")
@@ -112,22 +132,28 @@ def _effective_capabilities() -> int | None:
     return None
 
 
-def check_permissions(manifest: dict[str, Any]) -> list[str]:
-    """Compare declared permissions with the plugin's actual runtime."""
+def _permissions(manifest: dict[str, Any]) -> dict[str, Any] | None:
     permissions = manifest.get("permissions") or {}
-    if not isinstance(permissions, dict):
-        return ["permissions is not an object"]
+    return permissions if isinstance(permissions, dict) else None
 
-    warnings: list[str] = []
-    caps = _effective_capabilities()
-    for name in permissions.get("cap_add", []) or []:
+
+def _capability_issues(
+    names: Any, caps: int | None, *, optional: bool = False
+) -> list[str]:
+    issues: list[str] = []
+    label = "optional capability" if optional else "capability"
+    for name in names or []:
         bit = _CAPABILITIES.get(name)
         if bit is None:
-            warnings.append(f"unknown capability '{name}'")
+            issues.append(f"unknown capability '{name}'")
         elif caps is not None and not caps & (1 << bit):
-            warnings.append(f"capability {name} is not effective in this container")
+            issues.append(f"{label} {name} is not effective in this container")
+    return issues
 
-    for mount in permissions.get("mounts", []) or []:
+
+def _mount_issues(mounts: Any) -> list[str]:
+    issues: list[str] = []
+    for mount in mounts or []:
         if not isinstance(mount, dict):
             continue
         target = mount.get("target")
@@ -136,13 +162,24 @@ def check_permissions(manifest: dict[str, Any]) -> list[str]:
             continue
         path = Path(target)
         if not path.exists():
-            warnings.append(f"mounted path {target} is missing")
+            issues.append(f"mounted path {target} is missing")
             continue
         if mode == "rw" and not os.access(path, os.W_OK):
-            warnings.append(f"mounted path {target} is not writable")
+            issues.append(f"mounted path {target} is not writable")
         elif mode == "ro" and not os.access(path, os.R_OK):
-            warnings.append(f"mounted path {target} is not readable")
+            issues.append(f"mounted path {target} is not readable")
+    return issues
 
+
+def check_permissions(manifest: dict[str, Any]) -> list[str]:
+    """Compare required permissions with the plugin's actual runtime."""
+    permissions = _permissions(manifest)
+    if permissions is None:
+        return ["permissions is not an object"]
+
+    caps = _effective_capabilities()
+    warnings = _capability_issues(permissions.get("cap_add", []), caps)
+    warnings.extend(_mount_issues(permissions.get("mounts", [])))
     if permissions.get("network_mode") == "host" and _CONTAINER_HOSTNAME_RE.match(
         socket.gethostname()
     ):
@@ -152,14 +189,32 @@ def check_permissions(manifest: dict[str, Any]) -> list[str]:
     return warnings
 
 
+def check_optional_permissions(manifest: dict[str, Any]) -> list[str]:
+    """Notes for declared capabilities the plugin can run without and lacks."""
+    permissions = _permissions(manifest)
+    if permissions is None:
+        return []
+    return _capability_issues(
+        permissions.get("cap_add_optional", []),
+        _effective_capabilities(),
+        optional=True,
+    )
+
+
 def runtime_report() -> dict[str, Any]:
     """Full self-check: load, validate against the folder name, check permissions."""
     try:
         manifest = load_manifest()
     except ManifestError as exc:
-        return {"manifest": None, "issues": [str(exc)], "permission_warnings": []}
+        return {
+            "manifest": None,
+            "issues": [str(exc)],
+            "permission_warnings": [],
+            "permission_notes": [],
+        }
     return {
         "manifest": manifest,
         "issues": validate_manifest(manifest, expected_id=PLUGIN_ID),
         "permission_warnings": check_permissions(manifest),
+        "permission_notes": check_optional_permissions(manifest),
     }

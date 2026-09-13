@@ -213,6 +213,7 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
     checks["manifest"] = manifest
     checks["manifest_issues"] = manifest_report["issues"]
     checks["permission_warnings"] = manifest_report["permission_warnings"]
+    checks["permission_notes"] = manifest_report["permission_notes"]
 
     lines = [
         f"WireGuard installed: {'yes' if checks['wg_installed'] else 'no'}",
@@ -235,6 +236,10 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
     lines.extend(
         f"Permission warning: {warning}"
         for warning in manifest_report["permission_warnings"]
+    )
+    lines.extend(
+        f"Optional permission note: {note}"
+        for note in manifest_report["permission_notes"]
     )
     lines.append(f"Result: {'OK' if checks['healthy'] else 'PROBLEM'}")
     return text_result("\n".join(lines), **checks)

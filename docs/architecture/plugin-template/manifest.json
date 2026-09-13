@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "Example",
   "name": "Example Plugin",
   "version": "0.1.0",
@@ -7,8 +8,10 @@
   "protocol": "2024-11-05",
   "tools_prefix": "example_",
   "requires_core": ">=0.0.1",
+  "platforms": ["linux"],
   "permissions": {
     "cap_add": [],
+    "cap_add_optional": [],
     "network_mode": "host",
     "mounts": []
   },

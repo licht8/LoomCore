@@ -16,7 +16,13 @@ import logging
 import sys
 from typing import Any
 
-from manifest import PLUGIN_ID, check_permissions, load_manifest, validate_manifest
+from manifest import (
+    PLUGIN_ID,
+    check_optional_permissions,
+    check_permissions,
+    load_manifest,
+    validate_manifest,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(PLUGIN_ID)
@@ -91,6 +97,8 @@ def _self_check() -> None:
         logger.warning("manifest issue: %s", issue)
     for warning in check_permissions(manifest):
         logger.warning("permission check: %s", warning)
+    for note in check_optional_permissions(manifest):
+        logger.info("optional permission: %s", note)
 
 
 def main() -> None:

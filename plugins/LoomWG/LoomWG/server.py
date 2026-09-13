@@ -17,6 +17,8 @@ def _log_manifest_report() -> None:
         logger.warning("manifest issue: %s", issue)
     for warning in report["permission_warnings"]:
         logger.warning("permission check: %s", warning)
+    for note in report["permission_notes"]:
+        logger.info("optional permission: %s", note)
 
 
 def run_server() -> None:

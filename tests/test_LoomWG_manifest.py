@@ -58,6 +58,54 @@ def test_validate_manifest_flags_bad_version(load_loomwg):
     assert any("MAJOR.MINOR.PATCH" in issue for issue in issues)
 
 
+def test_validate_manifest_flags_newer_schema(load_loomwg):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    data = manifest_module.load_manifest()
+    data["schema_version"] = manifest_module._KNOWN_SCHEMA_VERSION + 1
+
+    issues = manifest_module.validate_manifest(data)
+
+    assert any("schema_version" in issue for issue in issues)
+
+
+def test_validate_manifest_flags_bad_platforms(load_loomwg):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    data = manifest_module.load_manifest()
+    data["platforms"] = "linux"
+
+    issues = manifest_module.validate_manifest(data)
+
+    assert any("platforms" in issue for issue in issues)
+
+
+def test_optional_capability_is_a_note_not_a_warning(load_loomwg, monkeypatch):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    monkeypatch.setattr(
+        manifest_module,
+        "_effective_capabilities",
+        lambda: (1 << 12) | (1 << 13),
+    )
+    manifest = {
+        "permissions": {
+            "cap_add": ["NET_ADMIN", "NET_RAW"],
+            "cap_add_optional": ["SYS_MODULE"],
+        }
+    }
+
+    assert manifest_module.check_permissions(manifest) == []
+    notes = manifest_module.check_optional_permissions(manifest)
+    assert len(notes) == 1
+    assert notes[0].startswith("optional capability SYS_MODULE")
+
+
+def test_runtime_report_exposes_optional_notes(load_loomwg):
+    manifest_module = load_loomwg("manifest")["manifest"]
+
+    report = manifest_module.runtime_report()
+
+    assert isinstance(report["permission_notes"], list)
+
+
 def test_check_permissions_warns_when_cap_missing(load_loomwg, monkeypatch):
     manifest_module = load_loomwg("manifest")["manifest"]
     monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: 1 << 13)

@@ -19,6 +19,7 @@ permissions and environment.
 
 | Field | Required | Type | Meaning |
 |---|---|---|---|
+| `schema_version` | no | integer | Manifest schema version (currently `1`); a newer value warns. |
 | `id` | yes | string | Plugin id. **Must equal the folder name.** |
 | `name` | yes | string | Human-readable name. |
 | `version` | yes | string | `MAJOR.MINOR.PATCH`. |
@@ -27,6 +28,7 @@ permissions and environment.
 | `protocol` | yes | string | MCP protocol version (e.g. `2024-11-05`). |
 | `tools_prefix` | no | string | Tool name prefix (e.g. `wg_`). |
 | `requires_core` | no | string | Semver range of the core. |
+| `platforms` | no | array | OSes the plugin supports (e.g. `["linux"]`). |
 | `permissions` | no | object | See below. |
 | `env` | no | array | Environment variables the plugin reads. |
 | `internal_tools` | no | array | Tool names available only to the core. |
@@ -35,7 +37,8 @@ permissions and environment.
 
 ```json
 {
-  "cap_add": ["NET_ADMIN", "NET_RAW", "SYS_MODULE"],
+  "cap_add": ["NET_ADMIN", "NET_RAW"],
+  "cap_add_optional": ["SYS_MODULE"],
   "network_mode": "host",
   "mounts": [
     {"source": "/etc/wireguard", "target": "/etc/wireguard", "mode": "rw"},
@@ -46,7 +49,11 @@ permissions and environment.
 
 The plugin checks these against its runtime at startup:
 
-- `cap_add` — effective Linux capabilities (`/proc/self/status` `CapEff`).
+- `cap_add` — required effective Linux capabilities (`/proc/self/status`
+  `CapEff`); a missing one is a warning.
+- `cap_add_optional` — capabilities the plugin can run without; a missing one is
+  only an informational note. (LoomWG loads the WireGuard module on demand, so it
+  works without `SYS_MODULE` when the module is built-in or already loaded.)
 - `mounts` — target path exists and is writable (`rw`) / readable (`ro`).
 - `network_mode` — best-effort host-network heuristic (a 12-hex hostname means
   a bridge network).

@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "LoomWG",
   "name": "WireGuard",
   "version": "0.1.0",
@@ -7,8 +8,10 @@
   "protocol": "2024-11-05",
   "tools_prefix": "wg_",
   "requires_core": ">=0.0.1",
+  "platforms": ["linux"],
   "permissions": {
-    "cap_add": ["NET_ADMIN", "NET_RAW", "SYS_MODULE"],
+    "cap_add": ["NET_ADMIN", "NET_RAW"],
+    "cap_add_optional": ["SYS_MODULE"],
     "network_mode": "host",
     "mounts": [
       {"source": "/etc/wireguard", "target": "/etc/wireguard", "mode": "rw"},
