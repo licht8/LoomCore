@@ -150,19 +150,44 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 State persists to `.loomcore/plugins.json` under the repo (override with
 `PLUGINS_STATE_FILE`), so a disabled plugin stays disabled across restarts.
 
-LoomOps is **deny-by-default**: until you set its environment, it can only report
-system facts. Edit `.env` and restart `hub` to allow anything:
+LoomOps is **deny-by-default**: until you set its environment, `ops_run_command`
+runs nothing and `ops_read_file`/`ops_write_file` refuse every path. The Compose
+stack passes these through from `.env` (empty = deny all), so edit `.env` and
+restart `hub`:
 
 ```bash
 LOOMOPS_ALLOWED_COMMANDS=uptime,df,ss,ip      # ops_run_command allowlist (empty = deny all)
 LOOMOPS_ALLOWED_PATHS=/etc/wireguard          # ops_read_file/ops_write_file roots (empty = deny all)
 LOOMOPS_AUDIT_LOG=/app/plugins/LoomOps/tmp/loomops-audit.log
+LOOMOPS_COMMAND_TIMEOUT=30
 ```
 
 Every mutating LoomOps call is admin-approved and written as one JSON line to the
-audit log. Because the `hub` container has no `pid: host`/privileges,
-`ops_systemctl_*` return an actionable error unless systemd is reachable; see
-`docs/plugins/LoomOps.md`.
+audit log.
+
+### Host observability
+
+To let LoomOps describe the whole host (not just the container), `hub` runs with
+`pid: host`, `cap_add: [SYSLOG]`, the D-Bus socket and read-only mounts of
+`/var/log`, `/var/log/journal`, `/run/systemd` and `/etc` under `/host/...`. It
+does **not** get `privileged`, the Docker socket, `SYS_PTRACE` or
+`DAC_READ_SEARCH`; the only writable host mount is still `/etc/wireguard`. Tune the
+health scan with:
+
+```bash
+LOOMOPS_LOG_ROOTS=/host/var/log
+LOOMOPS_MAX_LOG_LINES=200
+LOOMOPS_CPU_THRESHOLD=80
+LOOMOPS_DISK_THRESHOLD=90
+LOOMOPS_LOAD_THRESHOLD=2.0
+```
+
+Ask the assistant for `ops_scan_health` for a structured report (failed units, OOM
+events, high CPU/load, nearly-full disks, recent journal errors). Read-only tools
+need no approval; `ops_kill_process` / `ops_systemctl_restart` / `ops_run_command`
+/ `ops_write_file` stay approval-gated and audited. On SELinux hosts use
+`ausearch`/`chcon` to diagnose blocked mounts — never relabel host `/etc` or
+`/var/log` with `:z`. See `docs/plugins/LoomOps.md`.
 
 ## 6. Configure WireGuard + firewalld
 
