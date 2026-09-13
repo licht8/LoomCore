@@ -13,6 +13,18 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
   admin-only links (`/api/artifacts/<name>/{config,qr}`) and rebuilt from the
   stored key when missing.
 
+## Layout
+
+`plugins/loomwg/main.py` is a thin launcher (`from loomwg.server import run_server`).
+The implementation lives in the `loomwg` package:
+
+- `server.py`, `protocol.py`, `results.py` — MCP wiring, JSON-RPC stdio, result helper.
+- `tools.py` — tool handlers and `TOOLS_SCHEMA`.
+- `wg/` — `device.py` (wg/wg-quick commands + parsing), `keys.py`, `validate.py`.
+- `peers/` — `config.py` (server peer blocks), `view.py` (config display).
+- `clients/` — `store.py` (JSON store), `client.py` (provisioning + artifacts).
+- `ops/` — `install.py`, `lifecycle.py`, `service.py` (autostart), `stats.py`.
+
 ## Client store (`clients.json`)
 
 Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:

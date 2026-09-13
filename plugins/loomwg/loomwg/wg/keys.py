@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 
-from wireguard import CommandError, run_command
+from .device import CommandError, run_command
 
 
 def validate_public_key(value: str) -> str:

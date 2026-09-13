@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from results import text_result
-from wireguard import has_link, peer_is_online, read_interface, validate_interface
+from ..results import text_result
+from ..wg.device import has_link, peer_is_online, read_interface, validate_interface
 
 
 def _share(peer_total: int, grand_total: int) -> float:

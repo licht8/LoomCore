@@ -19,10 +19,9 @@ import subprocess
 import tempfile
 from ipaddress import ip_network
 
-from keys import generate_keypair
-from wireguard import run_command
-
-from config import config_path
+from ..peers.config import config_path
+from ..wg.device import run_command
+from ..wg.keys import generate_keypair
 
 
 def _container_shell(command: str, timeout: int = 300) -> str:

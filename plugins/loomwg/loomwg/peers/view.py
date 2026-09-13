@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from results import text_result
-from wireguard import CommandError, config_directory, run_command, validate_interface
+from ..results import text_result
+from ..wg.device import CommandError, config_directory, run_command, validate_interface
 
 _SECRET_RE = re.compile(r"^\s*(PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 

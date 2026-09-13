@@ -2,10 +2,10 @@
 
 import logging
 
-from client import migrate_client_layout
-from protocol import run
-from service_mode import apply_autostart
-from tools import HANDLERS, TOOLS_SCHEMA
+from .clients.client import migrate_client_layout
+from .ops.service import apply_autostart
+from .protocol import run
+from .tools import HANDLERS, TOOLS_SCHEMA
 
 logger = logging.getLogger("loomwg.server")
 

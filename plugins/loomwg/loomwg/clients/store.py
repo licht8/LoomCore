@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from wireguard import config_directory
+from ..wg.device import config_directory
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _PEER_PREFIX = "peer-"

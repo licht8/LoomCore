@@ -35,7 +35,7 @@ docker compose up -d --build         # VDS: sudo bash deploy/install.sh (nginx:8
 
 - **Migrations via Alembic only.** Startup (`src/app.py`) and `docker-compose.yml` do NOT run migrations; `deploy/install.sh` does (`alembic upgrade head`). For manual starts, run `alembic upgrade head` yourself (`alembic/env.py` uses an async engine and reads the URL from `.env`/`DATABASE_URL`).
 - `src/app.py` calls `plugin_manager.discover_plugins(settings.plugins_dir)` on startup (`PLUGINS_DIR`, default `/app/plugins`) — outside Docker set `PLUGINS_DIR=./plugins`, otherwise no plugins load.
-- A plugin is launched as `sys.executable <plugins/<name>/main.py>`; `plugins/loomwg/main.py` uses bare imports (`from server import ...`), relying on the script directory being on sys.path.
+- A plugin is launched as `sys.executable <plugins/<name>/main.py>`; `plugins/loomwg/main.py` imports the `loomwg` package (`from loomwg.server import run_server`), relying on the script directory being on sys.path.
 - The plugin's WireGuard config directory is `LOOMWG_CONFIG_DIR` (default `/etc/wireguard`); tests/e2e use a temp directory.
 - On firewalld hosts (RHEL/Rocky), set `LOOMWG_SKIP_FIREWALL=1`: `wg_setup_server` then skips firewall/NAT and you configure it manually.
 - Compose uses `network_mode: host` for `hub`/`frontend`/`nginx` so WireGuard + NAT live on the host; only `:80` is public, `8000`/`3000`/`5432` bind to `127.0.0.1`.

@@ -7,8 +7,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from keys import validate_public_key
-from wireguard import config_directory
+from ..wg.device import config_directory
+from ..wg.keys import validate_public_key
 
 
 def config_path(interface: str) -> Path:

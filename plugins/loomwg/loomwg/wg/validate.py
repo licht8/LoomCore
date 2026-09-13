@@ -11,9 +11,9 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
 
-from keys import validate_public_key
-from results import text_result
-from wireguard import CommandError, config_directory, run_command, validate_interface
+from ..results import text_result
+from .device import CommandError, config_directory, run_command, validate_interface
+from .keys import validate_public_key
 
 _SECTION_RE = re.compile(r"^\[(.+)\]$")
 _ENDPOINT_RE = re.compile(r"^(\[[0-9A-Fa-f:]+\]|[^\s:]+):(\d{1,5})$")

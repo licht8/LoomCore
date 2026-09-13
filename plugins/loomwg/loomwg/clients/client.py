@@ -13,11 +13,10 @@ from datetime import UTC, datetime
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
-import clients_store
-from keys import generate_keypair
-from wireguard import CommandError, config_directory, run_command
-
-from config import add_peer, config_path, iter_peers, remove_peer
+from ..peers.config import add_peer, config_path, iter_peers, remove_peer
+from ..wg.device import CommandError, config_directory, run_command
+from ..wg.keys import generate_keypair
+from . import store as clients_store
 
 CLIENTS_DIR = config_directory() / "clients"
 CONF_DIR_NAME = "conf"
@@ -366,7 +365,7 @@ def create_client(arguments: dict) -> dict:
         for path in (client_path, qr_path):
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
-        from config import remove_peer
+        from ..peers.config import remove_peer
 
         with contextlib.suppress(FileNotFoundError, ValueError):
             remove_peer(interface, keypair["public_key"])

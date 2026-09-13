@@ -6,9 +6,8 @@ import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
-import clients_store
-import service_mode
-from client import (
+from .clients import store as clients_store
+from .clients.client import (
     client_paths,
     create_client,
     export_existing_clients,
@@ -16,14 +15,15 @@ from client import (
     remove_client_artifacts,
     store_client_record,
 )
-from config_view import show_config
-from install import setup_server
-from keys import validate_public_key
-from lifecycle import format_lifecycle, restart, start, stop
-from results import text_result
-from stats import stats as stats_tool
-from validate import check_config
-from wireguard import (
+from .ops import service as service_mode
+from .ops.install import setup_server
+from .ops.lifecycle import format_lifecycle, restart, start, stop
+from .ops.stats import stats as stats_tool
+from .peers.config import remove_peer as delete_peer
+from .peers.config import upsert_peer
+from .peers.view import show_config
+from .results import text_result
+from .wg.device import (
     CommandError,
     active_interfaces,
     config_directory,
@@ -34,9 +34,8 @@ from wireguard import (
     run_command,
     validate_interface,
 )
-
-from config import remove_peer as delete_peer
-from config import upsert_peer
+from .wg.keys import validate_public_key
+from .wg.validate import check_config
 
 
 def _now() -> str:

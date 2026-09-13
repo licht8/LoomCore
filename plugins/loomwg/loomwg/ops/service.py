@@ -12,8 +12,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from results import text_result
-from wireguard import (
+from ..results import text_result
+from ..wg.device import (
     CommandError,
     active_interfaces,
     config_directory,
