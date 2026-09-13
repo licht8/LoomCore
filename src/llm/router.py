@@ -137,16 +137,54 @@ class AIRouter:
             # Ensure the session exists (create the user and session if needed)
             await ensure_session(db, session_id)
 
-            # Convert ORM models to dicts for the LLM
+            # Convert ORM models to dicts, then sanitize to API-safe roles
             history_dicts = [
-                {"role": msg.role, "content": msg.content}
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "tool_calls": msg.tool_calls,
+                }
                 for msg in history_messages
             ]
 
             # Save the user message to history
             await db_session.add_user_message(db, session_id, user_message)
 
-        return history_dicts
+        return self._api_history(history_dicts)
+
+    @staticmethod
+    def _api_history(messages: list[dict]) -> list[dict]:
+        """Sanitize stored history into roles the chat API accepts.
+
+        Internal roles must never reach the chat API: ``tool`` messages are
+        folded into an assistant note (the API has no matching tool_call id) and
+        ``plan`` messages are dropped entirely. Empty and unknown roles are
+        dropped too, so a malformed history can never produce a 400.
+        """
+        api_messages: list[dict] = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content") or ""
+            if role in ("user", "assistant"):
+                if content:
+                    api_messages.append({"role": role, "content": content})
+            elif role == "tool":
+                note = AIRouter._tool_note(message, content)
+                if note:
+                    api_messages.append({"role": "assistant", "content": note})
+        return api_messages
+
+    @staticmethod
+    def _tool_note(message: dict, content: str) -> str:
+        """Fold a stored tool card into a plain assistant note (best-effort)."""
+        calls = message.get("tool_calls") or []
+        name = ""
+        if calls and isinstance(calls[0], dict):
+            name = str(calls[0].get("name") or "")
+        if not name and not content:
+            return ""
+        label = f"[tool {name}]" if name else "[tool]"
+        return f"{label} {content}".rstrip()
 
     async def _persist_assistant(
         self, session_id: str, content: str, raw_tool_calls: list | None

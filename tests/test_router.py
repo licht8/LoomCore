@@ -46,12 +46,6 @@ def _text_response(content: str) -> dict:
 def patched_router(monkeypatch):
     """AIRouter with DB stubs; returns (router, state)."""
 
-    async def fake_history(*args, **kwargs):
-        return []
-
-    async def fake_ensure(*args, **kwargs):
-        return "sess"
-
     state: dict = {
         "queue": [],
         "calls": 0,
@@ -60,7 +54,14 @@ def patched_router(monkeypatch):
         "user_saved": [],
         "assistant_saved": [],
         "plans_saved": [],
+        "history": [],
     }
+
+    async def fake_history(*args, **kwargs):
+        return state["history"]
+
+    async def fake_ensure(*args, **kwargs):
+        return "sess"
 
     async def fake_add_user(db, session_id, content):
         state["user_saved"].append((session_id, content))
@@ -268,3 +269,77 @@ async def test_summarize_plan_uses_soul(patched_router):
     assert summary == "all good"
     assert "Loom" in state["last_messages"][0]["content"]
     assert state["tools"] is None
+
+
+class _HistoryMessage:
+    """Stub ORM message with the attributes the router reads."""
+
+    def __init__(self, role, content, tool_calls=None):
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls
+
+
+@pytest.mark.asyncio
+async def test_route_never_sends_internal_roles(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+    state["history"] = [
+        _HistoryMessage("user", "hi"),
+        _HistoryMessage("assistant", "hello"),
+        _HistoryMessage("plan", "do stuff", tool_calls=[{"goal": "inspect"}]),
+        _HistoryMessage(
+            "tool",
+            "disk 42%",
+            tool_calls=[{"name": "ops_disk_usage"}],
+        ),
+        _HistoryMessage("system", "ignored"),
+        _HistoryMessage("assistant", ""),
+        _HistoryMessage("user", ""),
+    ]
+
+    await router.route("next", "sess-1")
+
+    messages = state["last_messages"]
+    assert {m["role"] for m in messages} <= {"system", "user", "assistant"}
+    assert all(m["role"] not in ("tool", "plan") for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_route_folds_tool_messages_preserving_order(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+    state["history"] = [
+        _HistoryMessage("user", "hi"),
+        _HistoryMessage(
+            "tool",
+            "disk 42%",
+            tool_calls=[{"name": "ops_disk_usage"}],
+        ),
+        _HistoryMessage("assistant", "done"),
+    ]
+
+    await router.route("next", "sess-1")
+
+    roles = [m["role"] for m in state["last_messages"]]
+    assert roles == ["system", "user", "assistant", "assistant", "user"]
+    folded = state["last_messages"][2]
+    assert folded["content"] == "[tool ops_disk_usage] disk 42%"
+    assert state["last_messages"][-1]["content"] == "next"
+
+
+@pytest.mark.asyncio
+async def test_route_drops_empty_tool_message_without_name(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+    state["history"] = [
+        _HistoryMessage("tool", "", tool_calls=None),
+        _HistoryMessage("tool", "", tool_calls=[{"name": "ops_disk_usage"}]),
+    ]
+
+    await router.route("next", "sess-1")
+
+    messages = state["last_messages"]
+    assert len(messages) == 3
+    assert messages[1] == {"role": "assistant", "content": "[tool ops_disk_usage]"}
+    assert messages[2] == {"role": "user", "content": "next"}
