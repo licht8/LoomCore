@@ -298,12 +298,13 @@ Run this after sections 1-6. It exercises the product the way an end user would.
 3. Expected: chat dashboard appears; sidebar shows the LoomWG plugin; no error banner.
 - Wrong token -> login rejected. Empty `ADMIN_TOKEN` -> 503 "Admin access not configured".
 
-### 11.2 Read-only chat (safe plans auto-run)
-- `show wireguard status` -> the assistant first shows a **plan card** (goal + ordered
-  steps with tool/why/risk). Every step is safe, so it runs automatically without
-  confirmation and each step reports a tool result.
-- `list peers` -> `wg_list_peers`, same auto-run flow.
-- The assistant never calls a tool without a plan; a text-only request just returns prose.
+### 11.2 Read-only chat (direct actions auto-run)
+- `show wireguard status` is a single obvious read-only action, so it runs as a
+  **direct** step: no plan card, just a tool card with the result.
+- `list peers` -> `wg_list_peers`, same direct auto-run.
+- Greetings, questions, and vague requests get plain conversation: the assistant
+  replies in prose or asks one clarifying question. It never calls a tool without
+  first making a (direct or plan) decision.
 
 Verify history:
 ```bash
@@ -312,16 +313,19 @@ docker compose exec db psql -U loomuser -d loomcore -c \
 ```
 
 ### 11.3 Set up the WireGuard server (plan approval)
-1. Type `install wireguard prerequisites` -> a plan card appears; click **Approve**
-   (the step `wg_install_dependencies` loads the kernel module, installs missing tools).
+1. Type `install wireguard prerequisites` -> the assistant asks
+   `... Reply yes to proceed.` in plain text (single dangerous step, direct mode).
+   Reply `yes` (or `да`) to run `wg_install_dependencies`.
 2. Type `set up the wireguard server`.
-3. Review the plan card and click **Approve** (`wg_setup_server`).
+3. Reply `yes` to the confirmation (or **Approve** if the assistant bundled it into
+   a multi-step plan card) to run `wg_setup_server`.
 4. With `LOOMWG_SKIP_FIREWALL=1`, apply the section 6 firewall rules.
 5. Verify: `ls -l /etc/wireguard/wg0.conf` and `docker compose exec hub wg show`.
 
 ### 11.4 Create a peer/client (plan approval)
 1. Type `create a wireguard client named phone1`.
-2. Review the plan card and click **Approve** (`wg_create_client`).
+2. Reply `yes` to the confirmation (or **Approve** on the plan card) to run
+   `wg_create_client`.
 3. Click the config and QR download buttons (`access_token` is appended automatically).
 4. Verify:
 ```bash
@@ -340,7 +344,8 @@ Expect a fresh `latest handshake` and non-zero transfer; `list peers` shows `onl
 
 ### 11.6 Delete the peer (plan approval)
 1. Type `remove the peer for phone1` (or paste the public key).
-2. Review the plan card and click **Approve** (`wg_remove_peer`).
+2. Reply `yes` to the confirmation (or **Approve** on the plan card) to run
+   `wg_remove_peer`.
 3. Verify:
 ```bash
 docker compose exec hub wg show wg0
@@ -350,10 +355,13 @@ ls -l /etc/wireguard/clients/conf /etc/wireguard/clients/qr_code
 Expect: peer gone, no matching `PublicKey`, client files removed.
 
 ### 11.7 Negative and UX checks
-- Reject a plan that contains a non-safe step -> `plan_done` with status `rejected`, no server change.
-- Edit a plan's steps in the plan card before approving -> the card updates (`revision` +1) and only the edited steps run.
+- Ask a vague request (e.g. `fix the server`) -> a plain-language clarifying question, no plan and no tool.
+- Direct dangerous action -> the assistant asks `... Reply yes to proceed.`; a short `yes`/`да` runs it, `no`/`нет` cancels and clears the pending action. A longer reply (e.g. `да, но сначала логи`) is treated as unclear (one re-ask, then it is handled as a new message).
+- A direct confirmation left unanswered for over 5 minutes -> the next message is treated as a new request.
+- Reject a multi-step plan card -> `plan_done` with status `rejected`, no server change.
+- Edit a plan's steps in the plan card before approving -> the card updates (`revision` +1, forced back to plan mode) and only the edited steps run.
 - Send a message, then click the rotating submit button (pause) -> `cancelled`, the running step resolves, and the UI returns to idle.
-- A tool that fails (e.g. `wg_interface_status` on a down interface) -> `tool_response` with `status: error`, the plan stops with status `failed`, and the card shows the error instead of spinning forever.
+- A tool that fails (e.g. `wg_interface_status` on a down interface) -> `tool_response` with `status: error`; for a plan, it stops with status `failed` and the card shows the error.
 - While a request is running, sending another message -> `busy` (no overlapping runs).
 - Invalid name (`bad name!`) -> clear validation error, no client created.
 - Duplicate `phone1` -> "client already exists".

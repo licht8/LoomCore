@@ -1,89 +1,124 @@
-# Agent — Plan-and-Execute Loop
+# Agent — Conversational-First Loop
 
-LoomCore runs a real agent, not an LLM that calls tools reactively. The model
-proposes a plan; the user approves it; deterministic code executes it. This is
-the Plan-and-Execute pattern with a human-in-the-loop gate.
+LoomCore's assistant is a real agent, not a reactive tool-caller: the language
+model never calls a tool directly. Instead it talks to the user, and when work is
+needed it proposes it through a single callable tool, `agent_plan`. A
+deterministic executor in code decides what actually runs.
+
+The default is conversation. Plans are the exception.
+
+## Modes
+
+- **Conversation** (default) — greetings, questions, explanations, and
+  clarifying questions. The model replies with plain text and no tool.
+- **Direct** — a single, obvious action ("show disk usage", "restart nginx").
+  The model calls `agent_plan` with `mode: "direct"` and exactly one step. Code
+  runs it without showing a plan card.
+- **Plan** — multi-step work, an explicit request for a plan, or genuinely
+  ambiguous scope. The model calls `agent_plan` with `mode: "plan"`; the user
+  sees a plan card and approves, edits, or rejects it.
+
+The shape is clamped in code, not left to the model: a declared `plan` always
+wins, and any plan with more than one step is forced to `plan`. A single step
+with no declared mode becomes `direct`. See `resolve_mode` in `src/core/agent.py`.
 
 ## Flow
 
-1. **Plan.** The planner LLM is offered exactly one callable tool, `agent_plan`.
-   The live tool catalog is passed as context, never as callable functions. The
-   planner returns a goal and an ordered list of steps (`tool`, `args`, `why`).
-2. **Classify.** Each step gets a risk (`safe` / `moderate` / `dangerous`) via
-   `classify_tool_risk` in `src/core/security.py`.
-3. **Confirm.** The plan is shown in the UI.
-   - All steps safe: it auto-runs.
-   - Any non-safe step: the user must approve, edit, or reject.
-4. **Execute.** The executor replays the stored steps verbatim through the same
-   tool dispatcher the rest of the app uses. It never re-asks the model between
-   steps and never paraphrases arguments.
-5. **Summarize.** A second LLM call narrates the result, voiced by
-   `src/llm/SOUL.md`.
+1. **Understand** — the planner LLM is offered exactly one callable tool,
+   `agent_plan`. The real tool catalog is passed as context, never as callable
+   functions. If no tool is needed, the model answers in plain text; if it needs
+   a fact from the user, it asks one short question in plain text.
+2. **Classify** — every step's `risk` is set in code by `classify_tool_risk`
+   (`src/core/security.py`): `safe`, `moderate`, or `dangerous`.
+3. **Confirm**:
+   - direct + safe — runs immediately, no card;
+   - direct + non-safe — the assistant asks in plain text ("... Reply yes to
+     proceed.") and waits for a short confirmation;
+   - plan + all safe — runs immediately and shows the plan card;
+   - plan + any non-safe — waits for approve / edit / reject.
+4. **Execute** — the executor replays the stored steps verbatim: the approved
+   `tool` and `args`, in order. It never re-asks between steps and never
+   paraphrases arguments. A failed step stops the plan.
+5. **Summarize** — a second LLM call, voiced by `src/llm/SOUL.md`, reports the
+   outcome.
+
+## Plain-text confirmation
+
+Direct actions that are not safe are confirmed conversationally, not with
+buttons. `src/core/confirmations.py` parses the user's reply:
+
+- Only a short message (three words or fewer) that is *entirely* an approved
+  phrase counts. "yes" approves; "да, но сначала логи" is `unclear`.
+- Approve and reject phrase lists live in `src/core/confirmations.json`, not in
+  code. Override the path with `CONFIRMATIONS_FILE`.
+- A pending confirmation is bound to the plan id, the session, and a 300-second
+  timeout. An expired or unclear reply is treated as a new message (with one
+  re-ask for the first unclear reply), so the agent never hangs waiting.
+
+The result is code, not prompt: a reply only approves when `parse_confirmation`
+returns `approve`, and that routes into the same approval path used by
+`plan_approve`.
 
 ## Plan object
 
-Persisted in `messages.tool_calls` (JSONB) under `role = "plan"` — no migration.
+A plan proposed in plan mode is persisted in `messages.tool_calls` JSONB under
+`role="plan"` (no migration needed):
 
 ```json
 {
   "type": "plan",
-  "plan_id": "pl_<uuid>",
+  "plan_id": "pl_...",
   "revision": 1,
-  "goal": "why this plan exists",
+  "goal": "One line: what the plan achieves",
   "steps": [
     {"id": "s1", "tool": "ops_disk_usage", "args": {}, "why": "...",
      "risk": "safe", "status": "pending"}
   ],
+  "mode": "plan",
   "status": "proposed",
-  "created_at": "<utc iso>"
+  "created_at": "2025-01-01T00:00:00+00:00"
 }
 ```
 
-Step status: `pending` / `running` / `done` / `failed` / `blocked`.
-Plan status: `proposed` / `approved` / `running` / `done` / `failed` /
-`rejected` / `cancelled`.
-
-Editing a plan keeps its `plan_id`, bumps `revision`, keeps the goal, and
-re-classifies every step (`next_revision`). A different goal is a new plan.
-A failed step stops execution; there is no automatic re-planning.
+- Step status: `pending`, `running`, `done`, `failed`, `blocked`.
+- Plan status: `proposed`, `approved`, `running`, `done`, `failed`, `rejected`,
+  `cancelled`.
+- Editing keeps the `plan_id`, bumps `revision`, and re-classifies every step
+  (`next_revision`). A different goal is a new plan. A failed step stops the
+  plan; there is no automatic re-planning.
+- Direct actions run without a plan card, so they are not persisted as a plan.
 
 ## Safety invariant
 
-A step whose risk is not `safe` runs only when the plan status is `approved`.
-This is enforced in `execute_plan`, independent of the prompt. The prompt only
-shapes plan quality; code owns what is allowed to run.
+A non-safe step runs only when the plan status is `approved`. This is enforced in
+`execute_plan`, not by the prompt: the planner shapes quality, but code decides
+what runs. Direct-dangerous actions set `approved` only after a clean text
+confirmation.
 
 ## Events and actions
 
-Server → client (`src/interfaces/tool_events.py`):
-
-- `plan_proposed` — plan, revision, goal, `requires_approval`
-- `plan_step` — plan_id, revision, step, phase (`started` / `done` / `failed`)
-- `plan_done` — plan, revision, status
-- plus the existing `tool_call` / `tool_response` for each step
-
-Client → server (`src/interfaces/websocket.py`):
-
-- `plan_approve` — `{plan_id, revision}`
-- `plan_edit` — `{plan_id, revision, steps}`
-- `plan_reject` — `{plan_id}`
-
-On reload, the frontend collapses plan revisions by `plan_id` (last wins) and
-rebuilds step cards from the persisted tool messages.
+- Server to client: `plan_proposed`, `plan_step`, `plan_done` for plan mode;
+  `tool_call`, `tool_response`, and `response` for both modes.
+- Client to server: `plan_approve`, `plan_edit`, `plan_reject` for plan cards.
+- Direct confirmation is an ordinary text message; the server parses it.
+- On reload, plan revisions are collapsed by `plan_id` (last one wins).
 
 ## Files
 
-| File | Role |
+| File | Responsibility |
 | --- | --- |
-| `src/core/agent.py` | plan model, validation, deterministic executor |
-| `src/llm/prompt.py` | planner/summary message builders, SOUL loader |
-| `src/llm/SOUL.md` | voice only (identity, tone, format); summary call only |
-| `src/llm/router.py` | planner call, `agent_plan` parsing, summary call |
-| `src/interfaces/websocket.py` | plan events, approval actions, execution |
-| `src/interfaces/tool_events.py` | plan/tool payloads and persistence |
+| `src/core/agent.py` | Plan model, mode clamp, validation, executor |
+| `src/core/confirmations.py` | Plain-text confirmation parser |
+| `src/core/confirmations.json` | Approve/reject phrase lists |
+| `src/llm/prompt.py` | Planner and summary message builders, SOUL loader |
+| `src/llm/SOUL.md` | Voice for the summary call (never planning) |
+| `src/llm/router.py` | Planner call, `agent_plan` parsing, summary |
+| `src/interfaces/websocket.py` | Direct run, plan events, approval, execution |
+| `src/interfaces/tool_events.py` | Payloads and persistence |
 | `src/core/security.py` | `classify_tool_risk` |
 
 ## Non-goals
 
-No autonomous multi-turn loop, no streaming, no parallel steps, no persistent
-agent memory beyond the message history. SOUL.md never influences planning.
+- No autonomous multi-turn loop; v1 stops at each step and on failure.
+- No token streaming, no parallel steps, no memory beyond chat history.
+- SOUL never influences planning or safety.
