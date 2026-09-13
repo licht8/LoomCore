@@ -80,7 +80,7 @@ export function ChatInput({
 
       {/* Confirmation request block — above the input */}
       {approvalRequest && (
-        <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 backdrop-blur-md dark:border-amber-600/50 dark:bg-amber-950/60">
+        <div className="relative z-10 mx-auto mb-3 max-w-3xl rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 backdrop-blur-md dark:border-amber-600/50 dark:bg-amber-950/60">
           <p className="mb-2 font-medium">⚠️ Confirmation required</p>
           <p className="mb-3 text-xs opacity-80">{approvalRequest.message}</p>
           <div className="flex gap-2">
@@ -102,7 +102,7 @@ export function ChatInput({
         </div>
       )}
 
-      <div className="mx-auto flex max-w-3xl items-stretch gap-2">
+      <div className="relative z-10 mx-auto flex max-w-3xl items-stretch gap-2">
         <form
           className="flex flex-1 items-center gap-2 rounded-2xl border border-input bg-background/50 px-3 py-2 shadow-sm backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-ring"
           onSubmit={handleSubmit}
