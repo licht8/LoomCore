@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     plugins_dir: str = "/app/plugins"
     plugins_state_file: str = ""
     confirmations_file: str = ""
+    timing_enabled: bool = Field(default=False, validation_alias="LOOMCORE_TIMING")
     model_config = {"env_file": ".env"}
 
 @lru_cache

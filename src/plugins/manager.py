@@ -14,8 +14,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from time import time
+from time import monotonic, time
 
+from src.core.timing import log_stage
 from src.plugins.manifest import (
     ManifestError,
     check_permissions,
@@ -357,6 +358,7 @@ class PluginManager:
         # Wait before restarting (non-blocking)
         await asyncio.sleep(delay)
 
+        started = monotonic()
         try:
             # Kill the old process if it is still alive
             old_proc = plugin.proc
@@ -388,6 +390,14 @@ class PluginManager:
             logger.error(f"Failed to restart plugin '{plugin_name}': {exc}")
             plugin.state = PluginState.STOPPED
             return False
+        finally:
+            log_stage(
+                "plugin_restart",
+                monotonic() - started,
+                plugin=plugin_name,
+                attempt=attempt,
+                delay=delay,
+            )
 
     def _do_register_inplace(self, name: str, command: list[str], working_dir: str | None):
         """Launch the subprocess again, keeping the same ManagedPlugin record."""
@@ -576,6 +586,7 @@ class PluginManager:
         if self._mark_stopped_if_dead(plugin) or plugin.state == PluginState.STOPPED:
             raise RuntimeError(f"Plugin '{plugin_name}' is unavailable (dead process)")
 
+        started = monotonic()
         try:
             request = {"jsonrpc": "2.0", "method": "tools/list"}
             await self._write_request(plugin_name, request)
@@ -589,6 +600,7 @@ class PluginManager:
         finally:
             if plugin.state == PluginState.BUSY:
                 plugin.state = PluginState.IDLE
+            log_stage("plugin_get_tools", monotonic() - started, plugin=plugin_name)
 
     async def get_all_tools(self) -> list[dict]:
         """Fetch tools from all registered plugins.
@@ -596,6 +608,7 @@ class PluginManager:
         On failure to fetch a plugin's tools, attempts auto-restart.
         Returns the tools that were fetched successfully.
         """
+        started = monotonic()
         all_tools: list[dict] = []
         failed_plugins: list[str] = []
         for plugin_name in self.plugin_names():
@@ -620,6 +633,13 @@ class PluginManager:
             except Exception as inner_exc:
                 logger.error(f"Failed to restart plugin '{plugin_name}' from get_all_tools: {inner_exc}")
 
+        log_stage(
+            "get_all_tools",
+            monotonic() - started,
+            plugins=len(self.plugin_names()),
+            tools=len(all_tools),
+            failed=len(failed_plugins),
+        )
         return all_tools
 
     def plugin_for_tool(self, tool_name: str) -> str:
@@ -699,6 +719,7 @@ class PluginManager:
             },
         }
 
+        started = monotonic()
         try:
             await self._write_request(plugin_name, request)
             plugin.state = PluginState.BUSY
@@ -731,6 +752,9 @@ class PluginManager:
         finally:
             if plugin.state == PluginState.BUSY:
                 plugin.state = PluginState.IDLE
+            log_stage(
+                "plugin_execute_tool", monotonic() - started, tool=tool_name
+            )
 
     def _kill_and_stop(self, plugin_name: str) -> None:
         """Kill a plugin subprocess and mark it STOPPED for the next auto-restart.

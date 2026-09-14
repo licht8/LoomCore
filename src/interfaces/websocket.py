@@ -19,6 +19,7 @@ from src.core.confirmations import (
     parse_confirmation,
 )
 from src.core.core_tools import CORE_TOOL_NAMES, dispatch_core_tool
+from src.core.timing import log_stage, span
 from src.db.database import async_session_factory
 from src.db.session import add_assistant_message, ensure_session
 from src.interfaces.tool_events import (
@@ -58,9 +59,10 @@ Send = Callable[[dict], Awaitable[None]]
 
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
     """Run a core meta-tool or the plugin tool that owns the name."""
-    if tool_name in CORE_TOOL_NAMES:
-        return await dispatch_core_tool(tool_name, arguments)
-    return await plugin_manager.execute_tool_by_name(tool_name, arguments)
+    async with span("execute_tool", tool=tool_name):
+        if tool_name in CORE_TOOL_NAMES:
+            return await dispatch_core_tool(tool_name, arguments)
+        return await plugin_manager.execute_tool_by_name(tool_name, arguments)
 
 
 async def _run_plan(
@@ -78,6 +80,7 @@ async def _run_plan(
     """
     if tracker is not None:
         tracker["plan"] = plan
+    plan_started = time.monotonic()
 
     # A direct action is a single obvious call: it runs as a plain tool card,
     # without a user-facing plan artifact or plan events.
@@ -132,6 +135,7 @@ async def _run_plan(
         if show_plan:
             await send(plan_step_payload(plan, step, phase))
 
+    execute_started = time.monotonic()
     try:
         outcome = await execute_plan(plan, dispatch=_execute_tool, emit=emit)
         final_plan = outcome["plan"]
@@ -151,12 +155,23 @@ async def _run_plan(
         observations = []
         with contextlib.suppress(Exception):
             await send({"type": "error", "error": str(exc)})
+    finally:
+        log_stage(
+            "execute_plan",
+            time.monotonic() - execute_started,
+            steps=len(plan.get("steps", [])),
+            show_plan=show_plan,
+        )
 
     if show_plan:
+        persist_started = time.monotonic()
         with contextlib.suppress(Exception):
             await _save_plan_message(session_id, final_plan)
+        log_stage("save_plan", time.monotonic() - persist_started)
 
+    summary_started = time.monotonic()
     summary = await _summarize(user_text, final_plan, observations)
+    log_stage("summary", time.monotonic() - summary_started)
     if summary:
         with contextlib.suppress(Exception):
             async with async_session_factory() as db:
@@ -172,6 +187,7 @@ async def _run_plan(
 
     if tracker is not None:
         tracker["plan"] = None
+    log_stage("plan_total", time.monotonic() - plan_started, show_plan=show_plan)
 
 
 async def _summarize(user_text: str, plan: dict, observations: list[dict]) -> str:
@@ -227,63 +243,73 @@ async def _process_user_message(
     A plan containing any non-safe step is stored in ``pending`` and execution
     waits for the user to approve, edit or reject it.
     """
-    await send({"type": "thinking", "status": "processing"})
-    logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
-
+    started = time.monotonic()
+    answer_type: str | None = None
     try:
-        result = await airouter_with_plugins.route(user_text, session_id)
-        logger.info(
-            f"✅ LLM responded, type={result.get('type')}, session={session_id}"
-        )
-    except asyncio.CancelledError:
-        raise
-    except LlmError as exc:
-        await send({"type": "error", "error": str(exc)})
-        return
-    except Exception as exc:
-        await send({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
-        return
+        await send({"type": "thinking", "status": "processing"})
+        logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
 
-    unavailable = result.get("tool_schema_warning")
-    if unavailable:
-        await send({"type": "schema_warning", "unavailable_plugins": unavailable})
-
-    answer_type = result.get("type")
-
-    if answer_type == "text":
-        await send({"type": "response", "content": result.get("content", "")})
-        return
-
-    if answer_type != "plan":
-        return
-
-    plan = result.get("plan") or {}
-    requires_approval = plan_requires_approval(plan)
-
-    if plan_is_direct(plan):
-        if not requires_approval:
-            # One obvious, safe action: just do it, no plan card.
-            await _run_plan(send, session_id, user_text, plan, tracker)
+        route_started = time.monotonic()
+        try:
+            result = await airouter_with_plugins.route(user_text, session_id)
+            logger.info(
+                f"✅ LLM responded, type={result.get('type')}, session={session_id}"
+            )
+        except asyncio.CancelledError:
+            raise
+        except LlmError as exc:
+            await send({"type": "error", "error": str(exc)})
             return
-        # Direct but mutating: ask for a plain-language confirmation.
-        goal = plan.get("goal") or "Proceed"
-        await send({"type": "response", "content": f"{goal} Reply yes to proceed."})
-        _remember_pending(pending, plan, user_text)
-        return
+        except Exception as exc:
+            await send({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+            return
+        finally:
+            log_stage("route_call", time.monotonic() - route_started)
 
-    if not requires_approval:
-        # An all-safe plan runs immediately, so it is approved by definition;
-        # reflect that in the proposed event so the card is not shown as
-        # "Awaiting approval".
-        plan["status"] = "approved"
+        unavailable = result.get("tool_schema_warning")
+        if unavailable:
+            await send({"type": "schema_warning", "unavailable_plugins": unavailable})
 
-    await send(plan_proposed_payload(plan, requires_approval))
+        answer_type = result.get("type")
 
-    if requires_approval:
-        _remember_pending(pending, plan, user_text)
-        return
+        if answer_type == "text":
+            await send({"type": "response", "content": result.get("content", "")})
+            return
 
-    await _run_plan(send, session_id, user_text, plan, tracker)
+        if answer_type != "plan":
+            return
+
+        plan = result.get("plan") or {}
+        requires_approval = plan_requires_approval(plan)
+
+        if plan_is_direct(plan):
+            if not requires_approval:
+                # One obvious, safe action: just do it, no plan card.
+                await _run_plan(send, session_id, user_text, plan, tracker)
+                return
+            # Direct but mutating: ask for a plain-language confirmation.
+            goal = plan.get("goal") or "Proceed"
+            await send({"type": "response", "content": f"{goal} Reply yes to proceed."})
+            _remember_pending(pending, plan, user_text)
+            return
+
+        if not requires_approval:
+            # An all-safe plan runs immediately, so it is approved by definition;
+            # reflect that in the proposed event so the card is not shown as
+            # "Awaiting approval".
+            plan["status"] = "approved"
+
+        await send(plan_proposed_payload(plan, requires_approval))
+
+        if requires_approval:
+            _remember_pending(pending, plan, user_text)
+            return
+
+        await _run_plan(send, session_id, user_text, plan, tracker)
+    finally:
+        log_stage(
+            "turn_total", time.monotonic() - started, kind=answer_type or "unknown"
+        )
 
 
 async def websocket_endpoint(websocket: WebSocket, session_id: str):

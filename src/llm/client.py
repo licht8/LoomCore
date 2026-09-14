@@ -5,6 +5,7 @@ import time
 import httpx
 
 from src.config import settings
+from src.core.timing import log_stage
 
 logger = logging.getLogger("loomcore.llm")
 
@@ -51,6 +52,9 @@ class HetznerClient:
         if tools:
             payload["tools"] = tools
 
+        prompt_chars = sum(
+            len(str(message.get("content") or "")) for message in messages
+        )
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -74,7 +78,27 @@ class HetznerClient:
                         f"✅ LLM response: status={response.status_code}, "
                         f"size={len(response.content)}, elapsed={elapsed:.1f}s"
                     )
-                    return response.json()
+                    data = response.json()
+                    usage = data.get("usage") or {}
+                    completion_tokens = usage.get("completion_tokens")
+                    log_stage(
+                        "llm_call",
+                        elapsed,
+                        model=self.MODEL,
+                        attempt=f"{attempt}/{max_attempts}",
+                        messages=len(messages),
+                        prompt_chars=prompt_chars,
+                        approx_prompt_tokens=prompt_chars // 4,
+                        tools=len(tools) if tools else 0,
+                        prompt_tokens=usage.get("prompt_tokens"),
+                        completion_tokens=completion_tokens,
+                        out_tok_per_s=(
+                            round(completion_tokens / elapsed, 1)
+                            if completion_tokens and elapsed > 0
+                            else None
+                        ),
+                    )
+                    return data
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code if exc.response is not None else "?"
                     body = exc.response.text[:500] if exc.response is not None else ""
