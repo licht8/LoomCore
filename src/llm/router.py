@@ -9,6 +9,7 @@ from src.core.agent import (
     AGENT_PLAN_TOOL,
     PLANNER_REASK_LIMIT,
     build_plan,
+    plan_is_direct,
     validate_plan,
 )
 from src.core.core_tools import CORE_TOOLS_SCHEMA
@@ -116,7 +117,10 @@ class AIRouter:
                     plan = build_plan(tool_args or {})
                     errors = validate_plan(plan, known_tools)
                     if not errors:
-                        await self._persist_plan(session_id, plan)
+                        # A direct one-step action leaves no plan artifact; only
+                        # multi-step plans are persisted as "plan" rows.
+                        if not plan_is_direct(plan):
+                            await self._persist_plan(session_id, plan)
                         return {"type": "plan", "plan": plan} | message_extra
                 else:
                     errors = [f"unexpected tool: {tool_name}"]

@@ -112,7 +112,10 @@ async def test_route_plan_response(patched_router):
         _plan_response(
             {
                 "goal": "inspect",
-                "steps": [{"tool": "core_health", "why": "baseline"}],
+                "steps": [
+                    {"tool": "core_health", "why": "baseline"},
+                    {"tool": "core_list_plugins", "why": "inventory"},
+                ],
             }
         )
     ]
@@ -343,6 +346,22 @@ async def test_route_drops_empty_tool_message_without_name(patched_router):
     assert len(messages) == 3
     assert messages[1] == {"role": "assistant", "content": "Tool result (ops_disk_usage):"}
     assert messages[2] == {"role": "user", "content": "next"}
+
+
+@pytest.mark.asyncio
+async def test_route_does_not_persist_direct_plan(patched_router):
+    router, state = patched_router
+    state["queue"] = [
+        _plan_response(
+            {"goal": "disk", "steps": [{"tool": "core_health", "why": "x"}]}
+        )
+    ]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "plan"
+    assert result["plan"]["mode"] == "direct"
+    assert state["plans_saved"] == []
 
 
 @pytest.mark.asyncio
