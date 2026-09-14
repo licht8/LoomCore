@@ -20,7 +20,10 @@ chmod 600 .env
 nano .env
 ```
 
-Fill in at least `POSTGRES_PASSWORD`, `ADMIN_TOKEN`, and `HETZNER_API_KEY`.
+Fill in at least `POSTGRES_PASSWORD` and `HETZNER_API_KEY`. For admin access
+prefer **JWT-only** (leave `ADMIN_TOKEN` empty and set `ADMIN_PASSWORD_HASH`,
+`ADMIN_TOTP_SECRET`, `SESSION_SECRET`) — see
+[Admin authentication](#admin-authentication).
 
 ### Step 1: Start the stack
 
@@ -75,14 +78,20 @@ external peers can connect.
 - `hub` (API/WS) binds `127.0.0.1:8000`; `frontend` binds `127.0.0.1:3000`.
 - Postgres is published on `127.0.0.1:5432` only.
 
-The `hub` container keeps least privilege: only `NET_ADMIN`, `NET_RAW`,
-`SYS_MODULE`, and two mounts:
+The `hub` container keeps least privilege: only the `NET_ADMIN`, `NET_RAW`, and
+`SYSLOG` capabilities, `no-new-privileges: true`, and two WireGuard mounts:
 
 - `/etc/wireguard:/etc/wireguard:z` (rw) — WireGuard configs (`:z` relabels for SELinux)
 - `/lib/modules:/lib/modules:ro` — kernel modules
 
-**Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`; **not used:**
-`nsenter`, `chroot`, `pid: host`.
+`SYS_MODULE` is **not** granted: WireGuard is in-tree on Linux 5.6+ and the
+LoomWG plugin treats the capability as optional, telling you to load the module
+on the host if it is missing. For LoomOps read-only host observability the `hub`
+additionally uses `pid: host`, `SYSLOG`, and read-only mounts of `/run/systemd`,
+`/var/log`, and `/etc` (see `docs/plugins/LoomOps.md`).
+
+**Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`, and the host D-Bus
+socket `/run/dbus/system_bus_socket`; **not used:** `nsenter`, `chroot`.
 
 `wg_create_peer` stores the client config under `/etc/wireguard/clients/conf` and a
 protected QR file under `/etc/wireguard/clients/qr_code`, both with mode `600`;
@@ -136,10 +145,16 @@ Both credentials are accepted **at the same time** (`src/core/security.py:requir
    python -m src.auth 'your-password'
    ```
 
-The static token keeps working even when JWT login is configured, so you can
-still hand it to another admin. Because a leaked `ADMIN_TOKEN` then grants full
-admin access regardless of password+TOTP, leave `ADMIN_TOKEN` empty if you want
-JWT-only authentication.
+**Recommended: JWT-only.** Leave `ADMIN_TOKEN` empty and configure the JWT
+cookie (`ADMIN_PASSWORD_HASH` + `ADMIN_TOTP_SECRET` + `SESSION_SECRET`). The
+cookie is `HttpOnly`/`SameSite=Strict` and never touches `localStorage`, so it
+is not readable by the frontend or exposed to browser storage.
+
+The static token is optional and meant for API/automation use. It keeps working
+even when JWT login is configured, and in the UI the "Token" tab stores it in
+browser `localStorage`. A leaked `ADMIN_TOKEN` grants full admin access
+regardless of password+TOTP, so setting it is a residual risk — omit it unless
+you need headless API access.
 
 Never publish tokens and never leave access unconfigured. WebSocket, chat, the
 tool list, and artifact downloads (`/api/artifacts/...`) all require auth.
@@ -196,10 +211,11 @@ docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sq
 | Action | Before | Now |
 |---|---|---|
 | `wg show/add-peer` | `privileged: true` | `NET_ADMIN` capability |
-| `wg-quick up/down` | `privileged` | `NET_ADMIN` + `SYS_MODULE` |
+| `wg-quick up/down` | `privileged` | `NET_ADMIN` (in-tree kernel module); add `SYS_MODULE` only if you need in-container `modprobe` |
 | `/etc/wireguard` | via `/:/host` | direct bind mount |
 | Package install | `chroot /host` | `hub` image + LoomWG `wg_install_dependencies` (in-container) |
 | Firewall/NAT | inside container namespace | host namespace (`network_mode: host`) |
 | Full root to the host | ✅ | ❌ removed |
 | Docker socket | ✅ | ❌ removed |
-| Host PID namespace | ✅ | ❌ removed |
+| Host D-Bus socket | ✅ | ❌ removed (systemd's private socket via `/run/systemd` is used) |
+| setuid privilege escalation | allowed | blocked (`no-new-privileges: true`) |

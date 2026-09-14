@@ -168,11 +168,11 @@ audit log.
 ### Host observability
 
 To let LoomOps describe the whole host (not just the container), `hub` runs with
-`pid: host`, `cap_add: [SYSLOG]`, the D-Bus socket and read-only mounts of
-`/var/log`, `/var/log/journal`, `/run/systemd` and `/etc` under `/host/...`. It
-does **not** get `privileged`, the Docker socket, `SYS_PTRACE` or
-`DAC_READ_SEARCH`; the only writable host mount is still `/etc/wireguard`. Tune the
-health scan with:
+`pid: host`, `cap_add: [SYSLOG]`, systemd's private socket (via the read-only
+`/run/systemd` mount) and read-only mounts of `/var/log`, `/var/log/journal` and
+`/etc` under `/host/...`. It does **not** get `privileged`, the Docker socket,
+the host D-Bus socket, `SYS_PTRACE` or `DAC_READ_SEARCH`; the only writable host
+mount is still `/etc/wireguard`. Tune the health scan with:
 
 ```bash
 LOOMOPS_LOG_ROOTS=/host/var/log

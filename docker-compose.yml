@@ -37,13 +37,17 @@ services:
     # (read-only observability; see docs/plugins/LoomOps.md).
     pid: host
     # Least privilege: only what WireGuard and LoomOps observability need.
+    # SYS_MODULE is intentionally NOT granted: kernel WireGuard is in-tree on
+    # Linux 5.6+, and the LoomWG manifest marks the capability as optional so
+    # the plugin degrades to a host-side hint when the module must be loaded on
+    # the host. Re-add it only if you need in-container `modprobe wireguard`.
     cap_add:
       - NET_ADMIN
       - NET_RAW
-      - SYS_MODULE
       - SYSLOG
+    # Block setuid/setgid privilege escalation inside the container.
     security_opt:
-      - no-new-privileges:false
+      - no-new-privileges:true
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:-secret_password}@127.0.0.1:5432/${POSTGRES_DB:-loomcore}
       HETZNER_API_KEY: ${HETZNER_API_KEY:-}
@@ -89,7 +93,10 @@ services:
       - /var/log:/host/var/log:ro
       - /var/log/journal:/host/journal:ro
       - /run/systemd:/run/systemd:ro
-      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      # The host D-Bus socket is intentionally NOT mounted: the read-only
+      # /run/systemd mount already exposes systemd's private socket, which is
+      # what `systemctl` uses as root. If your host's systemctl needs D-Bus,
+      # re-add: /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
       - /etc:/host/etc:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]

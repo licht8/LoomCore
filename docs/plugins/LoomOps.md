@@ -119,8 +119,10 @@ whole host, not just the container:
   `/var/log → /host/var/log`, `/var/log/journal → /host/journal`,
   `/run/systemd → /run/systemd`, `/etc → /host/etc`. The `/etc` mount is optional
   and only used to read configuration.
-- D-Bus socket `/run/dbus/system_bus_socket` and the `systemd` package make
-  `journalctl`/`systemctl` reachable.
+- The `systemd` package plus the read-only `/run/systemd` mount expose
+  systemd's private socket, which `systemctl` uses when running as root. The
+  host D-Bus socket `/run/dbus/system_bus_socket` is **not** mounted; if your
+  host's `systemctl` needs D-Bus, re-add that bind mount.
 
 **Deliberately not granted:** `privileged`, the Docker socket, and the
 `SYS_PTRACE`/`DAC_READ_SEARCH` capabilities. Observability is read-only; the only
