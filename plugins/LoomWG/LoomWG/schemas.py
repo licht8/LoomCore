@@ -154,13 +154,12 @@ TOOLS_SCHEMA.extend(
             "name": "wg_show_interface_config",
             "description": (
                 "Show the interface configuration (live, or the saved file if the "
-                "interface is down). Keys are masked unless show_secrets is true."
+                "interface is down). Private and preshared keys are always masked."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "interface": {"type": "string", "default": "wg0"},
-                    "show_secrets": {"type": "boolean", "default": False},
                 },
                 "required": [],
             },

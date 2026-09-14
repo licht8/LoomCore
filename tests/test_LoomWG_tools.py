@@ -106,8 +106,11 @@ def test_show_config_masks_secrets(load_loomwg, monkeypatch):
     assert "(masked)" in text
     assert result["data"]["config"]["interface"]["listen_port"] == "51820"
 
+    # show_secrets was removed from the tool schema; even if a caller passes it
+    # the server configuration must stay masked (defense in depth).
     shown = view.show_config({"interface": "wg0", "show_secrets": True})
-    assert private in shown["content"][0]["text"]
+    assert private not in shown["content"][0]["text"]
+    assert "(masked)" in shown["content"][0]["text"]
 
 
 # === wg_check_interface_config ===

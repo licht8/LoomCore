@@ -67,7 +67,6 @@ def _summarize(text: str) -> dict[str, Any]:
 
 def show_config(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
-    show_secrets = bool(arguments.get("show_secrets", False))
 
     try:
         text = run_command(["wg", "showconf", interface])
@@ -81,7 +80,7 @@ def show_config(arguments: dict[str, Any]) -> dict[str, Any]:
         source = "file"
         active = False
 
-    display = text if show_secrets else _mask(text)
+    display = _mask(text)
     return text_result(
         display or "(empty configuration)",
         interface=interface,
