@@ -8,6 +8,7 @@ from ..util.files import atomic_write_text
 from ..wg.config_parser import sections_named
 from ..wg.device import config_directory
 from ..wg.keys import validate_public_key
+from ..wg.validate import validate_config_text
 
 
 def config_path(interface: str) -> Path:
@@ -38,7 +39,9 @@ def iter_peers(interface: str) -> list[dict]:
 
 
 def _write(path: Path, content: str) -> None:
-    atomic_write_text(path, content.rstrip() + "\n", mode=0o600)
+    text = content.rstrip() + "\n"
+    validate_config_text(text)
+    atomic_write_text(path, text, mode=0o600)
 
 
 def _peer_block(public_key: str, allowed_ips: list[str], preshared_key: str | None) -> str:

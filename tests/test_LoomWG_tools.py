@@ -147,6 +147,22 @@ def test_check_config_detects_problems(load_loomwg):
     assert any("overlap" in warning for warning in result["data"]["warnings"])
 
 
+def test_check_config_flags_unknown_section(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            f"PrivateKey = {_key(7)}",
+            "Address = 10.66.66.1/24",
+            "",
+            "[end]",
+        ]
+    )
+    result = check.check_config({"content": text})
+    assert result["data"]["valid"] is False
+    assert any("[end]" in error for error in result["data"]["errors"])
+
+
 # === wg_create_peer ===
 
 def test_add_peer_idempotent_same_allowed_ips(load_loomwg, monkeypatch, tmp_path):

@@ -6,7 +6,10 @@ optional `wg-quick strip` parse check when validating a real config file.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import re
+import tempfile
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
@@ -34,6 +37,20 @@ def _check_cidrs(values: list[str], label: str, errors: list[str]) -> list:
         except ValueError:
             errors.append(f"{label}: invalid CIDR '{value}'")
     return networks
+
+
+def validate_config_text(text: str) -> None:
+    """Raise CommandError if ``wg-quick strip`` cannot parse the config text."""
+    descriptor, tmp_name = tempfile.mkstemp(suffix=".conf")
+    tmp_path = Path(tmp_name)
+    try:
+        os.chmod(tmp_path, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(text)
+        run_command(["wg-quick", "strip", str(tmp_path)])
+    finally:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
 
 
 def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -75,6 +92,10 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
     sections = parse_sections(text)
     interface_sections = [s for s in sections if s.name.lower() == "interface"]
     peer_sections = [s for s in sections if s.name.lower() == "peer"]
+
+    for section in sections:
+        if section.name.lower() not in {"interface", "peer"}:
+            errors.append(f"unknown section [{section.name}]")
 
     if not interface_sections:
         errors.append("[Interface] section missing")

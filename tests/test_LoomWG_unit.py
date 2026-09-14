@@ -4,6 +4,7 @@ import base64
 import time
 from datetime import UTC, datetime
 from ipaddress import ip_address
+from pathlib import Path
 
 import pytest
 
@@ -93,6 +94,7 @@ def test_get_artifact_missing_key_errors(load_loomwg, monkeypatch, tmp_path):
 def test_add_and_remove_peer(load_loomwg, monkeypatch, tmp_path):
     config = load_loomwg("config")["config"]
     monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
     config_file = tmp_path / "wg0.conf"
     config_file.write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
     public_key = _fake_key(7)
@@ -594,6 +596,7 @@ def test_add_peer_missing_config(load_loomwg, monkeypatch, tmp_path):
 def test_upsert_peer_adds_then_detects_no_change(load_loomwg, monkeypatch, tmp_path):
     config = load_loomwg("config")["config"]
     monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
     (tmp_path / "wg0.conf").write_text("[Interface]\nPrivateKey = x\n", encoding="utf-8")
     key = _fake_key(13)
 
@@ -615,6 +618,7 @@ def test_remove_peer_unknown_raises(load_loomwg, monkeypatch, tmp_path):
 def test_remove_peer_drops_only_target_block(load_loomwg, monkeypatch, tmp_path):
     config = load_loomwg("config")["config"]
     monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
     keys = [_fake_key(seed) for seed in (20, 21, 22)]
     config_file = tmp_path / "wg0.conf"
     config_file.write_text(
@@ -640,6 +644,7 @@ def test_remove_peer_drops_only_target_block(load_loomwg, monkeypatch, tmp_path)
 def test_remove_peer_sole_peer_keeps_valid_remainder(load_loomwg, monkeypatch, tmp_path):
     config = load_loomwg("config")["config"]
     monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
     key = _fake_key(23)
     config_file = tmp_path / "wg0.conf"
     config_file.write_text(
@@ -654,6 +659,73 @@ def test_remove_peer_sole_peer_keeps_valid_remainder(load_loomwg, monkeypatch, t
     assert "[Peer]" not in text
     assert "[Interface]" in text
     assert config.iter_peers("wg0") == []
+
+
+# === wg/validate.py: config text validation ===
+
+def test_validate_config_text_cleans_temp_and_raises(load_loomwg, monkeypatch):
+    validate = load_loomwg("validate")["validate"]
+    seen: list[str] = []
+
+    def fake_run_command(command, *args, **kwargs):
+        seen.append(command[-1])
+        raise validate.CommandError("wg-quick strip failed")
+
+    monkeypatch.setattr(validate, "run_command", fake_run_command)
+
+    with pytest.raises(validate.CommandError):
+        validate.validate_config_text("[Interface]\nPrivateKey = x\n")
+
+    assert len(seen) == 1
+    assert seen[0].endswith(".conf")
+    assert not Path(seen[0]).exists()
+
+
+def test_validate_config_text_passes_and_cleans_temp(load_loomwg, monkeypatch):
+    validate = load_loomwg("validate")["validate"]
+    seen: list[str] = []
+
+    def fake_run_command(command, *args, **kwargs):
+        seen.append(command[-1])
+        return "stripped"
+
+    monkeypatch.setattr(validate, "run_command", fake_run_command)
+
+    validate.validate_config_text("[Interface]\nPrivateKey = x\n")
+
+    assert len(seen) == 1
+    assert not Path(seen[0]).exists()
+
+
+def test_write_rejects_invalid_config_keeps_destination(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    config_file = tmp_path / "wg0.conf"
+    original = "[Interface]\nPrivateKey = x\n"
+    config_file.write_text(original, encoding="utf-8")
+
+    def reject(text: str) -> None:
+        raise ValueError("invalid config")
+
+    monkeypatch.setattr(config, "validate_config_text", reject)
+
+    with pytest.raises(ValueError):
+        config.add_peer("wg0", _fake_key(30), ["10.0.0.2/32"], None)
+    assert config_file.read_text(encoding="utf-8") == original
+
+
+def test_client_write_secret_rejects_invalid_config(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    target = tmp_path / "peer.conf"
+
+    def reject(text: str) -> None:
+        raise ValueError("invalid config")
+
+    monkeypatch.setattr(client, "validate_config_text", reject)
+
+    with pytest.raises(ValueError):
+        client._write_secret(target, "[Interface]\nPrivateKey = x\n")
+    assert not target.exists()
 
 
 # === clients/client.py: allocation + create_client ===

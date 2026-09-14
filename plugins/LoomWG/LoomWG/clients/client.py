@@ -16,6 +16,7 @@ from ..util.files import atomic_write_text
 from ..wg.config_parser import parse_sections
 from ..wg.device import CommandError, run_command
 from ..wg.keys import generate_keypair
+from ..wg.validate import validate_config_text
 from . import store as clients_store
 from .paths import (
     CONF_DIR_NAME,
@@ -181,7 +182,9 @@ def _client_addresses(arguments: dict, interface: str, server_networks: list[str
 
 
 def _write_secret(path: Path, content: str) -> None:
-    atomic_write_text(path, content.rstrip() + "\n", mode=0o600)
+    text = content.rstrip() + "\n"
+    validate_config_text(text)
+    atomic_write_text(path, text, mode=0o600)
 
 
 def remove_client_artifacts(public_key: str) -> list[str]:
