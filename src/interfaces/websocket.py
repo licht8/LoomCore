@@ -170,8 +170,13 @@ async def _run_plan(
         log_stage("save_plan", time.monotonic() - persist_started)
 
     summary_started = time.monotonic()
-    summary = await _summarize(user_text, final_plan, observations)
-    log_stage("summary", time.monotonic() - summary_started)
+    if show_plan:
+        summary = await _summarize(user_text, final_plan, observations)
+    else:
+        # Direct action: the tool output already is the answer; skip the second
+        # LLM round trip that would only restate it.
+        summary = _direct_summary(final_plan, observations)
+    log_stage("summary", time.monotonic() - summary_started, llm=show_plan)
     if summary:
         with contextlib.suppress(Exception):
             async with async_session_factory() as db:
@@ -209,6 +214,23 @@ def _fallback_summary(plan: dict) -> str:
         f"- {step.get('tool')}: {step.get('status')}" for step in plan.get("steps", [])
     )
     return "\n".join(lines)
+
+
+def _direct_summary(plan: dict, observations: list[dict]) -> str:
+    """Deterministic summary for a direct action: the tool output is the answer.
+
+    A direct action is a single obvious call, so a second LLM round trip to
+    restate its result only adds latency. Surface the raw output instead.
+    """
+    texts = [
+        _extract_text(item.get("result"))
+        for item in observations
+        if item.get("result") is not None
+    ]
+    texts = [text for text in texts if text]
+    if texts:
+        return "\n\n".join(texts)
+    return _fallback_summary(plan)
 
 
 async def _guarded(coro) -> None:

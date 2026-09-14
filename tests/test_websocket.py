@@ -210,11 +210,39 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
     assert types.count("tool_call") == 1
     assert "tool_response" in types
     assert types[-1] == "response"
-    assert sent[-1]["content"] == "Summary"
+    assert sent[-1]["content"] == "core_health ok"
     assert saved_tools[0]["status"] == "success"
     assert saved_plans == []
     assert pending["plan"] is None
     assert tracker["plan"] is None
+
+
+@pytest.mark.asyncio
+async def test_direct_action_skips_llm_summary(monkeypatch):
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "check",
+            "steps": [{"tool": "core_health", "args": {}, "why": "health"}],
+        }
+    )
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    async def boom_summary(user_text, plan, observations):
+        raise AssertionError("direct actions must not call the LLM summary")
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom_summary)
+
+    tracker = {"tool": None, "plan": None}
+    pending = {"plan": None, "user_text": ""}
+    await ws_module._process_user_message(send, "sess", "check", tracker, pending)
+
+    assert sent[-1]["type"] == "response"
+    assert sent[-1]["content"] == "core_health ok"
 
 
 @pytest.mark.asyncio
