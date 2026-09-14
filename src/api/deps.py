@@ -1,5 +1,7 @@
 """Shared dependencies and utilities for the API layer."""
 
+import hashlib
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
@@ -34,14 +36,16 @@ def require_admin_token_from_request(
 
 
 def chat_key_func(request: Request) -> str:
-    """Rate limit key for /api/chat — by session_id from the query, else IP.
+    """Rate limit key for /api/chat — the authenticated principal, not the client.
 
-    Does not read the request body to avoid conflicting with Pydantic ChatRequest.
+    The key is derived server-side from the credential (session cookie or
+    Bearer token) as a hash, so rotating a client-supplied ``session_id`` can no
+    longer reset the limit. Falls back to the remote address when unauthenticated.
     """
-    session_id = request.query_params.get("session_id")
-    if session_id:
-        return session_id
-    return request.client.host if request.client else "unknown"
+    token = extract_admin_token(request, request.headers.get("authorization"))
+    if token:
+        return "token:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return "ip:" + (request.client.host if request.client else "unknown")
 
 
 async def rate_limit_exceeded_handler(

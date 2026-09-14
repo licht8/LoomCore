@@ -3,6 +3,7 @@ import contextlib
 import logging
 import time
 import traceback
+from collections import deque
 from collections.abc import Awaitable, Callable
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -55,6 +56,32 @@ airouter_with_plugins = AIRouter(plugin_manager=plugin_manager)
 
 # Async function that serializes writes to the WebSocket.
 Send = Callable[[dict], Awaitable[None]]
+
+# Inbound WebSocket messages allowed per identity per minute. slowapi cannot
+# wrap websockets, so the interface enforces its own limit: the counter is
+# shared per authenticated identity (all sessions of the single admin), so
+# opening more sockets or rotating the session id cannot raise it.
+WS_MESSAGE_LIMIT_PER_MINUTE = 60
+_WS_LIMIT_WINDOW_SECONDS = 60.0
+_ws_message_times: dict[str, deque[float]] = {}
+
+
+def _allow_ws_message(identity: str) -> bool:
+    """Sliding-window limit on inbound WebSocket messages for one identity."""
+    now = time.monotonic()
+    window = _ws_message_times.setdefault(identity, deque())
+    cutoff = now - _WS_LIMIT_WINDOW_SECONDS
+    while window and window[0] <= cutoff:
+        window.popleft()
+    if len(window) >= WS_MESSAGE_LIMIT_PER_MINUTE:
+        return False
+    window.append(now)
+    return True
+
+
+def reset_ws_message_limits() -> None:
+    """Clear the WebSocket message limiter (used by tests)."""
+    _ws_message_times.clear()
 
 
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
@@ -334,7 +361,9 @@ async def _process_user_message(
         )
 
 
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket, session_id: str, identity: str = "admin"
+):
     """WebSocket endpoint for live chat with the AI.
 
     Logic:
@@ -573,6 +602,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             # Read JSON from the client
             data = await websocket.receive_json()
             logger.info(f"📥 Received client message: {data}")
+            if not _allow_ws_message(identity):
+                await send(
+                    {
+                        "type": "error",
+                        "error": "Rate limit exceeded. Please slow down.",
+                    }
+                )
+                continue
             try:
                 await handle_message(data)
             except WebSocketDisconnect:

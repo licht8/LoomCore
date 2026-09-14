@@ -11,6 +11,14 @@ from src.interfaces import websocket as ws_module
 from src.llm.client import LlmError
 
 
+@pytest.fixture(autouse=True)
+def _reset_ws_message_limits():
+    """The WS message limiter is module-global; reset it around every test."""
+    ws_module.reset_ws_message_limits()
+    yield
+    ws_module.reset_ws_message_limits()
+
+
 class FakeWebSocket:
     """Minimal WebSocket double that replays a scripted incoming list."""
 
@@ -927,3 +935,31 @@ async def test_websocket_unrelated_message_cancels_plan_card(monkeypatch):
     assert calls == ["disable", "maybe"]
     assert not any(p["type"] == "tool_call" for p in ws.sent)
     assert any(p.get("content") == "ok" for p in ws.sent)
+
+
+# === WebSocket message rate limiting ===
+
+def test_allow_ws_message_enforces_window(monkeypatch):
+    ws_module.reset_ws_message_limits()
+    monkeypatch.setattr(ws_module, "WS_MESSAGE_LIMIT_PER_MINUTE", 2)
+
+    assert ws_module._allow_ws_message("admin") is True
+    assert ws_module._allow_ws_message("admin") is True
+    assert ws_module._allow_ws_message("admin") is False
+    # A different identity has its own window.
+    assert ws_module._allow_ws_message("other") is True
+
+
+@pytest.mark.asyncio
+async def test_websocket_rejects_messages_over_the_limit(monkeypatch):
+    _patch_db(monkeypatch)
+    monkeypatch.setattr(ws_module, "WS_MESSAGE_LIMIT_PER_MINUTE", 1)
+
+    ws = FakeWebSocket([{"message": "one"}, {"message": "two"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    errors = [p for p in ws.sent if p["type"] == "error"]
+    assert len(errors) == 1
+    assert "Rate limit" in errors[0]["error"]

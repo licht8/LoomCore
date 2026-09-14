@@ -14,6 +14,8 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from src.api.deps import chat_key_func
+
 # === Utilities ===
 
 def make_limiter() -> Limiter:
@@ -45,44 +47,43 @@ def build_app(limiter: Limiter, rate_limit: str, key_func=None, endpoint="test")
     return app
 
 
-# === Task 1: _chat_key_func via the query parameter ===
-
-def _chat_query_key(request: Request) -> str:
-    """Key: session_id from the query, falling back to IP."""
-    session_id = request.query_params.get("session_id")
-    if session_id:
-        return session_id
-    return request.client.host if request.client else "unknown"
-
+# === Task 1: the key comes from the authenticated identity, not the client ===
 
 @pytest.fixture
 def chat_app():
-    # Limit: 2 requests per 60 seconds per session_id key
-    return build_app(make_limiter(), "2 per 60 seconds", key_func=_chat_query_key)
+    # Limit: 2 requests per 60 seconds per authenticated principal.
+    return build_app(make_limiter(), "2 per 60 seconds", key_func=chat_key_func)
 
 
 @pytest.mark.asyncio
-async def test_chat_key_func_via_query(chat_app):
-    """The key comes from query_params; the body is not read.
+async def test_chat_key_func_ignores_rotating_session_id(chat_app):
+    """Rotating the client-supplied session_id must not reset the limit.
 
-    Two requests with session_id=sess1 exhaust the limit → 429 on the third.
-    A request with session_id=sess3 is a separate key → 200.
+    The key is derived from the Bearer token server-side, so two requests with
+    DIFFERENT session_id values still share one bucket → 429 on the third.
     """
+    auth = {"Authorization": "Bearer token-a"}
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as client:
-        # 2 requests with sess1 → exhaust the limit (2/2)
-        r1 = await client.get("/test?session_id=sess1")
-        r2 = await client.get("/test?session_id=sess1")
+        r1 = await client.get("/test?session_id=sess1", headers=auth)
+        r2 = await client.get("/test?session_id=sess2", headers=auth)
         assert r1.status_code == 200
         assert r2.status_code == 200
 
-        # 3rd with sess1 → limit exhausted
-        r3 = await client.get("/test?session_id=sess1")
+        # A different session_id is the SAME principal → limit exhausted.
+        r3 = await client.get("/test?session_id=sess3", headers=auth)
         assert r3.status_code == 429
         assert r3.json()["detail"] == "Too many requests. Please try again later."
 
-        # A request with sess3 → separate key, limit untouched
-        r4 = await client.get("/test?session_id=sess3")
-        assert r4.status_code == 200
+
+@pytest.mark.asyncio
+async def test_chat_key_func_separates_credentials(chat_app):
+    """A different credential is a separate rate-limit bucket."""
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as client:
+        await client.get("/test", headers={"Authorization": "Bearer token-a"})
+        await client.get("/test", headers={"Authorization": "Bearer token-a"})
+
+        other = await client.get("/test", headers={"Authorization": "Bearer token-b"})
+        assert other.status_code == 200
 
 
 # === Task 3: custom 429 body ===
