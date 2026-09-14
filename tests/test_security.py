@@ -66,6 +66,30 @@ def test_keyword_risk_classification():
     assert classify_tool_risk("wg_unknown_operation") == "safe"
 
 
+def test_read_only_config_tools_are_safe():
+    assert classify_tool_risk("wg_check_interface_config") == "safe"
+    assert classify_tool_risk("wg_show_interface_config") == "safe"
+    assert classify_tool_risk("wg_list_interfaces") == "safe"
+    assert classify_tool_risk("wg_list_peers") == "safe"
+    assert classify_tool_risk("wg_stats") == "safe"
+    assert classify_tool_risk("wg_get_client_artifact") == "safe"
+    assert classify_tool_risk("ops_scan_health") == "safe"
+    assert classify_tool_risk("ops_dmesg") == "safe"
+    assert classify_tool_risk("ops_failed_units") == "safe"
+    assert classify_tool_risk("ops_log_search") == "safe"
+    assert classify_tool_risk("ops_network_connections") == "safe"
+
+
+def test_read_only_mutations_keep_their_risk():
+    assert classify_tool_risk("wg_create_peer") == "moderate"
+
+
+def test_keyword_matching_ignores_substrings():
+    # "rm" inside "format" and "add" inside "address" must not trigger.
+    assert classify_tool_risk("wg_format_disk") == "safe"
+    assert classify_tool_risk("ops_address_lookup") == "safe"
+
+
 def _clear_admin_settings(monkeypatch, **overrides):
     defaults = {
         "admin_token": "",

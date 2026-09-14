@@ -1,3 +1,4 @@
+import re
 import secrets
 
 from fastapi import HTTPException
@@ -63,15 +64,44 @@ def classify_tool_risk(tool_name: str) -> str:
         "ops_kill_process",
         "ops_systemctl_restart",
     }
-    if tool_name.lower() in explicit_dangerous:
-        return "dangerous"
-
-    dangerous = ["restart", "delete", "drop", "reboot", "rm", "chmod", "flush"]
-    moderate = ["create", "add", "set", "config", "deploy"]
+    # Read-only tools that must never sit behind approval, even though the
+    # heuristic keywords below would otherwise flag them (e.g. "..._config").
+    explicit_safe = {
+        "wg_list_interfaces",
+        "wg_list_peers",
+        "wg_interface_status",
+        "wg_show_interface_config",
+        "wg_check_interface_config",
+        "wg_get_client_artifact",
+        "wg_diagnostics",
+        "wg_stats",
+        "ops_system_metrics",
+        "ops_disk_usage",
+        "ops_scan_health",
+        "ops_list_processes",
+        "ops_dmesg",
+        "ops_failed_units",
+        "ops_log_search",
+        "ops_network_connections",
+        "ops_network_status",
+        "ops_read_file",
+        "ops_systemctl_status",
+    }
 
     tool_lower = tool_name.lower()
-    if any(kw in tool_lower for kw in dangerous):
+    if tool_lower in explicit_dangerous:
         return "dangerous"
-    if any(kw in tool_lower for kw in moderate):
+    if tool_lower in explicit_safe:
+        return "safe"
+
+    # Match whole underscore/dash-separated tokens so substrings like "rm" in
+    # "form" (or "add" in "address") no longer trigger a false positive.
+    tokens = {token for token in re.split(r"[^a-z0-9]+", tool_lower) if token}
+    dangerous = {"restart", "delete", "drop", "reboot", "rm", "chmod", "flush"}
+    moderate = {"create", "add", "set", "config", "deploy"}
+
+    if tokens & dangerous:
+        return "dangerous"
+    if tokens & moderate:
         return "moderate"
     return "safe"
