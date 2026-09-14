@@ -222,13 +222,13 @@ async def _run_plan(
         log_stage("save_plan", time.monotonic() - persist_started)
 
     summary_started = time.monotonic()
-    if show_plan:
-        summary = await _summarize(user_text, final_plan, observations)
-    else:
-        # Direct action: the tool output already is the answer; skip the second
-        # LLM round trip that would only restate it.
-        summary = _direct_summary(final_plan, observations)
-    log_stage("summary", time.monotonic() - summary_started, llm=show_plan)
+    # Every tool-backed turn is answered in the assistant's own words, direct
+    # actions included; raw tool text is surfaced only when the user asked for it.
+    raw_requested = _wants_raw_output(user_text)
+    summary = await _summarize(
+        user_text, final_plan, observations, raw_requested=raw_requested
+    )
+    log_stage("summary", time.monotonic() - summary_started, llm=not raw_requested)
     if summary:
         with contextlib.suppress(Exception):
             async with async_session_factory() as db:
@@ -247,8 +247,23 @@ async def _run_plan(
     log_stage("plan_total", time.monotonic() - plan_started, show_plan=show_plan)
 
 
-async def _summarize(user_text: str, plan: dict, observations: list[dict]) -> str:
-    """Summarize a finished plan, falling back to a terse status on failure."""
+async def _summarize(
+    user_text: str,
+    plan: dict,
+    observations: list[dict],
+    *,
+    raw_requested: bool = False,
+) -> str:
+    """Summarize a finished plan in the assistant's own words.
+
+    Raw tool text is surfaced only when the user explicitly asked for it, when
+    the summary call fails, when there is nothing to summarize, or when the
+    summary contradicts the numbers in the observations.
+    """
+    if raw_requested:
+        return _raw_summary(plan, observations)
+    if not observations:
+        return _fallback_summary(plan)
     try:
         summary = await airouter_with_plugins.summarize_plan(
             user_text, plan, observations
@@ -257,17 +272,33 @@ async def _summarize(user_text: str, plan: dict, observations: list[dict]) -> st
         raise
     except Exception as exc:
         logger.error(f"Plan summary failed: {exc}")
-        return _fallback_summary(plan)
+        return _raw_summary(plan, observations)
+    if not (summary or "").strip():
+        return _raw_summary(plan, observations)
     if _counts_mismatch(summary, observations):
         logger.warning(
             "Plan summary changed the reported counts; surfacing raw tool output"
         )
-        return _direct_summary(plan, observations)
+        return _raw_summary(plan, observations)
     return summary
 
 
 # A health-style triple: "0 critical, 1 warning, 0 info".
 _COUNTS_RE = re.compile(r"(\d+)\s+critical,\s*(\d+)\s+warnings?,\s*(\d+)\s+info")
+
+# Explicit requests for the unprocessed tool output bypass the summary call.
+_RAW_OUTPUT_RE = re.compile(
+    r"raw\s+(?:output|text|result|response|table|data)|verbatim|as[- ]?is|"
+    r"every\s+row|all\s+rows|list\s+every|full\s+(?:list|table|output|result)|"
+    r"whole\s+(?:list|table|output|result)|exact\s+(?:output|result|text)|"
+    r"как есть|сырой вывод|полный вывод|весь список|все строки|каждую строку",
+    re.IGNORECASE,
+)
+
+
+def _wants_raw_output(user_text: str) -> bool:
+    """True when the user explicitly asked for the unprocessed tool output."""
+    return bool(user_text and _RAW_OUTPUT_RE.search(user_text))
 
 
 def _observation_text(observations: list[dict]) -> str:
@@ -296,11 +327,11 @@ def _fallback_summary(plan: dict) -> str:
     return "\n".join(lines)
 
 
-def _direct_summary(plan: dict, observations: list[dict]) -> str:
-    """Deterministic summary for a direct action: the tool output is the answer.
+def _raw_summary(plan: dict, observations: list[dict]) -> str:
+    """Deterministic, unprocessed tool output for a finished plan.
 
-    A direct action is a single obvious call, so a second LLM round trip to
-    restate its result only adds latency. Surface the raw output instead.
+    Used only as a fallback (summary failure or count mismatch) or when the user
+    explicitly asks for the raw output.
     """
     texts = [
         _extract_text(item.get("result"))

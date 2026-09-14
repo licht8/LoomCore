@@ -97,7 +97,12 @@ def _result(text: str, **data) -> dict:
 
 
 def _plugin_name(arguments: dict) -> str:
-    value = arguments.get("plugin") or arguments.get("id")
+    value = (
+        arguments.get("plugin")
+        or arguments.get("plugin_id")
+        or arguments.get("name")
+        or arguments.get("id")
+    )
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Argument 'plugin' is required")
     return value.strip()

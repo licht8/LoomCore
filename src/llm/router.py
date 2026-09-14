@@ -123,6 +123,9 @@ class AIRouter:
             "collect_tools", time.monotonic() - collect_started, tools=len(tools_schema)
         )
         known_tools = {tool["name"] for tool in tools_schema}
+        tool_schemas = {
+            tool["name"]: tool.get("inputSchema") or {} for tool in tools_schema
+        }
         catalog = self._catalog_text(tools_schema)
         messages = build_planner_messages(user_message, history_dicts, catalog)
 
@@ -176,7 +179,7 @@ class AIRouter:
 
                 if tool_name == AGENT_PLAN_TOOL:
                     plan = build_plan(tool_args or {})
-                    errors = validate_plan(plan, known_tools)
+                    errors = validate_plan(plan, known_tools, tool_schemas)
                     if not errors:
                         # A direct one-step action leaves no plan artifact; only
                         # multi-step plans are persisted as "plan" rows.

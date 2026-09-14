@@ -157,8 +157,17 @@ def next_revision(plan: dict, steps: list[dict]) -> dict:
     return updated
 
 
-def validate_plan(plan: dict, known_tools: set[str]) -> list[str]:
-    """Return a list of problems; an empty list means the plan is valid."""
+def validate_plan(
+    plan: dict,
+    known_tools: set[str],
+    tool_schemas: dict[str, dict] | None = None,
+) -> list[str]:
+    """Return a list of problems; an empty list means the plan is valid.
+
+    When ``tool_schemas`` maps a tool name to its ``inputSchema``, each step must
+    supply that tool's required arguments; a missing one is a validation error so
+    the planner is re-asked instead of running a call that can only fail.
+    """
     errors: list[str] = []
     steps = plan.get("steps")
     if not isinstance(steps, list) or not steps:
@@ -168,6 +177,7 @@ def validate_plan(plan: dict, known_tools: set[str]) -> list[str]:
         errors.append(f"invalid mode: {mode}")
     if len(steps) > MAX_PLAN_STEPS:
         errors.append(f"plan has more than {MAX_PLAN_STEPS} steps")
+    schemas = tool_schemas or {}
     for step in steps:
         tool = step.get("tool")
         if not tool:
@@ -176,8 +186,17 @@ def validate_plan(plan: dict, known_tools: set[str]) -> list[str]:
             errors.append("a step may not call the planner")
         elif tool not in known_tools:
             errors.append(f"unknown tool: {tool}")
-        if not isinstance(step.get("args", {}), dict):
+        args = step.get("args", {})
+        if not isinstance(args, dict):
             errors.append(f"arguments for {tool or '?'} are not an object")
+        elif tool in schemas:
+            required = schemas[tool].get("required")
+            if isinstance(required, list):
+                missing = [name for name in required if name not in args]
+                if missing:
+                    errors.append(
+                        f"{tool} is missing required argument(s): {', '.join(missing)}"
+                    )
     return errors
 
 

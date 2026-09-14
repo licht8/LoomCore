@@ -25,6 +25,11 @@ wins, and any plan with more than one step is forced to `plan`. A single step
 with no declared mode becomes `direct`. See `build_plan` / `_effective_mode` in
 `src/core/agent.py`.
 
+`validate_plan` also checks each step against the tool's `inputSchema`: a step
+that omits a required argument (for example `core_disable_plugin` without
+`plugin`) is rejected and the planner is re-asked, so a call that could only fail
+never reaches execution.
+
 ## Flow
 
 1. **Understand** — the planner LLM is offered exactly two callable tools,
@@ -44,10 +49,13 @@ with no declared mode becomes `direct`. See `build_plan` / `_effective_mode` in
 4. **Execute** — the executor replays the stored steps verbatim: the approved
    `tool` and `args`, in order. It never re-asks between steps and never
    paraphrases arguments. A failed step stops the plan.
-5. **Summarize** — a second LLM call, voiced by `src/llm/SOUL.md`, reports the
-   outcome. It must copy status words and numbers verbatim from the tool output;
-   if the summary changes a reported count (e.g. a health scan's
-   `0 critical, 1 warning, 0 info`), the raw tool output is shown instead.
+5. **Summarize** — every tool-backed turn, direct actions included, gets a second
+   LLM call voiced by `src/llm/SOUL.md`. It answers in its own words using only
+   the tool facts: it must not paste raw tables/JSON, but must copy status words
+   and numbers verbatim (e.g. a health scan's `0 critical, 1 warning, 0 info`).
+   The raw tool output is shown only when the user explicitly asks for it
+   ("show the raw output", "list every row"), when the summary call fails, or
+   when the summary changes a reported count or status.
 
 ## Plain-text confirmation
 

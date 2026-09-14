@@ -61,6 +61,34 @@ def test_validate_plan_accepts_known_tools():
     assert agent.validate_plan(plan, known) == []
 
 
+def test_validate_plan_flags_missing_required_arguments():
+    known = {"core_disable_plugin"}
+    schemas = {
+        "core_disable_plugin": {
+            "type": "object",
+            "properties": {"plugin": {"type": "string"}},
+            "required": ["plugin"],
+        }
+    }
+
+    missing = agent.validate_plan(
+        {"steps": [{"tool": "core_disable_plugin", "args": {}}]}, known, schemas
+    )
+    assert any("missing required argument(s): plugin" in error for error in missing)
+
+    ok = agent.validate_plan(
+        {"steps": [{"tool": "core_disable_plugin", "args": {"plugin": "LoomWG"}}]},
+        known,
+        schemas,
+    )
+    assert ok == []
+
+    # Without a schema map the required-argument check is skipped.
+    assert agent.validate_plan(
+        {"steps": [{"tool": "core_disable_plugin", "args": {}}]}, known
+    ) == []
+
+
 def test_plan_requires_approval():
     safe = {"steps": [{"risk": "safe"}]}
     risky = {"steps": [{"risk": "safe"}, {"risk": "moderate"}]}

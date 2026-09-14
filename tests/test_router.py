@@ -226,6 +226,38 @@ async def test_route_reasks_after_invalid_plan(patched_router):
 
 
 @pytest.mark.asyncio
+async def test_route_reasks_when_required_argument_missing(patched_router):
+    router, state = patched_router
+    state["queue"] = [
+        _plan_response(
+            {
+                "goal": "disable",
+                "steps": [{"tool": "core_disable_plugin", "args": {}, "why": "stop"}],
+            }
+        ),
+        _plan_response(
+            {
+                "goal": "disable",
+                "steps": [
+                    {
+                        "tool": "core_disable_plugin",
+                        "args": {"plugin": "LoomWG"},
+                        "why": "stop",
+                    }
+                ],
+            }
+        ),
+    ]
+
+    result = await router.route("disable loomwg", "sess-1")
+
+    assert result["type"] == "plan"
+    assert result["plan"]["steps"][0]["args"] == {"plugin": "LoomWG"}
+    assert state["calls"] == 2
+    assert "plugin" in state["last_messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_route_gives_up_after_reask_limit(patched_router):
     router, state = patched_router
     bad = _plan_response({"goal": "bad", "steps": [{"tool": "ghost", "why": "x"}]})

@@ -228,7 +228,7 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
     assert types.count("tool_call") == 1
     assert "tool_response" in types
     assert types[-1] == "response"
-    assert sent[-1]["content"] == "core_health ok"
+    assert sent[-1]["content"] == "Summary"
     assert saved_tools[0]["status"] == "success"
     assert saved_plans == []
     assert pending["plan"] is None
@@ -236,7 +236,7 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_direct_action_skips_llm_summary(monkeypatch):
+async def test_direct_action_uses_llm_summary(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
@@ -244,23 +244,105 @@ async def test_direct_action_skips_llm_summary(monkeypatch):
             "steps": [{"tool": "core_health", "args": {}, "why": "health"}],
         }
     )
+    calls = []
 
     async def fake_route(user_text, session_id):
         return {"type": "plan", "plan": plan}
 
-    async def boom_summary(user_text, plan, observations):
-        raise AssertionError("direct actions must not call the LLM summary")
+    async def fake_summary(user_text, plan, observations):
+        calls.append((user_text, observations))
+        return "All good — the core is healthy."
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
     _patch_plan_runtime(monkeypatch)
-    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom_summary)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", fake_summary)
 
     tracker = {"tool": None, "plan": None}
     pending = {"plan": None, "user_text": ""}
     await ws_module._process_user_message(send, "sess", "check", tracker, pending)
 
+    assert calls and calls[0][0] == "check"
     assert sent[-1]["type"] == "response"
-    assert sent[-1]["content"] == "core_health ok"
+    assert sent[-1]["content"] == "All good — the core is healthy."
+
+
+@pytest.mark.asyncio
+async def test_summary_replaces_a_raw_table(monkeypatch):
+    sent, send = _collector()
+    table = (
+        "interface  peer        endpoint              latest\n"
+        "wg0        YEHOR4      1.2.3.4:51820         12s\n"
+        "wg0        Yehor       5.6.7.8:51820          offline\n"
+        "wg0        china       9.9.9.9:51820          offline"
+    )
+    plan = build_plan(
+        {
+            "goal": "list peers",
+            "steps": [{"tool": "wg_list_peers", "args": {}, "why": "peers"}],
+        }
+    )
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    async def fake_execute(tool_name, arguments=None):
+        return {"content": [{"type": "text", "text": table}], "data": {}}
+
+    async def fake_summary(user_text, plan, observations):
+        return "3 peers on wg0; one is online and two are offline."
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module, "_execute_tool", fake_execute)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", fake_summary)
+
+    await ws_module._process_user_message(send, "sess", "list peers", {}, {})
+
+    assert sent[-1]["type"] == "response"
+    assert sent[-1]["content"] == "3 peers on wg0; one is online and two are offline."
+    assert "interface  peer" not in sent[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_raw_output_request_returns_the_table(monkeypatch):
+    sent, send = _collector()
+    table = "wg0  YEHOR4  1.2.3.4:51820\nwg0  china  9.9.9.9:51820"
+    plan = build_plan(
+        {
+            "goal": "list peers",
+            "steps": [{"tool": "wg_list_peers", "args": {}, "why": "peers"}],
+        }
+    )
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    async def fake_execute(tool_name, arguments=None):
+        return {"content": [{"type": "text", "text": table}], "data": {}}
+
+    async def boom_summary(user_text, plan, observations):
+        raise AssertionError("raw output requests must not call the LLM summary")
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module, "_execute_tool", fake_execute)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom_summary)
+
+    await ws_module._process_user_message(
+        send, "sess", "show me the raw output", {}, {}
+    )
+
+    assert sent[-1]["type"] == "response"
+    assert sent[-1]["content"] == table
+
+
+def test_wants_raw_output_detects_phrases():
+    assert ws_module._wants_raw_output("show me the raw output")
+    assert ws_module._wants_raw_output("list every row")
+    assert ws_module._wants_raw_output("give me the full table")
+    assert ws_module._wants_raw_output("покажи полный вывод")
+    assert not ws_module._wants_raw_output("list the wireguard peers")
+    assert not ws_module._wants_raw_output("")
 
 
 @pytest.mark.asyncio

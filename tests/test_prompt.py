@@ -106,3 +106,16 @@ def test_summary_instruction_demands_verbatim_numbers():
     assert "exactly" in SUMMARY_INSTRUCTION
     assert "Never change" in SUMMARY_INSTRUCTION
     assert "degraded (0 critical, 1 warning, 0 info)" in SUMMARY_INSTRUCTION
+
+
+def test_summary_instruction_forbids_pasting_raw_output():
+    lowered = SUMMARY_INSTRUCTION.lower()
+    assert "in your own words" in lowered
+    assert "raw tables" in lowered
+    assert "summarize" in lowered
+
+
+def test_planner_prompt_requires_exact_argument_names():
+    lowered = PLANNER_PROMPT.lower()
+    assert "exact argument names" in lowered
+    assert "plugin" in lowered

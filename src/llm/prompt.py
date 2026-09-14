@@ -48,6 +48,8 @@ PLANNER_PROMPT = (
     "- mode='plan' for multi-step work, when the user explicitly asks for a plan, "
     "or when writing it out helps them correct it.\n"
     "- Use only tool names that appear in the catalog below.\n"
+    "- Pass every required argument using the exact argument names shown in the "
+    "catalog (for example core_disable_plugin takes `plugin`).\n"
     "- Prefer the fewest steps that achieve the request.\n"
     "- Approval-gated tools are still proposed here; the runtime asks the user for "
     "approval, so never tell the user you cannot do it or that they must do it "
@@ -63,11 +65,18 @@ PLANNER_PROMPT = (
 )
 
 SUMMARY_INSTRUCTION = (
-    "Summarize the completed plan for the user, following the voice guide above. "
-    "Be brief and concrete. Report the tool output faithfully: copy status words "
-    "and numbers exactly as they appear in the results (for example "
-    "'degraded (0 critical, 1 warning, 0 info)'). Never change, round, or infer a "
-    "count or status, and never state a value the results do not contain."
+    "Answer the user's request in a short reply written in your own words, "
+    "following the voice guide above. Use only the facts in the tool output "
+    "below.\n"
+    "- Do not paste raw tables, JSON, logs, or verbatim tool output; summarize "
+    "them.\n"
+    "- Preserve every number and status word exactly as it appears in the "
+    "results: counts, online/offline, yes/no (for example "
+    "'degraded (0 critical, 1 warning, 0 info)'). Never change, round, or infer "
+    "a count or status, and never state a value the results do not contain.\n"
+    "- If the output is a list, summarize it (how many items, what they have in "
+    "common, the notable names) instead of repeating every row.\n"
+    "- Be brief and concrete: one short paragraph or a few sentences."
 )
 
 DEFAULT_SOUL = (
