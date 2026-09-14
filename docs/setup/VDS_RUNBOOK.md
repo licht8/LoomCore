@@ -173,7 +173,10 @@ To let LoomOps describe the whole host (not just the container), `hub` runs with
 under `/host/...`. It does **not** get `privileged`, the Docker socket,
 `NET_RAW`, `SYS_MODULE`, the host D-Bus socket, `SYS_PTRACE` or
 `DAC_READ_SEARCH`, and the host `/etc` is not mounted; the only writable host
-mount is still `/etc/wireguard`. Tune the health scan with:
+mount is still `/etc/wireguard`. The container runs as **root** (accepted risk:
+Docker cannot grant `cap_add` capabilities to a non-root user, so a non-root hub
+would break `wg`/`wg-quick`/`ip`/`iptables` and `/dev/kmsg` access). Tune the
+health scan with:
 
 ```bash
 LOOMOPS_LOG_ROOTS=/host/var/log

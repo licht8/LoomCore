@@ -95,6 +95,18 @@ LoomOps read-only host observability the `hub` additionally uses `pid: host`,
 host `/etc`, and the host D-Bus socket `/run/dbus/system_bus_socket`; **not
 used:** `nsenter`, `chroot`.
 
+**Container user — accepted risk.** The `hub` runs as **root** inside its
+container. This is deliberate and documented rather than accidental: Docker's
+`cap_add` only populates the capability *bounding* set for a non-root user, so a
+non-root hub would have empty `CapPrm`/`CapEff` and could no longer run `wg`,
+`wg-quick`, `ip`, `iptables`/`nft`, `sysctl` or read `/dev/kmsg` — WireGuard and
+host observability would break. (Verified: `docker run --user 10001 --cap-add
+NET_ADMIN …` reports `CapEff: 0000000000000000`, while the same image as root
+reports the full set.) The blast radius is bounded by the hardening above —
+dropped capabilities and mounts, `no-new-privileges: true`, no Docker socket, no
+host D-Bus, no host `/etc`. Removing root entirely needs a privileged-helper or
+plugins-as-containers split (future work; not in this image).
+
 `wg_create_peer` stores the client config under `/etc/wireguard/clients/conf` and a
 protected QR file under `/etc/wireguard/clients/qr_code`, both with mode `600`;
 the private key is never returned to the chat or stored in message history.
@@ -223,4 +235,5 @@ docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sq
 | Host `/etc` | ✅ (via `/:/host`) | ❌ not mounted (no tool reads `/host/etc`) |
 | `/lib/modules` | ✅ | ❌ not mounted (`SYS_MODULE` not granted) |
 | `NET_RAW` | ✅ | ❌ removed (unused: no raw sockets) |
+| Container user | `root` | `root` — accepted risk; Docker cannot grant caps to a non-root user (see "Container user" above) |
 | setuid privilege escalation | allowed | blocked (`no-new-privileges: true`) |
