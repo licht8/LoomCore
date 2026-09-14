@@ -20,6 +20,27 @@ from src.plugins.health import healthcheck_loop
 logger = logging.getLogger("loomcore.app")
 
 
+def _configure_logging() -> None:
+    """Make ``loomcore.*`` logs visible under uvicorn's logging config.
+
+    Uvicorn configures only its own loggers and leaves the root logger at
+    WARNING with no handler, so ``loomcore.*`` INFO records are silently
+    dropped. Attach a handler to the ``loomcore`` base logger and set its
+    level: INFO when DEBUG or LOOMCORE_TIMING is on, WARNING otherwise so
+    normal runs stay quiet.
+    """
+    base = logging.getLogger("loomcore")
+    if not base.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        base.addHandler(handler)
+    base.setLevel(
+        logging.INFO
+        if (settings.debug or settings.timing_enabled)
+        else logging.WARNING
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Discover plugins and run the background healthcheck for the app lifetime."""
@@ -40,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     """Create and configure the application instance."""
+    _configure_logging()
     app = FastAPI(
         title="LoomCore",
         version="0.0.1",

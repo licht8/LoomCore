@@ -53,6 +53,8 @@ services:
       HETZNER_POOL_TIMEOUT: ${HETZNER_POOL_TIMEOUT:-15}
       HETZNER_MAX_RETRIES: ${HETZNER_MAX_RETRIES:-2}
       DEBUG: ${DEBUG:-false}
+      # Gated agent latency timings (0=off). See src/core/timing.py.
+      LOOMCORE_TIMING: ${LOOMCORE_TIMING:-0}
       LOOMWG_ENDPOINT: ${LOOMWG_ENDPOINT:-}
       # On firewalld hosts (RHEL/Rocky) set to 1 and open UDP/NAT manually.
       LOOMWG_SKIP_FIREWALL: ${LOOMWG_SKIP_FIREWALL:-0}
