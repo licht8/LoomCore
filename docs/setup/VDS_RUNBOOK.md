@@ -169,8 +169,13 @@ audit log.
 
 To let LoomOps describe the whole host (not just the container), `hub` runs with
 `pid: host`, `cap_add: [SYSLOG]`, systemd's private socket (via the read-only
-`/run/systemd` mount) and read-only mounts of `/var/log` and `/var/log/journal`
-under `/host/...`. It does **not** get `privileged`, the Docker socket,
+`/run/systemd` mount) and read-only mounts of `/var/log`, `/var/log/journal`
+(persistent) and `/run/log/journal` (volatile, current boot) under `/host/...`.
+A journal directory is used only when it holds `*.journal` files; enable
+persistent journald on the host if `/var/log/journal` is empty
+(`Storage=persistent` in `/etc/systemd/journald.conf`, then
+`mkdir -p /var/log/journal && systemctl restart systemd-journald`). It does
+**not** get `privileged`, the Docker socket,
 `NET_RAW`, `SYS_MODULE`, the host D-Bus socket, `SYS_PTRACE` or
 `DAC_READ_SEARCH`, and the host `/etc` is not mounted; the only writable host
 mount is still `/etc/wireguard`. The container runs as **root** (accepted risk:
@@ -180,6 +185,7 @@ health scan with:
 
 ```bash
 LOOMOPS_LOG_ROOTS=/host/var/log
+LOOMOPS_JOURNAL_DIRS=/host/journal,/host/journal-volatile
 LOOMOPS_MAX_LOG_LINES=200
 LOOMOPS_CPU_THRESHOLD=80
 LOOMOPS_DISK_THRESHOLD=90

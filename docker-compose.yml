@@ -76,6 +76,8 @@ services:
       LOOMOPS_COMMAND_TIMEOUT: ${LOOMOPS_COMMAND_TIMEOUT:-30}
       # Host observability defaults (read-only); see docs/plugins/LoomOps.md.
       LOOMOPS_LOG_ROOTS: ${LOOMOPS_LOG_ROOTS:-/host/var/log}
+      # Journal sources: persistent first, volatile (current boot) second.
+      LOOMOPS_JOURNAL_DIRS: ${LOOMOPS_JOURNAL_DIRS:-/host/journal,/host/journal-volatile}
       LOOMOPS_MAX_LOG_LINES: ${LOOMOPS_MAX_LOG_LINES:-200}
       LOOMOPS_CPU_THRESHOLD: ${LOOMOPS_CPU_THRESHOLD:-80}
       LOOMOPS_DISK_THRESHOLD: ${LOOMOPS_DISK_THRESHOLD:-90}
@@ -95,6 +97,8 @@ services:
       # /etc or /var/log.
       - /var/log:/host/var/log:ro
       - /var/log/journal:/host/journal:ro
+      # Volatile journal (current boot) for hosts without persistent journald.
+      - /run/log/journal:/host/journal-volatile:ro
       - /run/systemd:/run/systemd:ro
       # The host D-Bus socket is intentionally NOT mounted: the read-only
       # /run/systemd mount already exposes systemd's private socket, which is

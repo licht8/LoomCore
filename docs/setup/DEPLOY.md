@@ -88,8 +88,10 @@ only, and no tool opens raw sockets. `SYS_MODULE` is **not** granted either:
 WireGuard is in-tree on Linux 5.6+ and the LoomWG plugin treats the capability
 as optional, telling you to load the module on the host if it is missing. For
 LoomOps read-only host observability the `hub` additionally uses `pid: host`,
-`SYSLOG`, and read-only mounts of `/run/systemd` and `/var/log` (see
-`docs/plugins/LoomOps.md`).
+`SYSLOG`, and read-only mounts of `/run/systemd`, `/var/log`,
+`/var/log/journal` and `/run/log/journal` (see
+`docs/plugins/LoomOps.md`). A journal directory is used only when it holds
+`*.journal` files; enable persistent journald on the host for full history.
 
 **Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`, `/lib/modules`, the
 host `/etc`, and the host D-Bus socket `/run/dbus/system_bus_socket`; **not

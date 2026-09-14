@@ -18,6 +18,7 @@
     "mounts": [
       {"source": "/var/log", "target": "/host/var/log", "mode": "ro"},
       {"source": "/var/log/journal", "target": "/host/journal", "mode": "ro"},
+      {"source": "/run/log/journal", "target": "/host/journal-volatile", "mode": "ro"},
       {"source": "/run/systemd", "target": "/run/systemd", "mode": "ro"}
     ]
   },
@@ -48,6 +49,12 @@
       "required": false,
       "default": "/host/var/log",
       "description": "Comma or ':' separated roots scanned by the file-log fallback."
+    },
+    {
+      "name": "LOOMOPS_JOURNAL_DIRS",
+      "required": false,
+      "default": "/host/journal,/host/journal-volatile",
+      "description": "Comma or ':' separated host journal directories, most persistent first. A directory counts only when it holds *.journal files."
     },
     {
       "name": "LOOMOPS_MAX_LOG_LINES",

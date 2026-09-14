@@ -551,16 +551,47 @@ def test_max_log_lines_clamps(load_loomops, monkeypatch):
 def test_journal_available_with_mounted_directory(load_loomops, monkeypatch, tmp_path):
     logs = load_loomops("logs")["logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
-    monkeypatch.setattr(logs, "SYSTEMD_MARKER", tmp_path / "missing")
-    monkeypatch.setattr(logs, "JOURNAL_DIR", tmp_path)
+    machine = tmp_path / "machine-id"
+    machine.mkdir()
+    (machine / "system.journal").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path))
 
     assert logs.journal_available() is True
+
+
+def test_journal_available_false_when_directory_empty(
+    load_loomops, monkeypatch, tmp_path
+):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
+    monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path))
+
+    assert logs.journal_available() is False
+
+
+def test_journal_lines_ignores_no_entries_marker(load_loomops):
+    logs = load_loomops("logs")["logs"]
+
+    assert logs._journal_lines("-- No entries --\n\n") == []
+    assert logs._journal_lines("real line\n") == ["real line"]
+
+
+def test_journal_errors_ignores_no_entries(load_loomops, monkeypatch):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs, "journal_available", lambda: True)
+    monkeypatch.setattr(logs, "_run_journal", lambda args: "-- No entries --\n")
+
+    result = logs.journal_errors({})
+
+    assert result["count"] == 0
+    assert result["entries"] == []
 
 
 def test_run_journal_reads_the_mounted_directory(load_loomops, monkeypatch, tmp_path):
     logs = load_loomops("logs")["logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
-    monkeypatch.setattr(logs, "JOURNAL_DIR", tmp_path)
+    (tmp_path / "system.journal").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path))
     captured: dict[str, list[str]] = {}
 
     def fake_run(argv, **kwargs):
@@ -580,21 +611,13 @@ def test_run_journal_reads_the_mounted_directory(load_loomops, monkeypatch, tmp_
     assert result["count"] == 1
 
 
-def test_run_journal_without_directory_mount(load_loomops, monkeypatch, tmp_path):
+def test_run_journal_without_journal_files_raises(load_loomops, monkeypatch, tmp_path):
     logs = load_loomops("logs")["logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
-    monkeypatch.setattr(logs, "JOURNAL_DIR", tmp_path / "absent")
-    captured: dict[str, list[str]] = {}
+    monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path / "absent"))
 
-    def fake_run(argv, **kwargs):
-        captured["argv"] = argv
-        return _Completed(stdout="")
-
-    monkeypatch.setattr(logs.subprocess, "run", fake_run)
-
-    logs._search_journal(query="", since="", unit="", limit=5)
-
-    assert "--directory" not in captured["argv"]
+    with pytest.raises(RuntimeError, match="no journal files"):
+        logs._search_journal(query="", since="", unit="", limit=5)
 
 
 # === diagnostics ===

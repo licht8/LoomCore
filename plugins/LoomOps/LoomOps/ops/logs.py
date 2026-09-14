@@ -1,8 +1,10 @@
 """Log access: journald when reachable, plain files otherwise.
 
-The hub mounts the host journal read-only under ``/host/journal`` and the host
-log directory under ``/host/var/log`` (see the plugin manifest). When journald is
-unavailable the tools fall back to scanning files under ``LOOMOPS_LOG_ROOTS``.
+The hub mounts the host journal read-only (persistent under ``/host/journal``,
+volatile under ``/host/journal-volatile``) and the host log directory under
+``/host/var/log`` (see the plugin manifest). A directory only counts as
+available when it actually holds ``*.journal`` files; otherwise the tools fall
+back to scanning files under ``LOOMOPS_LOG_ROOTS``.
 """
 
 from __future__ import annotations
@@ -14,16 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from . import bounded_int
-from .services import SYSTEMD_MARKER
 
 DEFAULT_LOG_ROOTS = ("/host/var/log",)
 DEFAULT_MAX_LINES = 200
 MAX_LINES = 5000
 JOURNAL_TIMEOUT = 15
 _TAIL_BYTES = 128_000
-# Host journal files are bind-mounted read-only here (see the plugin manifest).
-# journalctl reads them directly with --directory; no journald daemon is needed.
-JOURNAL_DIR = Path(os.environ.get("LOOMOPS_JOURNAL_DIR", "/host/journal"))
+# Host journal files are bind-mounted read-only here (see the plugin manifest and
+# docker-compose.yml). The persistent store is preferred; the volatile store
+# (/run/log/journal) is the fallback for hosts without persistent journald.
+DEFAULT_JOURNAL_DIRS = ("/host/journal", "/host/journal-volatile")
+# journalctl prints this on success when nothing matches; it is not an error.
+NO_ENTRIES_MARKER = "-- No entries --"
 
 _ERROR_MARKERS = ("error", "fail", "critical", "panic", "fatal", "segfault", "oom")
 
@@ -40,6 +44,41 @@ def log_roots() -> list[Path]:
     return roots
 
 
+def journal_dirs() -> list[Path]:
+    """Configured host journal directories, most persistent first."""
+    raw = os.environ.get("LOOMOPS_JOURNAL_DIRS") or os.environ.get("LOOMOPS_JOURNAL_DIR", "")
+    if not raw.strip():
+        return [Path(item) for item in DEFAULT_JOURNAL_DIRS]
+    dirs: list[Path] = []
+    for item in raw.replace(os.pathsep, ",").split(","):
+        item = item.strip()
+        if item:
+            dirs.append(Path(item).expanduser())
+    return dirs
+
+
+def _has_journal_files(directory: Path) -> bool:
+    """True when the directory actually holds journal files.
+
+    Journal files live under a machine-id subdirectory, so the check recurses.
+    A merely-mounted-but-empty directory must not count as available.
+    """
+    try:
+        if not directory.is_dir():
+            return False
+        return next(directory.rglob("*.journal"), None) is not None
+    except OSError:
+        return False
+
+
+def journal_dir() -> Path | None:
+    """The first mounted directory that holds journal files, if any."""
+    for directory in journal_dirs():
+        if _has_journal_files(directory):
+            return directory
+    return None
+
+
 def max_log_lines() -> int:
     return bounded_int(
         os.environ.get("LOOMOPS_MAX_LOG_LINES"), DEFAULT_MAX_LINES, MAX_LINES
@@ -49,17 +88,28 @@ def max_log_lines() -> int:
 def journal_available() -> bool:
     if shutil.which("journalctl") is None:
         return False
-    # Either a running journald (systemd marker) or mounted host journal files.
-    return SYSTEMD_MARKER.exists() or JOURNAL_DIR.is_dir()
+    return journal_dir() is not None
+
+
+def _journal_lines(text: str) -> list[str]:
+    """Split journalctl output, dropping blanks and the "no entries" marker."""
+    lines: list[str] = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped == NO_ENTRIES_MARKER:
+            continue
+        lines.append(line)
+    return lines
 
 
 def _run_journal(args: list[str]) -> str:
     binary = shutil.which("journalctl")
     if binary is None:
         raise RuntimeError("journalctl is not available")
-    argv = [binary, "--no-pager"]
-    if JOURNAL_DIR.is_dir():
-        argv += ["--directory", str(JOURNAL_DIR)]
+    directory = journal_dir()
+    if directory is None:
+        raise RuntimeError("no journal files are available to read")
+    argv = [binary, "--no-pager", "--directory", str(directory)]
     argv += args
     try:
         completed = subprocess.run(
@@ -115,7 +165,8 @@ def log_search(arguments: dict[str, Any]) -> dict[str, Any]:
         return _search_journal(query=query, since=since, unit=unit, limit=limit)
     if source == "journal":
         raise RuntimeError(
-            "journald is not available; use source='files' or mount /host/journal"
+            "journald is not available; use source='files' or mount the host "
+            "journal under /host/journal (persistent) or /host/journal-volatile"
         )
     return _search_files(query=query, limit=limit)
 
@@ -129,7 +180,7 @@ def _search_journal(*, query: str, since: str, unit: str, limit: int) -> dict[st
     if query:
         args += ["--grep", query]
     text = _run_journal(args)
-    lines = [line for line in text.splitlines() if line.strip()]
+    lines = _journal_lines(text)
     return {
         "output": "\n".join(lines) or "No matching log entries",
         "source": "journal",
@@ -168,7 +219,7 @@ def journal_errors(arguments: dict[str, Any]) -> dict[str, Any]:
         text = _run_journal(
             ["--lines", str(limit), "--since", since, "--priority", "err"]
         )
-        lines = [line for line in text.splitlines() if line.strip()]
+        lines = _journal_lines(text)
         return {
             "output": "\n".join(lines) or "No errors in the journal",
             "source": "journal",

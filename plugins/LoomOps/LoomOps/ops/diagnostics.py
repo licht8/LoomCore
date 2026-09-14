@@ -297,7 +297,9 @@ def scan_health(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     if not journal_ok:
         missing.append(
-            "journald is not reachable; falling back to plain log files"
+            "journald is not available (no journal files under "
+            f"{[str(path) for path in logs.journal_dirs()]}); using plain log "
+            "files. Enable persistent journald on the host or mount /run/log/journal"
         )
     if not log_root_readable:
         missing.append(

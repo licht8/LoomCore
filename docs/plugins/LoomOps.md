@@ -25,9 +25,13 @@ deliberately does not carry (RULES 1).
 prefix, host networking and its environment variables (schema:
 `docs/architecture/PLUGIN_MANIFEST.md`). For host observability it requests the
 `SYSLOG` capability and host PID namespace (`pid: "host"`) and read-only mounts of
-`/var/log`, `/var/log/journal` and `/run/systemd` under `/host/...` (see
-[Host observability](#host-observability)). Read-only tools work even when those
-grants are absent; the tools then report what is missing. The core reads and
+`/var/log`, `/var/log/journal` and `/run/log/journal` (the volatile journal) and
+`/run/systemd` under `/host/...` (see
+[Host observability](#host-observability)). A journal directory counts only when
+it actually holds `*.journal` files, so an empty mount is reported as unavailable
+rather than producing a misleading "No journal files were found" error.
+Read-only tools work even when those grants are absent; the tools then report
+what is missing. The core reads and
 validates the manifest during discovery and warns on mismatch (never blocks).
 
 ## Layout
@@ -117,8 +121,15 @@ whole host, not just the container:
 - `cap_add: [SYSLOG]` — needed to read `/dev/kmsg` via `ops_dmesg`.
 - Read-only mounts under `/host/...` (host paths are never shadowed):
   `/var/log → /host/var/log`, `/var/log/journal → /host/journal`,
-  `/run/systemd → /run/systemd`. The host `/etc` is **not** mounted — no tool
-  reads `/host/etc`.
+  `/run/log/journal → /host/journal-volatile`, `/run/systemd → /run/systemd`.
+  The host `/etc` is **not** mounted — no tool
+  reads `/host/etc`. `LOOMOPS_JOURNAL_DIRS` overrides the search order; a
+  directory is used only when it holds `*.journal` files (journal files live
+  under a machine-id subdirectory, so the check recurses). On a host without
+  persistent journald (`/var/log/journal` empty), enable it with
+  `Storage=persistent` in `/etc/systemd/journald.conf` (`mkdir -p
+  /var/log/journal && systemctl restart systemd-journald`), or rely on the
+  volatile `/run/log/journal` mount for the current boot.
 - The `systemd` package plus the read-only `/run/systemd` mount expose
   systemd's private socket, which `systemctl` uses when running as root. The
   host D-Bus socket `/run/dbus/system_bus_socket` is **not** mounted; if your
