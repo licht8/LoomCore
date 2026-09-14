@@ -56,6 +56,8 @@ PLANNER_PROMPT = (
     "themselves.\n"
     "- Never call a real tool directly and never write a tool call as text: no "
     "`[tool ...]`, no `Tool result (...)`, no `<tool_call>`, no raw JSON.\n"
+    "- Put only the user-facing message in the `text` argument of `reply`; never "
+    "prefix it with `reply`, `agent_plan`, or any other tool name.\n"
     "Examples:\n"
     "- 'list running processes' -> agent_plan with the ops_list_processes tool.\n"
     "- 'list the WireGuard interfaces' -> agent_plan with the wg_list_interfaces tool.\n"

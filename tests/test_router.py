@@ -187,6 +187,42 @@ async def test_route_reply_tool_returns_text(patched_router):
 
 
 @pytest.mark.asyncio
+async def test_route_reply_strips_tool_name_prefix(patched_router):
+    router, state = patched_router
+    state["queue"] = [_reply_response("reply: Понял.")]
+
+    result = await router.route("привет", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "Понял."
+    assert state["assistant_saved"][0][1] == "Понял."
+
+
+@pytest.mark.asyncio
+async def test_route_text_fallback_strips_tool_name_prefix(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("agent_plan - just chatting")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "just chatting"
+    assert state["assistant_saved"][0][1] == "just chatting"
+
+
+def test_strip_tool_prefix_variants():
+    strip = router_module._strip_tool_prefix
+
+    assert strip("reply: hello") == "hello"
+    assert strip("reply:hello") == "hello"
+    assert strip("Reply - hello") == "hello"
+    assert strip("agent_plan — hello") == "hello"
+    assert strip("reply: reply: hello") == "hello"
+    assert strip("hello") == "hello"
+    assert strip("  spaced  ") == "spaced"
+
+
+@pytest.mark.asyncio
 async def test_route_includes_tool_catalog_in_system_prompt(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("ok")]

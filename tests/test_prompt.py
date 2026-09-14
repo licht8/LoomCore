@@ -119,3 +119,9 @@ def test_planner_prompt_requires_exact_argument_names():
     lowered = PLANNER_PROMPT.lower()
     assert "exact argument names" in lowered
     assert "plugin" in lowered
+
+
+def test_planner_prompt_forbids_prefixing_with_the_tool_name():
+    lowered = PLANNER_PROMPT.lower()
+    assert "never prefix it with" in lowered
+    assert "only the user-facing message" in lowered

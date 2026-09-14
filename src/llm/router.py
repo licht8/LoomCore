@@ -30,6 +30,22 @@ _TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>", re
 _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)```", re.DOTALL)
 # A tool result the model imitated from a leaked history note instead of acting.
 _TEXTUAL_RESULT_RE = re.compile(r"Tool result\s*\((?P<name>[A-Za-z0-9_]+)\)")
+# The planner sometimes prefixes the chat text with the name of the tool it
+# chose ("reply: ...", "agent_plan: ..."). That marker is internal and must
+# never reach the user or the stored history.
+_TOOL_PREFIX_RE = re.compile(
+    r"^\s*(?:reply|agent_plan)\s*(?::\s*|[-–—]\s+)", re.IGNORECASE
+)
+
+
+def _strip_tool_prefix(text: str) -> str:
+    """Remove a leading planner tool-name marker from assistant text."""
+    cleaned = text
+    while True:
+        match = _TOOL_PREFIX_RE.match(cleaned)
+        if match is None:
+            return cleaned.strip()
+        cleaned = cleaned[match.end() :]
 
 
 def _balanced_json(text: str, start: int) -> str | None:
@@ -159,7 +175,7 @@ class AIRouter:
                     reply_text = ""
                     if isinstance(tool_args, dict):
                         reply_text = str(tool_args.get("text") or "").strip()
-                    reply_text = reply_text or content
+                    reply_text = _strip_tool_prefix(reply_text or content)
                     await self._persist_assistant(session_id, reply_text, raw_tool_calls)
                     return {"type": "text", "content": reply_text} | message_extra
 
@@ -168,8 +184,9 @@ class AIRouter:
                         content, user_message, known_tools
                     )
                     if recovered_args is None:
-                        await self._persist_assistant(session_id, content, None)
-                        return {"type": "text", "content": content} | message_extra
+                        answer = _strip_tool_prefix(content)
+                        await self._persist_assistant(session_id, answer, None)
+                        return {"type": "text", "content": answer} | message_extra
                     logger.warning(
                         "Recovered a tool call the planner wrote as text "
                         f"(session={session_id}, steps={len(recovered_args.get('steps', []))})"
