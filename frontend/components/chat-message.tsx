@@ -12,8 +12,25 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ChatMessage, PlanStatus } from "@/lib/chat-types"
-import { withAdminToken } from "@/lib/admin-token"
+import { authHeaders } from "@/lib/admin-token"
 import { Markdown } from "@/components/markdown"
+
+/** Fetch an artifact with the auth header, then save it via a blob URL. */
+async function downloadArtifact(url: string, fallbackName: string) {
+  const response = await fetch(url, { headers: authHeaders() })
+  if (!response.ok) return
+  const disposition = response.headers.get("Content-Disposition") || ""
+  const match = /filename="?([^"]+)"?/.exec(disposition)
+  const filename = match ? match[1] : fallbackName
+  const objectUrl = URL.createObjectURL(await response.blob())
+  const link = document.createElement("a")
+  link.href = objectUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
+}
 
 const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
   proposed: "Awaiting approval",
@@ -206,13 +223,14 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
           {message.artifacts && (
             <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
               {message.artifacts.map((artifact) => (
-                <a
+                <button
                   key={artifact.url}
-                  href={withAdminToken(artifact.url)}
+                  type="button"
+                  onClick={() => downloadArtifact(artifact.url, artifact.label)}
                   className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
                 >
                   {artifact.label}
-                </a>
+                </button>
               ))}
             </div>
           )}

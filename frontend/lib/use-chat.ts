@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import type { PlanStep, UseChatState, WsMessage } from "@/lib/chat-types"
 import { clearSessionHistory, fetchSessionHistory, getSessionId } from "@/lib/chat-api"
 import { finalizePendingTool, formatTimestamp, hydrateMessages } from "@/lib/chat-hydrate"
-import { applyWsMessage, buildChatWsUrl } from "@/lib/chat-ws"
+import { applyWsMessage, buildChatWsProtocols, buildChatWsUrl } from "@/lib/chat-ws"
 
 /**
  * Custom hook managing the WebSocket connection and chat state.
@@ -42,7 +42,7 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
       const url = buildChatWsUrl(sessionId.current)
       console.log("Connecting to WS:", url)
 
-      const socket = new WebSocket(url)
+      const socket = new WebSocket(url, buildChatWsProtocols())
       ws = socket
       wsRef.current = socket
 

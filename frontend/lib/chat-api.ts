@@ -1,5 +1,5 @@
 import type { SessionMessage } from "@/lib/chat-types"
-import { withAdminToken } from "@/lib/admin-token"
+import { authHeaders } from "@/lib/admin-token"
 
 const SESSION_STORAGE_KEY = "loomcore_session_id"
 
@@ -40,8 +40,9 @@ export async function fetchSessionHistory(
   sessionId: string,
 ): Promise<SessionMessage[] | null> {
   try {
-    const response = await fetch(withAdminToken(sessionUrl(sessionId, "?limit=200")), {
+    const response = await fetch(sessionUrl(sessionId, "?limit=200"), {
       credentials: "include",
+      headers: authHeaders(),
     })
     if (!response.ok) return null
     const data = await response.json()
@@ -55,9 +56,10 @@ export async function fetchSessionHistory(
 /** Delete a session's stored history (resets the assistant's memory). */
 export async function clearSessionHistory(sessionId: string): Promise<void> {
   try {
-    await fetch(withAdminToken(sessionUrl(sessionId)), {
+    await fetch(sessionUrl(sessionId), {
       method: "DELETE",
       credentials: "include",
+      headers: authHeaders(),
     })
   } catch (err) {
     console.error("Failed to clear conversation:", err)

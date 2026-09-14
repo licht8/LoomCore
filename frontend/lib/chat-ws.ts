@@ -5,7 +5,7 @@ import {
   formatTimestamp,
   upsertPlanMessage,
 } from "@/lib/chat-hydrate"
-import { withAdminToken } from "@/lib/admin-token"
+import { wsProtocols } from "@/lib/admin-token"
 
 /** Build the admin-authenticated WebSocket URL for a session. */
 export function buildChatWsUrl(sessionId: string): string {
@@ -16,7 +16,12 @@ export function buildChatWsUrl(sessionId: string): string {
     (window.location.port === "3000"
       ? `${protocol}://${window.location.hostname}:8000`
       : `${protocol}://${window.location.host}`)
-  return withAdminToken(`${base.replace(/\/$/, "")}/ws/${sessionId}`)
+  return `${base.replace(/\/$/, "")}/ws/${sessionId}`
+}
+
+/** WebSocket subprotocols carrying the static admin token (when one is set). */
+export function buildChatWsProtocols(): string[] {
+  return wsProtocols()
 }
 
 /** Apply one backend event to the chat state. Pure — no side effects. */

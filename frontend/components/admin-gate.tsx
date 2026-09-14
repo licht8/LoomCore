@@ -1,7 +1,7 @@
 "use client"
 
 import { FormEvent, useEffect, useState, type ReactNode } from "react"
-import { getAdminToken, setAdminToken, withAdminToken } from "@/lib/admin-token"
+import { authHeaders, getAdminToken, setAdminToken } from "@/lib/admin-token"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -9,8 +9,9 @@ const STATUS_URL = "/api/plugins/status"
 
 async function validateToken(token: string): Promise<boolean> {
   try {
-    const response = await fetch(withAdminToken(STATUS_URL, token), {
+    const response = await fetch(STATUS_URL, {
       credentials: "include",
+      headers: authHeaders(token),
     })
     return response.ok
   } catch {
