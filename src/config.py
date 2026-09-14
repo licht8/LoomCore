@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     hetzner_base_url: str = "https://inference.hetzner.com/api/v1"
     hetzner_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     hetzner_connect_timeout: float = 15.0
-    hetzner_read_timeout: float = 300.0
+    hetzner_read_timeout: float = 90.0
     hetzner_write_timeout: float = 30.0
     hetzner_pool_timeout: float = 15.0
     hetzner_max_retries: int = 2

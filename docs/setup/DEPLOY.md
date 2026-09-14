@@ -109,12 +109,16 @@ errors and then returns a clear message. Tune via `.env` (seconds / count):
 | Variable | Default |
 |---|---|
 | `HETZNER_CONNECT_TIMEOUT` | `15` |
-| `HETZNER_READ_TIMEOUT` | `300` |
+| `HETZNER_READ_TIMEOUT` | `90` |
 | `HETZNER_WRITE_TIMEOUT` | `30` |
 | `HETZNER_POOL_TIMEOUT` | `15` |
 | `HETZNER_MAX_RETRIES` | `2` |
 
-If timeouts persist at 300s, the provider/model is the bottleneck.
+The 90s read timeout is a safety bound: with thinking disabled a full turn is a
+few seconds, so a request that hangs this long is a provider stall, not real work.
+Raise it via `.env` only if you deliberately re-enable long generations.
+
+If timeouts persist, the provider/model is the bottleneck.
 
 ## Admin authentication
 
