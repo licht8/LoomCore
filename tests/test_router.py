@@ -324,7 +324,7 @@ async def test_route_folds_tool_messages_preserving_order(patched_router):
     roles = [m["role"] for m in state["last_messages"]]
     assert roles == ["system", "user", "assistant", "assistant", "user"]
     folded = state["last_messages"][2]
-    assert folded["content"] == "[tool ops_disk_usage] disk 42%"
+    assert folded["content"] == "Tool result (ops_disk_usage):\ndisk 42%"
     assert state["last_messages"][-1]["content"] == "next"
 
 
@@ -341,5 +341,67 @@ async def test_route_drops_empty_tool_message_without_name(patched_router):
 
     messages = state["last_messages"]
     assert len(messages) == 3
-    assert messages[1] == {"role": "assistant", "content": "[tool ops_disk_usage]"}
+    assert messages[1] == {"role": "assistant", "content": "Tool result (ops_disk_usage):"}
     assert messages[2] == {"role": "user", "content": "next"}
+
+
+@pytest.mark.asyncio
+async def test_route_recovers_textual_agent_plan(patched_router):
+    router, state = patched_router
+    plan_args = {
+        "goal": "inspect",
+        "mode": "direct",
+        "steps": [{"tool": "core_health", "args": {}, "why": "x"}],
+    }
+    state["queue"] = [_text_response(f"[tool agent_plan] {json.dumps(plan_args)}")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "plan"
+    assert result["plan"]["steps"][0]["tool"] == "core_health"
+    assert state["assistant_saved"] == []
+
+
+@pytest.mark.asyncio
+async def test_route_recovers_textual_real_tool(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("[tool core_list_tools]")]
+
+    result = await router.route("show tools", "sess-1")
+
+    assert result["type"] == "plan"
+    plan = result["plan"]
+    assert plan["mode"] == "direct"
+    assert plan["steps"][0]["tool"] == "core_list_tools"
+
+
+@pytest.mark.asyncio
+async def test_route_recovers_tagged_tool_call(patched_router):
+    router, state = patched_router
+    body = json.dumps(
+        {
+            "name": "agent_plan",
+            "arguments": {
+                "goal": "x",
+                "mode": "direct",
+                "steps": [{"tool": "core_health", "args": {}, "why": "x"}],
+            },
+        }
+    )
+    state["queue"] = [_text_response(f"<tool_call>{body}</tool_call>")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "plan"
+    assert result["plan"]["steps"][0]["tool"] == "core_health"
+
+
+@pytest.mark.asyncio
+async def test_route_ignores_unknown_textual_tool(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("[tool ghost_tool] {}")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "[tool ghost_tool] {}"

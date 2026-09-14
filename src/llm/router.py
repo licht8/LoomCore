@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 
 from src.config import settings
@@ -20,6 +21,13 @@ from src.llm.prompt import build_planner_messages, build_summary_messages
 from src.plugins.manager import PluginManager
 
 logger = logging.getLogger("loomcore.router")
+
+# A tool call the model wrote as plain text instead of a structured call.
+_TEXTUAL_CALL_RE = re.compile(
+    r"\[tool\s+(?P<name>[A-Za-z0-9_]+)\s*\](?P<args>\s*\{.*\})?",
+    re.DOTALL,
+)
+_TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>", re.DOTALL)
 
 
 class AIRouter:
@@ -91,8 +99,18 @@ class AIRouter:
                 )
 
                 if not raw_tool_calls:
-                    await self._persist_assistant(session_id, content, None)
-                    return {"type": "text", "content": content} | message_extra
+                    recovered_args = self._recover_textual_plan_args(
+                        content, user_message, known_tools
+                    )
+                    if recovered_args is None:
+                        await self._persist_assistant(session_id, content, None)
+                        return {"type": "text", "content": content} | message_extra
+                    logger.warning(
+                        "Recovered a tool call the planner wrote as text "
+                        f"(session={session_id}, steps={len(recovered_args.get('steps', []))})"
+                    )
+                    tool_name = AGENT_PLAN_TOOL
+                    tool_args = recovered_args
 
                 if tool_name == AGENT_PLAN_TOOL:
                     plan = build_plan(tool_args or {})
@@ -209,15 +227,79 @@ class AIRouter:
 
     @staticmethod
     def _tool_note(message: dict, content: str) -> str:
-        """Fold a stored tool card into a plain assistant note (best-effort)."""
+        """Fold a stored tool card into a plain assistant note (best-effort).
+
+        The format is deliberately descriptive ("Tool result (...)") rather than
+        an invocation-like ``[tool name]`` so the model treats it as history and
+        does not imitate it as a way to call a tool.
+        """
         calls = message.get("tool_calls") or []
         name = ""
         if calls and isinstance(calls[0], dict):
             name = str(calls[0].get("name") or "")
         if not name and not content:
             return ""
-        label = f"[tool {name}]" if name else "[tool]"
-        return f"{label} {content}".rstrip()
+        label = f"Tool result ({name}):" if name else "Tool result:"
+        return f"{label}\n{content}".rstrip()
+
+    @staticmethod
+    def _recover_textual_plan_args(
+        content: str, user_message: str, known_tools: set[str]
+    ) -> dict | None:
+        """Recover a plan the model wrote as text instead of a real tool call.
+
+        Some completions return the intended call as prose (``[tool name] {...}``
+        or ``<tool_call>{...}</tool_call>``). Treat those as ``agent_plan``
+        arguments — a real tool name becomes a one-step direct action — so the
+        request still runs instead of surfacing as a chat answer. Returns None
+        when nothing usable parses.
+        """
+        if not content:
+            return None
+
+        candidates: list[tuple[str, object]] = []
+        for match in _TEXTUAL_CALL_RE.finditer(content):
+            candidates.append((match.group("name"), match.group("args") or ""))
+        for match in _TOOL_CALL_TAG_RE.finditer(content):
+            try:
+                payload = json.loads(match.group("body"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(payload, dict):
+                name = str(payload.get("name") or payload.get("tool") or "")
+                args = payload.get("arguments", payload.get("args", {}))
+                if name:
+                    candidates.append((name, args))
+
+        for name, raw_args in candidates:
+            args = raw_args
+            if isinstance(args, str):
+                args = args.strip()
+                try:
+                    args = json.loads(args) if args else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+
+            if name == AGENT_PLAN_TOOL:
+                if args.get("steps"):
+                    return args
+                continue
+            if name in known_tools:
+                # A real tool named directly in prose: run it as one direct step.
+                return {
+                    "mode": "direct",
+                    "goal": user_message,
+                    "steps": [
+                        {
+                            "tool": name,
+                            "args": args,
+                            "why": f"Recovered a {name} call written as text.",
+                        }
+                    ],
+                }
+        return None
 
     async def _persist_assistant(
         self, session_id: str, content: str, raw_tool_calls: list | None
