@@ -89,6 +89,7 @@ export type WsMessage =
       type: "plan_step"
       plan_id?: string
       revision?: number
+      status?: PlanStatus
       step?: PlanStep
       phase?: "started" | "done" | "failed"
     }

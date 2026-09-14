@@ -32,78 +32,97 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
 
   // === Open the WebSocket connection ===
   useEffect(() => {
-    const url = buildChatWsUrl(sessionId.current)
-    console.log("Connecting to WS:", url)
-
-    const ws = new WebSocket(url)
     let isActive = true
-    wsRef.current = ws
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let attempt = 0
+    let ws: WebSocket | null = null
 
-    ws.onopen = () => {
-      if (!isActive || wsRef.current !== ws) {
-        ws.close()
-        return
-      }
-      setState((prev) => ({ ...prev, wsReady: true, error: null }))
-    }
+    const connect = () => {
+      if (!isActive) return
+      const url = buildChatWsUrl(sessionId.current)
+      console.log("Connecting to WS:", url)
 
-    ws.onmessage = (event: MessageEvent) => {
-      try {
-        const msg: WsMessage = JSON.parse(event.data)
-        if (msg.type === "schema_warning") {
-          console.warn("Unavailable plugins:", msg.unavailable_plugins)
+      const socket = new WebSocket(url)
+      ws = socket
+      wsRef.current = socket
+
+      socket.onopen = () => {
+        if (!isActive || wsRef.current !== socket) {
+          socket.close()
+          return
         }
-        setState((prev) => applyWsMessage(prev, msg))
-      } catch (err) {
-        console.error("Failed to parse WS message:", err)
+        attempt = 0
+        setState((prev) => ({ ...prev, wsReady: true, error: null }))
+      }
+
+      socket.onmessage = (event: MessageEvent) => {
+        try {
+          const msg: WsMessage = JSON.parse(event.data)
+          if (msg.type === "schema_warning") {
+            console.warn("Unavailable plugins:", msg.unavailable_plugins)
+          }
+          setState((prev) => applyWsMessage(prev, msg))
+        } catch (err) {
+          console.error("Failed to parse WS message:", err)
+          setState((prev) => ({
+            ...prev,
+            error: "Failed to process the server response",
+            isThinking: false,
+          }))
+        }
+      }
+
+      socket.onerror = (error) => {
+        // React Strict Mode can close the first development connection during
+        // effect cleanup before its handshake completes.
+        if (!isActive || wsRef.current !== socket) return
+        console.error("WebSocket error:", error)
         setState((prev) => ({
           ...prev,
-          error: "Failed to process the server response",
+          error: "Could not connect to the server. Check that the backend is running.",
           isThinking: false,
+          isSending: false,
+          planRequest: null,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: "error",
+            toolSummary: "Disconnected",
+          }),
         }))
+      }
+
+      socket.onclose = () => {
+        if (!isActive || wsRef.current !== socket) return
+        wsRef.current = null
+        // Clear any busy state so the input is usable, then reconnect with
+        // capped backoff rather than leaving the client jammed until reload.
+        setState((prev) => ({
+          ...prev,
+          wsReady: false,
+          isThinking: false,
+          isSending: false,
+          planRequest: null,
+          messages: finalizePendingTool(prev.messages, {
+            toolStatus: "error",
+            toolSummary: "Disconnected",
+          }),
+        }))
+        attempt += 1
+        const delay = Math.min(1000 * 2 ** (attempt - 1), 15000)
+        console.warn(`WebSocket closed; reconnecting in ${delay}ms`)
+        reconnectTimer = setTimeout(connect, delay)
       }
     }
 
-    ws.onerror = (error) => {
-      // React Strict Mode can close the first development connection during
-      // effect cleanup before its handshake completes.
-      if (!isActive || wsRef.current !== ws) return
-      console.error("WebSocket error:", error)
-      setState((prev) => ({
-        ...prev,
-        error: "Could not connect to the server. Check that the backend is running.",
-        isThinking: false,
-        isSending: false,
-        planRequest: null,
-        messages: finalizePendingTool(prev.messages, {
-          toolStatus: "error",
-          toolSummary: "Disconnected",
-        }),
-      }))
-    }
-
-    ws.onclose = () => {
-      if (!isActive || wsRef.current !== ws) return
-      setState((prev) => ({
-        ...prev,
-        wsReady: false,
-        isThinking: false,
-        isSending: false,
-        planRequest: null,
-        messages: finalizePendingTool(prev.messages, {
-          toolStatus: "error",
-          toolSummary: "Disconnected",
-        }),
-      }))
-    }
+    connect()
 
     // Cleanup on unmount
     return () => {
       isActive = false
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       if (wsRef.current === ws) {
         wsRef.current = null
       }
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close()
       }
     }

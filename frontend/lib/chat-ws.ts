@@ -98,7 +98,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
       if (!msg.plan_id || !msg.step) return state
       return {
         ...state,
-        messages: applyPlanStep(state.messages, msg.plan_id, msg.step),
+        messages: applyPlanStep(state.messages, msg.plan_id, msg.step, msg.status),
       }
     }
 

@@ -1,4 +1,4 @@
-import type { ChatMessage, Plan, PlanStep, SessionMessage } from "@/lib/chat-types"
+import type { ChatMessage, Plan, PlanStatus, PlanStep, SessionMessage } from "@/lib/chat-types"
 
 /** Format the current timestamp as a local HH:MM label. */
 export function formatTimestamp(): string {
@@ -55,11 +55,12 @@ export function upsertPlanMessage(messages: ChatMessage[], plan: Plan): ChatMess
   return updated
 }
 
-/** Merge a single step update into its plan's card. */
+/** Merge a single step update into its plan's card, keeping the plan status current. */
 export function applyPlanStep(
   messages: ChatMessage[],
   planId: string,
   step: PlanStep,
+  status?: PlanStatus,
 ): ChatMessage[] {
   return messages.map((message) => {
     if (message.role !== "plan" || message.plan?.plan_id !== planId) return message
@@ -67,7 +68,7 @@ export function applyPlanStep(
     const steps = plan.steps.map((existing) =>
       existing.id === step.id ? { ...existing, ...step } : existing,
     )
-    return { ...message, plan: { ...plan, steps } }
+    return { ...message, plan: { ...plan, steps, ...(status ? { status } : {}) } }
   })
 }
 
