@@ -125,8 +125,9 @@ If timeouts persist, the provider/model is the bottleneck.
 Both credentials are accepted **at the same time** (`src/core/security.py:require_admin_token`):
 
 1. **Bearer token:** set a long random `ADMIN_TOKEN` in `.env`. The token is
-   passed via the `access_token` query parameter or the `Authorization: Bearer
-   <token>` header. In the UI, use the "Token" tab on the login page — it is
+   passed via the `Authorization: Bearer <token>` header (REST) or the
+   `loomcore.auth.<base64url>` WebSocket subprotocol. Query-string tokens are
+   **not** accepted. In the UI, use the "Token" tab on the login page — it is
    stored in browser `localStorage`.
 2. **JWT cookie:** set `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET`, and
    `SESSION_SECRET` together. The UI uses the "Login and TOTP" tab. Generate the
@@ -155,10 +156,30 @@ docker image prune -f
 
 ## HTTPS
 
-The current Nginx config serves HTTP and proxies WebSocket correctly. For
-production, add a TLS certificate (e.g. Certbot), switch the server block to
-`listen 443 ssl`, and redirect HTTP to HTTPS. The frontend then uses `wss://`
-automatically.
+**This is not optional in production.** Admin credentials, the session cookie
+and the static admin token all cross the public `:80` listener; without TLS they
+are sent in cleartext. `deploy/nginx/default.conf` ships a ready-to-use TLS
+server block (commented) and always-on security headers.
+
+1. Stop the stack so `:80` is free, then obtain a certificate:
+   ```bash
+   sudo certbot certonly --standalone -d loom.example.com
+   ```
+2. Copy the certificate next to the nginx config and mount its directory
+   read-only (add to the `nginx` service in `docker-compose.yml`):
+   ```yaml
+   volumes:
+     - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+     - ./deploy/nginx/certs:/etc/nginx/certs:ro
+   ```
+3. In `default.conf`, uncomment the `listen 443 ssl` server block, set
+   `server_name` and the cert paths, and change the `:80` block's `location /`
+   to redirect to HTTPS (keep `/.well-known/acme-challenge/` on `:80`).
+4. `docker compose up -d nginx`.
+
+The frontend switches to `wss://` automatically. With `ADMIN_TOKEN` empty the
+UI uses the JWT cookie, which is `HttpOnly`/`SameSite=Strict` and never touches
+`localStorage`.
 
 ## Backups
 
