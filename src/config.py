@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     hetzner_write_timeout: float = 30.0
     hetzner_pool_timeout: float = 15.0
     hetzner_max_retries: int = 2
+    hetzner_enable_thinking: bool = False
     debug: bool = False
     admin_token: str = ""
     admin_username: str = "admin"

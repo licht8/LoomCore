@@ -51,6 +51,11 @@ class HetznerClient:
         }
         if tools:
             payload["tools"] = tools
+        if not settings.hetzner_enable_thinking:
+            # Hybrid reasoning models spend most of the turn emitting hidden
+            # reasoning tokens; for chat planning/summaries that is pure
+            # latency. Disable it unless the operator opts back in.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         prompt_chars = sum(
             len(str(message.get("content") or "")) for message in messages
