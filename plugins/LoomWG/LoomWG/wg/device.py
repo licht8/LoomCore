@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
@@ -11,6 +12,8 @@ from typing import Any
 
 INTERFACE_RE = re.compile(r"^[A-Za-z0-9]{1,15}$")
 CONFIG_DIR = Path(os.environ.get("LOOMWG_CONFIG_DIR", "/etc/wireguard"))
+
+logger = logging.getLogger("LoomWG.wg")
 
 
 class CommandError(RuntimeError):
@@ -23,6 +26,7 @@ def run_command(
     input_text: str | None = None,
 ) -> str:
     # Run directly — the container has the NET_ADMIN capability
+    rendered = " ".join(command)
     try:
         result = subprocess.run(
             command,
@@ -33,15 +37,19 @@ def run_command(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CommandError(f"Failed to run {' '.join(command)}: {exc}") from exc
+        logger.warning("command failed: %s: %s", rendered, exc)
+        raise CommandError(f"Failed to run {rendered}: {exc}") from exc
 
     if result.returncode != 0:
         details = result.stderr.strip() or result.stdout.strip() or "no details"
+        logger.warning("command exited %s: %s: %s", result.returncode, rendered, details)
         raise CommandError(
-            f"Command {' '.join(command)} exited with code "
+            f"Command {rendered} exited with code "
             f"{result.returncode}: {details}"
         )
-    return result.stdout.strip()
+    output = result.stdout.strip()
+    logger.info("%s -> %s", rendered, output[:500] if output else "(empty)")
+    return output
 
 
 def validate_interface(arguments: dict[str, Any]) -> str:
@@ -53,7 +61,13 @@ def validate_interface(arguments: dict[str, Any]) -> str:
 
 def active_interfaces() -> list[str]:
     output = run_command(["wg", "show", "interfaces"])
-    return output.split() if output else []
+    names = output.split() if output else []
+    if not names:
+        logger.info(
+            "`wg show interfaces` reported no active interfaces (raw output=%r)",
+            output,
+        )
+    return names
 
 
 def configured_interfaces() -> list[str]:

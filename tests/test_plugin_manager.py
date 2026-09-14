@@ -1,7 +1,9 @@
 """Unit tests for PluginManager: tool separation, status and resilience."""
 
 import asyncio
+import io
 import json
+import logging
 import time
 
 import pytest
@@ -727,4 +729,30 @@ def test_get_plugin_status_disabled_has_no_pid():
 
     assert status["pid"] is None
     assert status["is_healthy"] is False
+
+
+def test_drain_stderr_logs_plugin_output(caplog):
+    manager = PluginManager()
+
+    class _ProcWithStderr:
+        def __init__(self, text):
+            self.stderr = io.StringIO(text)
+
+    with caplog.at_level("INFO", logger="loomcore.plugins.demo"):
+        manager._drain_stderr(
+            "demo",
+            _ProcWithStderr(
+                "hello from plugin\n"
+                "WARNING LoomWG.wg: command exited 1: wg: permission denied\n"
+            ),
+        )
+        for _ in range(200):
+            if len(caplog.records) >= 2:
+                break
+            time.sleep(0.01)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "hello from plugin" in messages
+    warning = next(r for r in caplog.records if "permission denied" in r.getMessage())
+    assert warning.levelno == logging.WARNING
 

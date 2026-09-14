@@ -434,6 +434,63 @@ def test_config_directory_exposes_config_dir(load_loomwg, monkeypatch, tmp_path)
     assert device.config_directory() == tmp_path
 
 
+# === tools.list_interfaces: `wg show interfaces` must be reported ===
+
+def test_list_interfaces_reports_active_interface(load_loomwg, monkeypatch, tmp_path):
+    modules = load_loomwg("wireguard", "tools")
+    device, tools = modules["wireguard"], modules["tools"]
+    monkeypatch.setattr(device, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(
+        device.subprocess, "run", lambda *a, **k: _Completed(stdout="wg0\n")
+    )
+
+    result = tools.list_interfaces({})
+
+    assert "wg0" in result["content"][0]["text"]
+    assert result["data"]["interfaces"] == [
+        {"name": "wg0", "active": True, "configured": False}
+    ]
+
+
+def test_list_interfaces_reports_multiple_active(load_loomwg, monkeypatch, tmp_path):
+    modules = load_loomwg("wireguard", "tools")
+    device, tools = modules["wireguard"], modules["tools"]
+    monkeypatch.setattr(device, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(
+        device.subprocess, "run", lambda *a, **k: _Completed(stdout="wg0 wg1\n")
+    )
+
+    names = [entry["name"] for entry in tools.list_interfaces({})["data"]["interfaces"]]
+
+    assert names == ["wg0", "wg1"]
+
+
+def test_list_interfaces_does_not_swallow_wg_failure(load_loomwg, monkeypatch, tmp_path):
+    modules = load_loomwg("wireguard", "tools")
+    device, tools = modules["wireguard"], modules["tools"]
+    monkeypatch.setattr(device, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(
+        device.subprocess,
+        "run",
+        lambda *a, **k: _Completed(returncode=1, stderr="wg: command not found"),
+    )
+
+    with pytest.raises(device.CommandError, match="command not found"):
+        tools.list_interfaces({})
+
+
+def test_active_interfaces_logs_empty_result(load_loomwg, monkeypatch, caplog):
+    device = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(
+        device.subprocess, "run", lambda *a, **k: _Completed(stdout="")
+    )
+
+    with caplog.at_level("INFO", logger="LoomWG.wg"):
+        assert device.active_interfaces() == []
+
+    assert any("no active" in record.message.lower() for record in caplog.records)
+
+
 # === keys.py ===
 
 def test_validate_public_key_strips_and_accepts(load_loomwg):

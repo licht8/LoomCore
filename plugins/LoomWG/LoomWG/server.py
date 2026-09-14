@@ -1,6 +1,8 @@
 """MCP server wiring for the LoomWG plugin."""
 
 import logging
+import os
+import sys
 
 from .clients.client import migrate_client_layout
 from .manifest import runtime_report
@@ -9,6 +11,16 @@ from .protocol import run
 from .tools import HANDLERS, TOOLS_SCHEMA
 
 logger = logging.getLogger("LoomWG.server")
+
+
+def _configure_logging() -> None:
+    """Send plugin logs to stderr; the core drains stderr into its own logs."""
+    level = os.environ.get("LOOMWG_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=getattr(logging, level, logging.INFO),
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
 
 def _log_manifest_report() -> None:
@@ -22,6 +34,7 @@ def _log_manifest_report() -> None:
 
 
 def run_server() -> None:
+    _configure_logging()
     _log_manifest_report()
     try:
         apply_autostart()

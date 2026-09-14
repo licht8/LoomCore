@@ -1,6 +1,8 @@
 """MCP server wiring for the LoomOps plugin."""
 
 import logging
+import os
+import sys
 
 from . import __version__
 from .ops import commands, files
@@ -8,6 +10,16 @@ from .protocol import run
 from .tools import HANDLERS, TOOLS_SCHEMA
 
 logger = logging.getLogger("LoomOps.server")
+
+
+def _configure_logging() -> None:
+    """Send plugin logs to stderr; the core drains stderr into its own logs."""
+    level = os.environ.get("LOOMOPS_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=getattr(logging, level, logging.INFO),
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
 
 def _log_startup() -> None:
@@ -22,5 +34,6 @@ def _log_startup() -> None:
 
 
 def run_server() -> None:
+    _configure_logging()
     _log_startup()
     run(HANDLERS, TOOLS_SCHEMA)

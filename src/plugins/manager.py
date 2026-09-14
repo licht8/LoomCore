@@ -9,6 +9,7 @@ import json
 import logging
 import subprocess
 import sys
+import threading
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -26,6 +27,15 @@ from src.plugins.manifest import (
 from src.plugins.state import load_disabled, save_disabled
 
 logger = logging.getLogger("loomcore.plugins")
+
+# Leading severity tokens emitted by plugin stderr formatters.
+_PLUGIN_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 
 class PluginState(StrEnum):
@@ -84,6 +94,39 @@ class PluginManager:
             cwd=working_dir,
         )
 
+    def _drain_stderr(self, name: str, proc: subprocess.Popen) -> None:
+        """Forward a plugin's stderr to our logs in a daemon thread.
+
+        Without this, plugin logging and tracebacks are invisible and a plugin
+        that writes more than a pipe buffer of stderr can block forever.
+        """
+        stream = getattr(proc, "stderr", None)
+        if stream is None:
+            return
+        plugin_logger = logging.getLogger(f"loomcore.plugins.{name}")
+
+        def _reader() -> None:
+            try:
+                for line in stream:
+                    message = line.rstrip()
+                    if not message:
+                        continue
+                    # Plugins format lines as "LEVEL logger: message" (see the
+                    # plugin's _configure_logging); preserve that severity so
+                    # warnings/errors still surface at the core's default level.
+                    level = _PLUGIN_LOG_LEVELS.get(
+                        message.split(" ", 1)[0], logging.INFO
+                    )
+                    plugin_logger.log(level, "%s", message)
+            except Exception:  # pragma: no cover - a broken pipe on shutdown
+                logger.debug("stderr reader for '%s' stopped", name)
+
+        threading.Thread(
+            target=_reader,
+            name=f"plugin-stderr-{name}",
+            daemon=True,
+        ).start()
+
     def register(
         self,
         name: str,
@@ -104,6 +147,7 @@ class PluginManager:
             working_dir=working_dir,
             proc=proc,
         )
+        self._drain_stderr(name, proc)
         logger.info(f"Plugin '{name}' started (PID: {proc.pid})")
 
     def discover_plugins(self, plugins_dir: str = "plugins") -> list[str]:
@@ -405,6 +449,7 @@ class PluginManager:
         plugin = self._plugins[name]
         plugin.proc = proc
         plugin.state = PluginState.IDLE
+        self._drain_stderr(name, proc)
         logger.info(f"Plugin '{name}' subprocess restarted (PID: {proc.pid})")
 
     async def _initialize_plugin(self, plugin_name: str) -> None:
