@@ -548,6 +548,55 @@ def test_max_log_lines_clamps(load_loomops, monkeypatch):
     assert logs.max_log_lines() == logs.MAX_LINES
 
 
+def test_journal_available_with_mounted_directory(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
+    monkeypatch.setattr(logs, "SYSTEMD_MARKER", tmp_path / "missing")
+    monkeypatch.setattr(logs, "JOURNAL_DIR", tmp_path)
+
+    assert logs.journal_available() is True
+
+
+def test_run_journal_reads_the_mounted_directory(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
+    monkeypatch.setattr(logs, "JOURNAL_DIR", tmp_path)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _Completed(stdout="entry one\n")
+
+    monkeypatch.setattr(logs.subprocess, "run", fake_run)
+
+    result = logs._search_journal(query="x", since="", unit="", limit=10)
+
+    assert captured["argv"][:3] == [
+        "/usr/bin/journalctl",
+        "--no-pager",
+        "--directory",
+    ]
+    assert str(tmp_path) in captured["argv"]
+    assert result["count"] == 1
+
+
+def test_run_journal_without_directory_mount(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
+    monkeypatch.setattr(logs, "JOURNAL_DIR", tmp_path / "absent")
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _Completed(stdout="")
+
+    monkeypatch.setattr(logs.subprocess, "run", fake_run)
+
+    logs._search_journal(query="", since="", unit="", limit=5)
+
+    assert "--directory" not in captured["argv"]
+
+
 # === diagnostics ===
 
 def _patch_quiet_health(diagnostics, monkeypatch, tmp_path):

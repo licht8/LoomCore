@@ -21,6 +21,9 @@ DEFAULT_MAX_LINES = 200
 MAX_LINES = 5000
 JOURNAL_TIMEOUT = 15
 _TAIL_BYTES = 128_000
+# Host journal files are bind-mounted read-only here (see the plugin manifest).
+# journalctl reads them directly with --directory; no journald daemon is needed.
+JOURNAL_DIR = Path(os.environ.get("LOOMOPS_JOURNAL_DIR", "/host/journal"))
 
 _ERROR_MARKERS = ("error", "fail", "critical", "panic", "fatal", "segfault", "oom")
 
@@ -44,16 +47,23 @@ def max_log_lines() -> int:
 
 
 def journal_available() -> bool:
-    return shutil.which("journalctl") is not None and SYSTEMD_MARKER.exists()
+    if shutil.which("journalctl") is None:
+        return False
+    # Either a running journald (systemd marker) or mounted host journal files.
+    return SYSTEMD_MARKER.exists() or JOURNAL_DIR.is_dir()
 
 
 def _run_journal(args: list[str]) -> str:
     binary = shutil.which("journalctl")
     if binary is None:
         raise RuntimeError("journalctl is not available")
+    argv = [binary, "--no-pager"]
+    if JOURNAL_DIR.is_dir():
+        argv += ["--directory", str(JOURNAL_DIR)]
+    argv += args
     try:
         completed = subprocess.run(
-            [binary, "--no-pager", *args],
+            argv,
             capture_output=True,
             text=True,
             timeout=JOURNAL_TIMEOUT,
