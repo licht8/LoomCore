@@ -955,7 +955,9 @@ async def test_websocket_rejects_messages_over_the_limit(monkeypatch):
     _patch_db(monkeypatch)
     monkeypatch.setattr(ws_module, "WS_MESSAGE_LIMIT_PER_MINUTE", 1)
 
-    ws = FakeWebSocket([{"message": "one"}, {"message": "two"}], delay=0.05)
+    # Empty messages are ignored by handle_message, so only the limiter runs and
+    # the (unpatched) LLM router/DB is never reached - exactly one rejection.
+    ws = FakeWebSocket(["", ""], delay=0.05)
     ws.allow_disconnect.set()
 
     await ws_module.websocket_endpoint(ws, "sess")
