@@ -132,24 +132,43 @@ async def _run_plan(
         if show_plan:
             await send(plan_step_payload(plan, step, phase))
 
-    outcome = await execute_plan(plan, dispatch=_execute_tool, emit=emit)
-    final_plan = outcome["plan"]
-    observations = outcome["results"]
+    try:
+        outcome = await execute_plan(plan, dispatch=_execute_tool, emit=emit)
+        final_plan = outcome["plan"]
+        observations = outcome["results"]
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # An unexpected executor/emit failure must still terminate the turn:
+        # mark the plan failed and fall through to a summary + plan_done so the
+        # UI never gets stuck waiting.
+        logger.error(f"Plan execution crashed: {exc}")
+        logger.error(traceback.format_exc())
+        plan["status"] = "failed"
+        if tracker is not None:
+            tracker["tool"] = None
+        final_plan = plan
+        observations = []
+        with contextlib.suppress(Exception):
+            await send({"type": "error", "error": str(exc)})
 
     if show_plan:
-        await _save_plan_message(session_id, final_plan)
+        with contextlib.suppress(Exception):
+            await _save_plan_message(session_id, final_plan)
 
     summary = await _summarize(user_text, final_plan, observations)
     if summary:
         with contextlib.suppress(Exception):
             async with async_session_factory() as db:
                 await add_assistant_message(db, session_id, summary)
-        await send({"type": "response", "content": summary})
+        with contextlib.suppress(Exception):
+            await send({"type": "response", "content": summary})
 
     # plan_done is terminal for the UI: send it only once the summary is out so
     # the client keeps the turn busy until the whole request has finished.
     if show_plan:
-        await send(plan_done_payload(final_plan))
+        with contextlib.suppress(Exception):
+            await send(plan_done_payload(final_plan))
 
     if tracker is not None:
         tracker["plan"] = None
@@ -251,6 +270,12 @@ async def _process_user_message(
         await send({"type": "response", "content": f"{goal} Reply yes to proceed."})
         _remember_pending(pending, plan, user_text)
         return
+
+    if not requires_approval:
+        # An all-safe plan runs immediately, so it is approved by definition;
+        # reflect that in the proposed event so the card is not shown as
+        # "Awaiting approval".
+        plan["status"] = "approved"
 
     await send(plan_proposed_payload(plan, requires_approval))
 
@@ -360,9 +385,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     async def approve_plan(plan: dict, user_text: str) -> None:
         plan["status"] = "approved"
-        if not plan_is_direct(plan):
-            with contextlib.suppress(Exception):
-                await _save_plan_message(session_id, plan)
+        if plan_is_direct(plan):
+            start(_run_plan(send, session_id, user_text, plan, tracker))
+            return
+        with contextlib.suppress(Exception):
+            await _save_plan_message(session_id, plan)
+        # Reflect the approval in the UI before execution starts; with
+        # requires_approval now false the card leaves "Awaiting approval".
+        await send(plan_proposed_payload(plan, False))
         start(_run_plan(send, session_id, user_text, plan, tracker))
 
     async def reject_plan(plan: dict) -> None:
@@ -385,112 +415,129 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await _save_plan_message(session_id, plan)
         await send(plan_done_payload(plan))
 
+    async def handle_message(data) -> None:
+        nonlocal queued_text
+        action = data.get("action") if isinstance(data, dict) else None
+
+        # Cancel the request currently in flight, if any
+        if action == "cancel":
+            queued_text = None
+            await cancel_current()
+            await persist_cancelled_tool()
+            await persist_cancelled_plan()
+            clear_pending()
+            await send({"type": "cancelled"})
+            return
+
+        # User rejected the pending plan
+        if action == "plan_reject":
+            plan = pending.get("plan")
+            clear_pending()
+            if plan:
+                await reject_plan(plan)
+            return
+
+        # User approved the pending plan
+        if action == "plan_approve":
+            if is_busy():
+                await send({"type": "busy"})
+                return
+            plan = pending.get("plan")
+            if not plan:
+                return
+            user_text = pending.get("user_text", "")
+            clear_pending()
+            await approve_plan(plan, user_text)
+            return
+
+        # User edited the pending plan
+        if action == "plan_edit":
+            if is_busy():
+                await send({"type": "busy"})
+                return
+            plan = pending.get("plan")
+            steps = data.get("steps")
+            if not plan or not isinstance(steps, list):
+                return
+            revised = next_revision(plan, steps)
+            known = await airouter_with_plugins.known_tool_names()
+            errors = validate_plan(revised, known)
+            if errors:
+                await send(
+                    {"type": "error", "error": "Invalid plan: " + "; ".join(errors)}
+                )
+                return
+            user_text = pending.get("user_text", "")
+            _remember_pending(pending, revised, user_text)
+            with contextlib.suppress(Exception):
+                await _save_plan_message(session_id, revised)
+            requires_approval = plan_requires_approval(revised)
+            await send(plan_proposed_payload(revised, requires_approval))
+            if not requires_approval:
+                clear_pending()
+                start(_run_plan(send, session_id, user_text, revised, tracker))
+            return
+
+        # Regular text message from the user
+        user_text = data if isinstance(data, str) else data.get("message", "")
+        if not user_text:
+            return
+        if is_busy():
+            # Keep the newest message; it runs when the current turn ends.
+            queued_text = user_text
+            return
+
+        # A pending plan (direct action or plan card) awaiting a text yes/no.
+        pending_plan = pending.get("plan")
+        if pending_plan is not None:
+            age = time.monotonic() - float(pending.get("created_at") or 0.0)
+            if age <= CONFIRMATION_TIMEOUT_SECONDS:
+                decision = parse_confirmation(user_text)
+                if decision == "approve":
+                    saved_text = pending.get("user_text", "")
+                    clear_pending()
+                    await approve_plan(pending_plan, saved_text)
+                    return
+                if decision == "reject":
+                    clear_pending()
+                    await reject_plan(pending_plan)
+                    return
+                if plan_is_direct(pending_plan) and not pending.get("reasked"):
+                    pending["reasked"] = True
+                    pending["created_at"] = time.monotonic()
+                    await send(
+                        {
+                            "type": "response",
+                            "content": "Reply yes to proceed, or no to cancel.",
+                        }
+                    )
+                    return
+            # Non-committal, expired, or a second unclear reply: terminalize a
+            # plan card so it never sticks, then route the message fresh.
+            clear_pending()
+            if not plan_is_direct(pending_plan):
+                await reject_plan(pending_plan)
+
+        start(_process_user_message(send, session_id, user_text, tracker, pending))
+
     try:
         while True:
             # Read JSON from the client
             data = await websocket.receive_json()
             logger.info(f"📥 Received client message: {data}")
-
-            action = data.get("action") if isinstance(data, dict) else None
-
-            # Cancel the request currently in flight, if any
-            if action == "cancel":
-                queued_text = None
-                await cancel_current()
-                await persist_cancelled_tool()
-                await persist_cancelled_plan()
-                clear_pending()
-                await send({"type": "cancelled"})
-                continue
-
-            # User rejected the pending plan
-            if action == "plan_reject":
-                plan = pending.get("plan")
-                clear_pending()
-                if plan:
-                    await reject_plan(plan)
-                continue
-
-            # User approved the pending plan
-            if action == "plan_approve":
-                if is_busy():
-                    await send({"type": "busy"})
-                    continue
-                plan = pending.get("plan")
-                if not plan:
-                    continue
-                user_text = pending.get("user_text", "")
-                clear_pending()
-                await approve_plan(plan, user_text)
-                continue
-
-            # User edited the pending plan
-            if action == "plan_edit":
-                if is_busy():
-                    await send({"type": "busy"})
-                    continue
-                plan = pending.get("plan")
-                steps = data.get("steps")
-                if not plan or not isinstance(steps, list):
-                    continue
-                revised = next_revision(plan, steps)
-                known = await airouter_with_plugins.known_tool_names()
-                errors = validate_plan(revised, known)
-                if errors:
-                    await send(
-                        {"type": "error", "error": "Invalid plan: " + "; ".join(errors)}
-                    )
-                    continue
-                user_text = pending.get("user_text", "")
-                _remember_pending(pending, revised, user_text)
+            try:
+                await handle_message(data)
+            except WebSocketDisconnect:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # One bad message must not tear down the socket and jam the
+                # client; report it and keep the loop alive.
+                logger.error(f"❌ Error handling client message: {exc}")
+                logger.error(traceback.format_exc())
                 with contextlib.suppress(Exception):
-                    await _save_plan_message(session_id, revised)
-                requires_approval = plan_requires_approval(revised)
-                await send(plan_proposed_payload(revised, requires_approval))
-                if not requires_approval:
-                    clear_pending()
-                    start(_run_plan(send, session_id, user_text, revised, tracker))
-                continue
-
-            # Regular text message from the user
-            user_text = data if isinstance(data, str) else data.get("message", "")
-            if not user_text:
-                continue
-            if is_busy():
-                # Keep the newest message; it runs when the current turn ends.
-                queued_text = user_text
-                continue
-
-            # A direct action awaiting a plain-text yes/no confirmation.
-            pending_plan = pending.get("plan")
-            if pending_plan is not None and plan_is_direct(pending_plan):
-                age = time.monotonic() - float(pending.get("created_at") or 0.0)
-                if age <= CONFIRMATION_TIMEOUT_SECONDS:
-                    decision = parse_confirmation(user_text)
-                    if decision == "approve":
-                        saved_text = pending.get("user_text", "")
-                        clear_pending()
-                        await approve_plan(pending_plan, saved_text)
-                        continue
-                    if decision == "reject":
-                        clear_pending()
-                        await reject_plan(pending_plan)
-                        continue
-                    if not pending.get("reasked"):
-                        pending["reasked"] = True
-                        pending["created_at"] = time.monotonic()
-                        await send(
-                            {
-                                "type": "response",
-                                "content": "Reply yes to proceed, or no to cancel.",
-                            }
-                        )
-                        continue
-                # Expired, or a second unclear reply: drop it and start fresh.
-                clear_pending()
-
-            clear_pending()
-            start(_process_user_message(send, session_id, user_text, tracker, pending))
+                    await send({"type": "error", "error": str(exc)})
 
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket disconnected for session {session_id}")

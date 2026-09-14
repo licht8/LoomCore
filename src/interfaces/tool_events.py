@@ -181,6 +181,7 @@ def plan_step_payload(plan: dict, step: dict, phase: str) -> dict:
         "type": "plan_step",
         "plan_id": plan.get("plan_id"),
         "revision": plan.get("revision", 1),
+        "status": plan.get("status"),
         "step": step,
         "phase": phase,
     }
