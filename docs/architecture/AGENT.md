@@ -1,33 +1,38 @@
 # Agent — Conversational-First Loop
 
 LoomCore's assistant is a real agent, not a reactive tool-caller: the language
-model never calls a tool directly. Instead it talks to the user, and when work is
-needed it proposes it through a single callable tool, `agent_plan`. A
-deterministic executor in code decides what actually runs.
+model never calls a real tool directly. It must call exactly one planner tool
+each turn — `agent_plan` to act, or `reply` for plain conversation — and a
+deterministic executor in code decides what actually runs. The planner call uses
+`tool_choice="required"`, so an unstructured prose turn cannot slip through and
+silently skip a tool the user asked for.
 
 The default is conversation. Plans are the exception.
 
 ## Modes
 
 - **Conversation** (default) — greetings, questions, explanations, and
-  clarifying questions. The model replies with plain text and no tool.
-- **Direct** — a single, obvious action ("show disk usage", "restart nginx").
-  The model calls `agent_plan` with `mode: "direct"` and exactly one step. Code
-  runs it without showing a plan card.
+  clarifying questions. The model calls `reply` with the text to show the user.
+- **Direct** — a single, obvious action ("show disk usage", "list running
+  processes"). The model calls `agent_plan` with `mode: "direct"` and exactly
+  one step. Code runs it without showing a plan card.
 - **Plan** — multi-step work, an explicit request for a plan, or genuinely
   ambiguous scope. The model calls `agent_plan` with `mode: "plan"`; the user
   sees a plan card and approves, edits, or rejects it.
 
 The shape is clamped in code, not left to the model: a declared `plan` always
 wins, and any plan with more than one step is forced to `plan`. A single step
-with no declared mode becomes `direct`. See `resolve_mode` in `src/core/agent.py`.
+with no declared mode becomes `direct`. See `build_plan` / `_effective_mode` in
+`src/core/agent.py`.
 
 ## Flow
 
-1. **Understand** — the planner LLM is offered exactly one callable tool,
-   `agent_plan`. The real tool catalog is passed as context, never as callable
-   functions. If no tool is needed, the model answers in plain text; if it needs
-   a fact from the user, it asks one short question in plain text.
+1. **Understand** — the planner LLM is offered exactly two callable tools,
+   `agent_plan` and `reply`; the real tool catalog is passed as context, never as
+   callable functions. The call is forced (`tool_choice="required"`). A question
+   about the current state of the system, or any request to act, must go through
+   `agent_plan`; `reply` is only for conversation. A read question is never
+   answered from memory: the answer is whatever the read tool returns this turn.
 2. **Classify** — every step's `risk` is set in code by `classify_tool_risk`
    (`src/core/security.py`): `safe`, `moderate`, or `dangerous`.
 3. **Confirm**:
@@ -40,7 +45,9 @@ with no declared mode becomes `direct`. See `resolve_mode` in `src/core/agent.py
    `tool` and `args`, in order. It never re-asks between steps and never
    paraphrases arguments. A failed step stops the plan.
 5. **Summarize** — a second LLM call, voiced by `src/llm/SOUL.md`, reports the
-   outcome.
+   outcome. It must copy status words and numbers verbatim from the tool output;
+   if the summary changes a reported count (e.g. a health scan's
+   `0 critical, 1 warning, 0 info`), the raw tool output is shown instead.
 
 ## Plain-text confirmation
 
@@ -107,7 +114,7 @@ confirmation.
 
 | File | Responsibility |
 | --- | --- |
-| `src/core/agent.py` | Plan model, mode clamp, validation, executor |
+| `src/core/agent.py` | Plan model, mode clamp, validation, executor; `agent_plan` + `reply` schemas |
 | `src/core/confirmations.py` | Plain-text confirmation parser |
 | `src/core/confirmations.json` | Approve/reject phrase lists |
 | `src/llm/prompt.py` | Planner and summary message builders, SOUL loader |

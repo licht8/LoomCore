@@ -5,9 +5,10 @@ import time
 
 from src.config import settings
 from src.core.agent import (
-    AGENT_PLAN_SCHEMA,
     AGENT_PLAN_TOOL,
     PLANNER_REASK_LIMIT,
+    PLANNER_TOOLS,
+    REPLY_TOOL,
     build_plan,
     plan_is_direct,
     validate_plan,
@@ -24,13 +25,44 @@ from src.plugins.manager import PluginManager
 logger = logging.getLogger("loomcore.router")
 
 # A tool call the model wrote as plain text instead of a structured call.
-_TEXTUAL_CALL_RE = re.compile(
-    r"\[tool\s+(?P<name>[A-Za-z0-9_]+)\s*\](?P<args>\s*\{.*\})?",
-    re.DOTALL,
-)
+_TEXTUAL_CALL_RE = re.compile(r"\[tool\s+(?P<name>[A-Za-z0-9_]+)\s*\]")
 _TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>", re.DOTALL)
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)```", re.DOTALL)
 # A tool result the model imitated from a leaked history note instead of acting.
 _TEXTUAL_RESULT_RE = re.compile(r"Tool result\s*\((?P<name>[A-Za-z0-9_]+)\)")
+
+
+def _balanced_json(text: str, start: int) -> str | None:
+    """Return the first brace-balanced ``{...}`` object at/after ``start``.
+
+    A greedy regex would swallow trailing prose and break ``json.loads``; this
+    tracks strings/escapes so the object ends at its real closing brace.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    begin = -1
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                begin = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and begin != -1:
+                return text[begin : index + 1]
+    return None
 
 
 def _looks_like_tool_note(content: str) -> bool:
@@ -51,8 +83,8 @@ def _looks_like_tool_note(content: str) -> bool:
 class AIRouter:
     """LLM request router: history -> planner -> plan or text.
 
-    The model never receives callable tools. It either proposes a plan through
-    the single ``agent_plan`` tool or answers in plain text.
+    The model never receives the real tools. It must call exactly one planner
+    tool each turn: ``agent_plan`` to act, or ``reply`` for plain conversation.
 
     Shape of the dict returned by route():
         {
@@ -77,7 +109,8 @@ class AIRouter:
 
         1. Load history and persist the user message (short DB session).
         2. Gather the tool catalog and build planner messages.
-        3. Ask the LLM for a plan (its only callable tool is ``agent_plan``).
+        3. Ask the LLM to choose a planner tool (``agent_plan`` or ``reply``);
+           the call is forced so an unstructured turn cannot slip through.
         4. Validate the plan; re-ask once when it is malformed.
         5. Persist and return the plan, or the plain-text answer.
         """
@@ -106,7 +139,10 @@ class AIRouter:
             for attempt in range(PLANNER_REASK_LIMIT + 1):
                 planner_attempts += 1
                 llm_response = await self.client.chat_completion(
-                    messages, tools=[AGENT_PLAN_SCHEMA]
+                    messages,
+                    tools=PLANNER_TOOLS,
+                    tool_choice="required",
+                    temperature=0,
                 )
                 choices = llm_response.get("choices", [])
                 if not choices:
@@ -115,6 +151,14 @@ class AIRouter:
                 content, tool_name, tool_args, raw_tool_calls = self._parse_completion(
                     llm_response
                 )
+
+                if tool_name == REPLY_TOOL:
+                    reply_text = ""
+                    if isinstance(tool_args, dict):
+                        reply_text = str(tool_args.get("text") or "").strip()
+                    reply_text = reply_text or content
+                    await self._persist_assistant(session_id, reply_text, raw_tool_calls)
+                    return {"type": "text", "content": reply_text} | message_extra
 
                 if not raw_tool_calls:
                     recovered_args = self._recover_textual_plan_args(
@@ -264,9 +308,20 @@ class AIRouter:
 
         candidates: list[tuple[str, object]] = []
         for match in _TEXTUAL_CALL_RE.finditer(content):
-            candidates.append((match.group("name"), match.group("args") or ""))
+            candidates.append((match.group("name"), _balanced_json(content, match.end()) or ""))
         for match in _TEXTUAL_RESULT_RE.finditer(content):
             candidates.append((match.group("name"), ""))
+        for match in _FENCED_JSON_RE.finditer(content):
+            raw = _balanced_json(match.group("body"), 0)
+            if raw is None:
+                continue
+            try:
+                payload = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(payload, dict) and payload.get("steps"):
+                name = str(payload.get("name") or payload.get("tool") or AGENT_PLAN_TOOL)
+                candidates.append((name, payload.get("arguments", payload.get("args", payload))))
         for match in _TOOL_CALL_TAG_RE.finditer(content):
             try:
                 payload = json.loads(match.group("body"))

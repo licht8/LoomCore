@@ -39,11 +39,15 @@ class HetznerClient:
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        temperature: float | None = None,
     ) -> dict:
         """Send a request to the LLM and return the JSON response.
 
-        Retries transport/timeout errors up to `HETZNER_MAX_RETRIES` times and
-        raises `LlmTimeoutError`/`LlmError` with a clear message on failure.
+        ``tool_choice`` and ``temperature`` are forwarded when set (``None``
+        leaves the provider default). Retries transport/timeout errors up to
+        `HETZNER_MAX_RETRIES` times and raises `LlmTimeoutError`/`LlmError` with
+        a clear message on failure.
         """
         payload: dict = {
             "model": self.MODEL,
@@ -51,6 +55,10 @@ class HetznerClient:
         }
         if tools:
             payload["tools"] = tools
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
+        if temperature is not None:
+            payload["temperature"] = temperature
         if not settings.hetzner_enable_thinking:
             # Hybrid reasoning models spend most of the turn emitting hidden
             # reasoning tokens; for chat planning/summaries that is pure

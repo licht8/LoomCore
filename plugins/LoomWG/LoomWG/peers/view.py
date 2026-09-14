@@ -80,9 +80,17 @@ def show_config(arguments: dict[str, Any]) -> dict[str, Any]:
         source = "file"
         active = False
 
-    display = _mask(text)
+    display = _mask(text) or "(empty configuration)"
+    if source == "live":
+        header = f"{interface}: live configuration (source=live)"
+    else:
+        header = (
+            f"{interface}: saved file (source=file; the interface is not active). "
+            "This is not live state — use wg_list_interfaces or "
+            "wg_interface_status for the current status."
+        )
     return text_result(
-        display or "(empty configuration)",
+        f"{header}\n\n{display}",
         interface=interface,
         source=source,
         active=active,

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.core.agent import AGENT_PLAN_SCHEMA
+from src.core.agent import PLANNER_TOOLS, REPLY_TOOL
 from src.llm import router as router_module
 from src.llm.router import AIRouter
 
@@ -42,6 +42,25 @@ def _text_response(content: str) -> dict:
     return {"choices": [{"message": {"content": content}}]}
 
 
+def _reply_response(text: str) -> dict:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": REPLY_TOOL,
+                                "arguments": json.dumps({"text": text}),
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+
 @pytest.fixture
 def patched_router(monkeypatch):
     """AIRouter with DB stubs; returns (router, state)."""
@@ -50,6 +69,8 @@ def patched_router(monkeypatch):
         "queue": [],
         "calls": 0,
         "tools": None,
+        "tool_choice": None,
+        "temperature": None,
         "last_messages": None,
         "user_saved": [],
         "assistant_saved": [],
@@ -81,9 +102,13 @@ def patched_router(monkeypatch):
 
     router = AIRouter(plugin_manager=None)
 
-    async def fake_chat_completion(messages, tools=None):
+    async def fake_chat_completion(
+        messages, tools=None, tool_choice=None, temperature=None
+    ):
         state["calls"] += 1
         state["tools"] = tools
+        state["tool_choice"] = tool_choice
+        state["temperature"] = temperature
         state["last_messages"] = messages
         if state["queue"]:
             return state["queue"].pop(0)
@@ -133,13 +158,32 @@ async def test_route_plan_response(patched_router):
 
 
 @pytest.mark.asyncio
-async def test_route_offers_only_agent_plan_tool(patched_router):
+async def test_route_forces_a_planner_tool_call(patched_router):
     router, state = patched_router
-    state["queue"] = [_text_response("ok")]
+    state["queue"] = [_reply_response("ok")]
 
     await router.route("hi", "sess-1")
 
-    assert state["tools"] == [AGENT_PLAN_SCHEMA]
+    assert state["tools"] == PLANNER_TOOLS
+    assert {tool["function"]["name"] for tool in state["tools"]} == {
+        "agent_plan",
+        "reply",
+    }
+    assert state["tool_choice"] == "required"
+    assert state["temperature"] == 0
+
+
+@pytest.mark.asyncio
+async def test_route_reply_tool_returns_text(patched_router):
+    router, state = patched_router
+    state["queue"] = [_reply_response("Hi there!")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "Hi there!"
+    assert state["assistant_saved"][0][1] == "Hi there!"
+    assert state["plans_saved"] == []
 
 
 @pytest.mark.asyncio

@@ -81,7 +81,7 @@ does not install WireGuard at all.
 |---|---|---|
 | `wg_list_interfaces` | safe | Overview of all interfaces: active/config present. |
 | `wg_setup_server` | dangerous | Create the server config, enable forwarding, firewall/NAT. |
-| `wg_show_interface_config` | safe | Show the live (or saved) config; private/preshared keys are always masked. |
+| `wg_show_interface_config` | safe | Show the live config, or the saved `.conf` when the interface is down; the header states `source=live` or `source=file`. Private/preshared keys are always masked. |
 | `wg_check_interface_config` | safe | Validate a config without starting it (keys, CIDRs, duplicates, overlaps). |
 | `wg_interface_status` | safe | Interface status and peer online counts. |
 | `wg_diagnostics` | safe | In-depth check: wg installed, prerequisites, active, link, config present. |

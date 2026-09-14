@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import re
 import time
 import traceback
 from collections import deque
@@ -249,12 +250,40 @@ async def _run_plan(
 async def _summarize(user_text: str, plan: dict, observations: list[dict]) -> str:
     """Summarize a finished plan, falling back to a terse status on failure."""
     try:
-        return await airouter_with_plugins.summarize_plan(user_text, plan, observations)
+        summary = await airouter_with_plugins.summarize_plan(
+            user_text, plan, observations
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         logger.error(f"Plan summary failed: {exc}")
         return _fallback_summary(plan)
+    if _counts_mismatch(summary, observations):
+        logger.warning(
+            "Plan summary changed the reported counts; surfacing raw tool output"
+        )
+        return _direct_summary(plan, observations)
+    return summary
+
+
+# A health-style triple: "0 critical, 1 warning, 0 info".
+_COUNTS_RE = re.compile(r"(\d+)\s+critical,\s*(\d+)\s+warnings?,\s*(\d+)\s+info")
+
+
+def _observation_text(observations: list[dict]) -> str:
+    texts = [
+        _extract_text(item.get("result"))
+        for item in observations
+        if item.get("result") is not None
+    ]
+    return "\n\n".join(text for text in texts if text)
+
+
+def _counts_mismatch(summary: str, observations: list[dict]) -> bool:
+    """True when the LLM summary contradicts the counts in the tool results."""
+    observed = _COUNTS_RE.search(_observation_text(observations))
+    claimed = _COUNTS_RE.search(summary or "")
+    return bool(observed and claimed and observed.groups() != claimed.groups())
 
 
 def _fallback_summary(plan: dict) -> str:

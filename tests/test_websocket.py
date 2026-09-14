@@ -1036,3 +1036,54 @@ async def test_run_plan_skips_audit_for_safe_steps(monkeypatch):
     await ws_module._run_plan(send, "sess", "check health", plan)
 
     assert calls == []
+
+
+# --------------------------------------------------------------------------- #
+# _counts_mismatch summary guard
+# --------------------------------------------------------------------------- #
+
+
+def _health_observation(text):
+    return [{"step": {"id": "s1"}, "result": {"content": [{"type": "text", "text": text}]}}]
+
+
+def test_counts_mismatch_flags_changed_numbers():
+    observations = _health_observation(
+        "Health scan: degraded (0 critical, 1 warning, 0 info)"
+    )
+
+    assert ws_module._counts_mismatch(
+        "The host is healthy: 0 critical, 0 warnings, 1 info.", observations
+    )
+    assert not ws_module._counts_mismatch(
+        "Health scan: degraded (0 critical, 1 warning, 0 info)", observations
+    )
+    assert not ws_module._counts_mismatch("All good.", observations)
+
+
+@pytest.mark.asyncio
+async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch):
+    async def fake_summarize(user_text, plan, observations):
+        return "It is healthy: 0 critical, 0 warnings, 1 info."
+
+    monkeypatch.setattr(
+        ws_module.airouter_with_plugins, "summarize_plan", fake_summarize
+    )
+    plan = build_plan(
+        {
+            "mode": "plan",
+            "goal": "check health",
+            "steps": [
+                {"tool": "ops_scan_health", "args": {}, "why": "a"},
+                {"tool": "ops_system_metrics", "args": {}, "why": "b"},
+            ],
+        }
+    )
+    observations = _health_observation(
+        "Health scan: degraded (0 critical, 1 warning, 0 info)"
+    )
+
+    summary = await ws_module._summarize("why slow", plan, observations)
+
+    assert "degraded (0 critical, 1 warning, 0 info)" in summary
+    assert "0 warnings, 1 info" not in summary

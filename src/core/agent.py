@@ -17,6 +17,7 @@ from src.core.security import classify_tool_risk
 logger = logging.getLogger("loomcore.agent")
 
 AGENT_PLAN_TOOL = "agent_plan"
+REPLY_TOOL = "reply"
 MAX_PLAN_STEPS = 12
 PLANNER_REASK_LIMIT = 1
 VALID_PLAN_MODES = {"direct", "plan"}
@@ -29,11 +30,11 @@ AGENT_PLAN_SCHEMA: dict = {
     "function": {
         "name": AGENT_PLAN_TOOL,
         "description": (
-            "Propose a single direct tool call for one obvious action, or an "
-            "ordered plan for multi-step work. Use mode='direct' only when "
-            "exactly one step is needed. If no tool is needed, or you need to "
-            "ask the user something first, do not call this tool — reply with "
-            "plain text instead."
+            "Act on the user's request: propose a single direct tool call for "
+            "one obvious action, or an ordered plan for multi-step work. Use "
+            "mode='direct' only when exactly one step is needed. Use this "
+            "whenever the user asks about the current state of the system or "
+            "wants something done. For plain conversation use `reply` instead."
         ),
         "parameters": {
             "type": "object",
@@ -68,6 +69,34 @@ AGENT_PLAN_SCHEMA: dict = {
         },
     },
 }
+
+REPLY_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": REPLY_TOOL,
+        "description": (
+            "Send a plain-language chat reply. Use this ONLY for greetings, "
+            "explanations, or a single clarifying question. If the user asks "
+            "about the current state of the system or wants an action, you MUST "
+            "call `agent_plan` instead."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The reply to show the user.",
+                }
+            },
+            "required": ["text"],
+        },
+    },
+}
+
+# The planner sees exactly these tools. Forcing a tool call (tool_choice) makes
+# an unstructured prose turn impossible: the model must choose `reply` for
+# conversation or `agent_plan` to act.
+PLANNER_TOOLS: list[dict] = [AGENT_PLAN_SCHEMA, REPLY_SCHEMA]
 
 
 def _normalize_step(index: int, raw: dict) -> dict:

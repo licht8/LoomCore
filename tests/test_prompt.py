@@ -2,6 +2,8 @@
 
 from src.llm.prompt import (
     DEFAULT_SOUL,
+    PLANNER_PROMPT,
+    SUMMARY_INSTRUCTION,
     SYSTEM_PROMPT,
     build_messages,
     build_planner_messages,
@@ -81,3 +83,26 @@ def test_build_planner_messages_carries_soul_and_mode_guidance():
     assert "Loom" in system
     assert "mode='direct'" in system
     assert "mode='plan'" in system
+
+
+def test_planner_prompt_pushes_state_questions_through_agent_plan():
+    lowered = PLANNER_PROMPT.lower()
+    assert "agent_plan" in PLANNER_PROMPT
+    assert "reply" in PLANNER_PROMPT
+    assert "current state" in lowered
+    assert "never claim you lack a tool" in lowered
+    assert "approval" in lowered
+
+
+def test_planner_prompt_ends_with_the_act_rule():
+    messages = build_planner_messages("list processes", [], "- ops_list_processes: x")
+
+    assert messages[0]["content"].rstrip().endswith(
+        "call `agent_plan`; otherwise call `reply`."
+    )
+
+
+def test_summary_instruction_demands_verbatim_numbers():
+    assert "exactly" in SUMMARY_INSTRUCTION
+    assert "Never change" in SUMMARY_INSTRUCTION
+    assert "degraded (0 critical, 1 warning, 0 info)" in SUMMARY_INSTRUCTION
