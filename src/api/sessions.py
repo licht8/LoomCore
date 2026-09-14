@@ -31,10 +31,9 @@ async def get_messages(
     request: Request,
     limit: int = Query(default=200, ge=1, le=1000),
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Return the stored history of a chat session (oldest first)."""
-    require_admin_token_from_request(request, authorization, access_token)
+    require_admin_token_from_request(request, authorization)
     async with async_session_factory() as db:
         messages = await get_session_history(db, session_id, limit=limit)
     return {"session_id": session_id, "messages": [_serialize(m) for m in messages]}
@@ -45,10 +44,9 @@ async def delete_messages(
     session_id: str,
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Delete all messages in a session (resets the assistant's memory)."""
-    require_admin_token_from_request(request, authorization, access_token)
+    require_admin_token_from_request(request, authorization)
     async with async_session_factory() as db:
         deleted = await clear_session_history(db, session_id)
     logger.info("Cleared %s messages for session %s", deleted, session_id)

@@ -80,9 +80,7 @@ async def test_download_artifact_returns_file(monkeypatch):
     _patch_auth(monkeypatch)
     monkeypatch.setattr(artifacts_api, "plugin_manager", _FakeManager())
 
-    response = await artifacts_api.download_artifact(
-        "alice", "config", request=None, access_token=None
-    )
+    response = await artifacts_api.download_artifact("alice", "config", None)
 
     assert response.status_code == 200
     assert response.body == b"[Interface]\n"
@@ -98,9 +96,7 @@ async def test_download_artifact_reports_reason(monkeypatch):
     _patch_auth(monkeypatch)
     monkeypatch.setattr(artifacts_api, "plugin_manager", _FailingManager())
 
-    response = await artifacts_api.download_artifact(
-        "alice", "config", request=None, access_token=None
-    )
+    response = await artifacts_api.download_artifact("alice", "config", None)
 
     assert response.status_code == 404
     assert json.loads(response.body)["reason"] == "Client 'alice' not found"

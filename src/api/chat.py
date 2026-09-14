@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, Header, Query, Request
+from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -32,10 +32,9 @@ async def chat_endpoint(
     payload: ChatRequest,
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Send a message to the AI and get a response (REST)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token(extract_admin_token(request, authorization))
     try:
         return await airouter.route(payload.message, payload.session_id)
     except LlmError as exc:

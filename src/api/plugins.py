@@ -1,6 +1,6 @@
 """Routes for plugin and tool status."""
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from src.api.deps import extract_admin_token
 from src.core.core_tools import CORE_TOOLS_SCHEMA
@@ -16,10 +16,9 @@ router = APIRouter(prefix="/api", tags=["plugins"])
 async def get_plugins_status(
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Return the status of all plugins."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token(extract_admin_token(request, authorization))
     return {
         "plugins": {
             name: plugin_manager.get_plugin_status(name)
@@ -33,10 +32,9 @@ async def get_plugins_status(
 async def list_plugins_tools(
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Return the tool schemas of all plugins (for Swagger/UI)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token(extract_admin_token(request, authorization))
     result: dict = {}
     try:
         result["tools"] = list(CORE_TOOLS_SCHEMA) + await plugin_manager.get_all_tools()
@@ -58,10 +56,9 @@ async def enable_plugin(
     plugin_id: str,
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Enable and start a disabled plugin (admin only)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token(extract_admin_token(request, authorization))
     _require_plugin(plugin_id)
     if not await plugin_manager.enable_plugin(plugin_id):
         raise HTTPException(status_code=500, detail=f"Failed to enable '{plugin_id}'")
@@ -74,10 +71,9 @@ async def disable_plugin(
     plugin_id: str,
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Stop a plugin and persist its disabled state (admin only)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token(extract_admin_token(request, authorization))
     _require_plugin(plugin_id)
     if not await plugin_manager.disable_plugin(plugin_id):
         raise HTTPException(status_code=500, detail=f"Failed to disable '{plugin_id}'")
@@ -90,10 +86,9 @@ async def reload_plugin(
     plugin_id: str,
     request: Request,
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
 ):
     """Restart an enabled plugin and refresh its tools (admin only)."""
-    require_admin_token(extract_admin_token(request, authorization, access_token))
+    require_admin_token(extract_admin_token(request, authorization))
     _require_plugin(plugin_id)
     if not await plugin_manager.reload_plugin(plugin_id):
         raise HTTPException(status_code=500, detail=f"Failed to reload '{plugin_id}'")

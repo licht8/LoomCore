@@ -326,7 +326,7 @@ docker compose exec db psql -U loomuser -d loomcore -c \
 1. Type `create a wireguard client named phone1`.
 2. Reply `yes` to the confirmation (or **Approve** on the plan card) to run
    `wg_create_client`.
-3. Click the config and QR download buttons (`access_token` is appended automatically).
+3. Click the config and QR download buttons (the token is sent in the `Authorization` header).
 4. Verify:
 ```bash
 ls -l /etc/wireguard/clients/conf /etc/wireguard/clients/qr_code
@@ -365,7 +365,7 @@ Expect: peer gone, no matching `PublicKey`, client files removed.
 - While a request is running, sending another message -> `busy` (no overlapping runs).
 - Invalid name (`bad name!`) -> clear validation error, no client created.
 - Duplicate `phone1` -> "client already exists".
-- `http://SERVER_IP/api/tools` without token -> 401/503; with `?access_token=...` -> JSON.
+- `http://SERVER_IP/api/tools` without token -> 401/503; with `Authorization: Bearer ...` -> JSON. A `?access_token=...` query is ignored.
 - Spam `/api/chat` 31x/min -> 429.
 - Refresh the page -> the whole conversation (messages, plan cards, tool cards with status/artifacts, errors) is restored from Postgres.
 - Click "Clear conversation" -> confirm; the feed empties and the assistant's stored memory is deleted (no `alembic` needed).

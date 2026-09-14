@@ -16,9 +16,13 @@ def _request(*, cookies=None, query=None, client=_DEFAULT_CLIENT):
     )
 
 
-def test_extract_admin_token_prefers_query():
+def test_extract_admin_token_ignores_query():
+    # Query-string tokens leak via logs/history, so they are not accepted.
     request = _request(cookies={SESSION_COOKIE: "cookie"}, query={"access_token": "query"})
-    assert extract_admin_token(request, "Bearer header", "query") == "query"
+    assert extract_admin_token(request) == "cookie"
+
+    bare = _request(query={"access_token": "query"})
+    assert extract_admin_token(bare) is None
 
 
 def test_extract_admin_token_prefers_cookie_over_header():

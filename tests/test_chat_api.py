@@ -13,6 +13,9 @@ def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
+_AUTH = {"Authorization": "Bearer secret"}
+
+
 def _auth(monkeypatch):
     monkeypatch.setattr(settings, "admin_password_hash", "")
     monkeypatch.setattr(settings, "admin_totp_secret", "")
@@ -30,8 +33,9 @@ async def test_chat_returns_router_result(monkeypatch):
 
     async with _client() as client:
         response = await client.post(
-            "/api/chat?access_token=secret",
+            "/api/chat",
             json={"session_id": "s1", "message": "hi"},
+            headers=_AUTH,
         )
 
     assert response.status_code == 200
@@ -49,8 +53,9 @@ async def test_chat_maps_llm_error_to_504(monkeypatch):
 
     async with _client() as client:
         response = await client.post(
-            "/api/chat?access_token=secret",
+            "/api/chat",
             json={"session_id": "s1", "message": "hi"},
+            headers=_AUTH,
         )
 
     assert response.status_code == 504
@@ -68,8 +73,9 @@ async def test_chat_maps_unexpected_error_to_500(monkeypatch):
 
     async with _client() as client:
         response = await client.post(
-            "/api/chat?access_token=secret",
+            "/api/chat",
             json={"session_id": "s1", "message": "hi"},
+            headers=_AUTH,
         )
 
     assert response.status_code == 500

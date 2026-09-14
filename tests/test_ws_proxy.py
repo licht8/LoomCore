@@ -1,5 +1,7 @@
 """Tests for the WebSocket proxy authentication gate."""
 
+import base64
+
 import pytest
 
 from src.api import websocket as ws_api
@@ -9,9 +11,15 @@ from src.config import settings
 LONG_SECRET = "test-session-secret-long-enough-for-hs256-123456"
 
 
+def _auth_header(token: str) -> dict:
+    encoded = base64.urlsafe_b64encode(token.encode()).decode().rstrip("=")
+    return {"sec-websocket-protocol": f"loomcore.auth.{encoded}"}
+
+
 class _FakeWebSocket:
-    def __init__(self, cookies=None):
+    def __init__(self, cookies=None, headers=None):
         self.cookies = cookies or {}
+        self.headers = headers or {}
         self.closed = None
 
     async def close(self, code=1000, reason=""):
@@ -44,9 +52,9 @@ def _jwt_mode(monkeypatch):
 @pytest.mark.asyncio
 async def test_proxy_token_mode_authorized(monkeypatch, captured):
     _token_mode(monkeypatch)
-    websocket = _FakeWebSocket()
+    websocket = _FakeWebSocket(headers=_auth_header("secret"))
 
-    await ws_api.ws_proxy(websocket, "sess-1", access_token="secret")
+    await ws_api.ws_proxy(websocket, "sess-1")
 
     assert captured == [(websocket, "sess-1")]
     assert websocket.closed is None
@@ -55,9 +63,9 @@ async def test_proxy_token_mode_authorized(monkeypatch, captured):
 @pytest.mark.asyncio
 async def test_proxy_token_mode_rejects_wrong_token(monkeypatch, captured):
     _token_mode(monkeypatch)
-    websocket = _FakeWebSocket()
+    websocket = _FakeWebSocket(headers=_auth_header("wrong"))
 
-    await ws_api.ws_proxy(websocket, "sess-1", access_token="wrong")
+    await ws_api.ws_proxy(websocket, "sess-1")
 
     assert captured == []
     assert websocket.closed == (1008, "Admin token required")
@@ -78,9 +86,9 @@ async def test_proxy_jwt_mode_authorized(monkeypatch, captured):
 async def test_proxy_jwt_mode_accepts_static_token(monkeypatch, captured):
     _jwt_mode(monkeypatch)
     monkeypatch.setattr(settings, "admin_token", "shared-token")
-    websocket = _FakeWebSocket()
+    websocket = _FakeWebSocket(headers=_auth_header("shared-token"))
 
-    await ws_api.ws_proxy(websocket, "sess-3", access_token="shared-token")
+    await ws_api.ws_proxy(websocket, "sess-3")
 
     assert captured == [(websocket, "sess-3")]
     assert websocket.closed is None
@@ -90,9 +98,9 @@ async def test_proxy_jwt_mode_accepts_static_token(monkeypatch, captured):
 async def test_proxy_jwt_mode_rejects_wrong_static_token(monkeypatch, captured):
     _jwt_mode(monkeypatch)
     monkeypatch.setattr(settings, "admin_token", "shared-token")
-    websocket = _FakeWebSocket()
+    websocket = _FakeWebSocket(headers=_auth_header("wrong"))
 
-    await ws_api.ws_proxy(websocket, "sess-3", access_token="wrong")
+    await ws_api.ws_proxy(websocket, "sess-3")
 
     assert captured == []
     assert websocket.closed == (1008, "Admin token required")
@@ -104,6 +112,20 @@ async def test_proxy_jwt_mode_rejects_missing_cookie(monkeypatch, captured):
     websocket = _FakeWebSocket()
 
     await ws_api.ws_proxy(websocket, "sess-2")
+
+    assert captured == []
+    assert websocket.closed == (1008, "Admin token required")
+
+
+@pytest.mark.asyncio
+async def test_proxy_ignores_query_token(monkeypatch, captured):
+    # A token in the URL used to be accepted; it must now be ignored.
+    _jwt_mode(monkeypatch)
+    monkeypatch.setattr(settings, "admin_token", "shared-token")
+    websocket = _FakeWebSocket()
+    websocket.query_params = {"access_token": "shared-token"}
+
+    await ws_api.ws_proxy(websocket, "sess-4")
 
     assert captured == []
     assert websocket.closed == (1008, "Admin token required")

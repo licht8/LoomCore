@@ -13,6 +13,9 @@ def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
+_AUTH = {"Authorization": "Bearer secret"}
+
+
 def _auth(monkeypatch):
     monkeypatch.setattr(settings, "admin_password_hash", "")
     monkeypatch.setattr(settings, "admin_totp_secret", "")
@@ -30,7 +33,7 @@ async def test_plugins_status_shape(monkeypatch):
     )
 
     async with _client() as client:
-        response = await client.get("/api/plugins/status?access_token=secret")
+        response = await client.get("/api/plugins/status", headers=_AUTH)
 
     assert response.status_code == 200
     assert response.json() == {"plugins": {"LoomWG": {"name": "LoomWG", "state": "idle"}}}
@@ -46,7 +49,7 @@ async def test_tools_endpoint_returns_tools(monkeypatch):
     monkeypatch.setattr(plugins_api.plugin_manager, "get_all_tools", fake_tools)
 
     async with _client() as client:
-        response = await client.get("/api/tools?access_token=secret")
+        response = await client.get("/api/tools", headers=_AUTH)
 
     tools = response.json()["tools"]
     assert response.status_code == 200
@@ -64,7 +67,7 @@ async def test_tools_endpoint_reports_error(monkeypatch):
     monkeypatch.setattr(plugins_api.plugin_manager, "get_all_tools", boom)
 
     async with _client() as client:
-        response = await client.get("/api/tools?access_token=secret")
+        response = await client.get("/api/tools", headers=_AUTH)
 
     assert response.status_code == 200
     assert response.json() == {"error": "plugin down"}
@@ -98,7 +101,7 @@ async def test_plugin_lifecycle_routes(monkeypatch, action, enabled):
 
     async with _client() as client:
         response = await client.post(
-            f"/api/plugins/LoomOps/{action}?access_token=secret"
+            f"/api/plugins/LoomOps/{action}", headers=_AUTH
         )
 
     assert response.status_code == 200
@@ -112,7 +115,7 @@ async def test_plugin_lifecycle_unknown_plugin_404(monkeypatch):
     _patch_lifecycle(monkeypatch, plugin_id="Other")
 
     async with _client() as client:
-        response = await client.post("/api/plugins/LoomOps/enable?access_token=secret")
+        response = await client.post("/api/plugins/LoomOps/enable", headers=_AUTH)
 
     assert response.status_code == 404
 
@@ -124,6 +127,9 @@ async def test_plugin_lifecycle_requires_admin(monkeypatch):
     monkeypatch.setattr(settings, "admin_token", "secret")
 
     async with _client() as client:
-        response = await client.post("/api/plugins/LoomOps/enable?access_token=wrong")
+        response = await client.post(
+            "/api/plugins/LoomOps/enable",
+            headers={"Authorization": "Bearer wrong"},
+        )
 
     assert response.status_code == 401
