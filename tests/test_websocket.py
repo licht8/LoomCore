@@ -19,6 +19,16 @@ def _reset_ws_message_limits():
     ws_module.reset_ws_message_limits()
 
 
+@pytest.fixture(autouse=True)
+def _stub_mutation_audit(monkeypatch):
+    """Keep the central audit off the database; tests that target it override."""
+
+    async def _noop(**_kwargs):
+        return None
+
+    monkeypatch.setattr(ws_module, "record_mutation_isolated", _noop)
+
+
 class FakeWebSocket:
     """Minimal WebSocket double that replays a scripted incoming list."""
 
@@ -965,3 +975,64 @@ async def test_websocket_rejects_messages_over_the_limit(monkeypatch):
     errors = [p for p in ws.sent if p["type"] == "error"]
     assert len(errors) == 1
     assert "Rate limit" in errors[0]["error"]
+
+
+# === central mutation audit ===
+
+@pytest.mark.asyncio
+async def test_run_plan_audits_non_safe_steps(monkeypatch):
+    _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_record(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(ws_module, "record_mutation_isolated", fake_record)
+    plan = build_plan(
+        {
+            "mode": "plan",
+            "goal": "restart wg0",
+            "steps": [
+                {
+                    "tool": "wg_interface_restart",
+                    "args": {"interface": "wg0"},
+                    "why": "restart",
+                }
+            ],
+        }
+    )
+    plan["status"] = "approved"
+    _, send = _collector()
+
+    await ws_module._run_plan(send, "sess", "restart wg0", plan)
+
+    assert len(calls) == 1
+    assert calls[0]["tool"] == "wg_interface_restart"
+    assert calls[0]["risk"] != "safe"
+    assert calls[0]["status"] == "success"
+    assert calls[0]["plan_id"] == plan["plan_id"]
+
+
+@pytest.mark.asyncio
+async def test_run_plan_skips_audit_for_safe_steps(monkeypatch):
+    _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_record(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(ws_module, "record_mutation_isolated", fake_record)
+    plan = build_plan(
+        {
+            "mode": "direct",
+            "goal": "check health",
+            "steps": [{"tool": "core_health", "args": {}, "why": "check"}],
+        }
+    )
+    _, send = _collector()
+
+    await ws_module._run_plan(send, "sess", "check health", plan)
+
+    assert calls == []

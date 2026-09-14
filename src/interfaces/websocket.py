@@ -15,6 +15,7 @@ from src.core.agent import (
     plan_requires_approval,
     validate_plan,
 )
+from src.core.audit import record_mutation_isolated
 from src.core.confirmations import (
     CONFIRMATION_TIMEOUT_SECONDS,
     parse_confirmation,
@@ -113,6 +114,27 @@ async def _run_plan(
     # without a user-facing plan artifact or plan events.
     show_plan = not plan_is_direct(plan)
 
+    async def audit_step(step: dict, status: str, error: str | None = None) -> None:
+        """Record a tamper-evident audit row for every mutating step.
+
+        Safe (read-only) steps are not recorded. Auditing is best-effort: a
+        failure here must never break the plan.
+        """
+        risk = step.get("risk")
+        if not risk or risk == "safe":
+            return
+        with contextlib.suppress(Exception):
+            await record_mutation_isolated(
+                tool=step["tool"],
+                arguments=step.get("args"),
+                risk=risk,
+                status=status,
+                session_id=session_id,
+                plan_id=plan.get("plan_id"),
+                revision=plan.get("revision"),
+                error=error,
+            )
+
     async def emit(event: dict) -> None:
         if event.get("type") != "plan_step":
             return
@@ -145,6 +167,7 @@ async def _run_plan(
             await send(
                 tool_success_payload(step["tool"], content, step.get("risk"), artifacts)
             )
+            await audit_step(step, "success")
         elif phase == "failed":
             if tracker is not None:
                 tracker["tool"] = None
@@ -159,6 +182,7 @@ async def _run_plan(
                 risk=step.get("risk"),
             )
             await send(_tool_error_payload(step["tool"], message, step.get("risk")))
+            await audit_step(step, "failed", message)
         if show_plan:
             await send(plan_step_payload(plan, step, phase))
 
