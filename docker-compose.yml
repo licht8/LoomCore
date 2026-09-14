@@ -40,10 +40,11 @@ services:
     # SYS_MODULE is intentionally NOT granted: kernel WireGuard is in-tree on
     # Linux 5.6+, and the LoomWG manifest marks the capability as optional so
     # the plugin degrades to a host-side hint when the module must be loaded on
-    # the host. Re-add it only if you need in-container `modprobe wireguard`.
+    # the host. Re-add it only if you need in-container `modprobe wireguard`
+    # (which also requires the /lib/modules mount below). NET_RAW is not needed
+    # for WireGuard: `wg`/`ip`/`iptables`/`nft` use NET_ADMIN only.
     cap_add:
       - NET_ADMIN
-      - NET_RAW
       - SYSLOG
     # Block setuid/setgid privilege escalation inside the container.
     security_opt:
@@ -85,7 +86,9 @@ services:
     volumes:
       # :z relabels for SELinux (RHEL/Rocky); harmless on other distros.
       - /etc/wireguard:/etc/wireguard:z
-      - /lib/modules:/lib/modules:ro
+      # /lib/modules is intentionally NOT mounted: SYS_MODULE is not granted, so
+      # `modprobe` cannot load a module anyway. Re-add `/lib/modules:/lib/modules:ro`
+      # together with SYS_MODULE only if you need in-container `modprobe wireguard`.
       # Read-only host observability for LoomOps. Host paths are mounted under
       # /host/... so the container's own /etc and /var are not shadowed. On
       # SELinux hosts, relabel with `chcon`/`ausearch` — never `:z` on host
@@ -97,7 +100,8 @@ services:
       # /run/systemd mount already exposes systemd's private socket, which is
       # what `systemctl` uses as root. If your host's systemctl needs D-Bus,
       # re-add: /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
-      - /etc:/host/etc:ro
+      # The host /etc is intentionally NOT mounted: no tool reads /host/etc.
+      # Re-add `/etc:/host/etc:ro` only if you add tooling that needs it.
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 15s

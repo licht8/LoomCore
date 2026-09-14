@@ -10,12 +10,11 @@
   "requires_core": ">=0.0.1",
   "platforms": ["linux"],
   "permissions": {
-    "cap_add": ["NET_ADMIN", "NET_RAW"],
+    "cap_add": ["NET_ADMIN"],
     "cap_add_optional": ["SYS_MODULE"],
     "network_mode": "host",
     "mounts": [
-      {"source": "/etc/wireguard", "target": "/etc/wireguard", "mode": "rw"},
-      {"source": "/lib/modules", "target": "/lib/modules", "mode": "ro"}
+      {"source": "/etc/wireguard", "target": "/etc/wireguard", "mode": "rw"}
     ]
   },
   "env": [

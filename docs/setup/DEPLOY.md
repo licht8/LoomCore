@@ -78,20 +78,22 @@ external peers can connect.
 - `hub` (API/WS) binds `127.0.0.1:8000`; `frontend` binds `127.0.0.1:3000`.
 - Postgres is published on `127.0.0.1:5432` only.
 
-The `hub` container keeps least privilege: only the `NET_ADMIN`, `NET_RAW`, and
-`SYSLOG` capabilities, `no-new-privileges: true`, and two WireGuard mounts:
+The `hub` container keeps least privilege: only the `NET_ADMIN` and `SYSLOG`
+capabilities, `no-new-privileges: true`, and one WireGuard mount:
 
 - `/etc/wireguard:/etc/wireguard:z` (rw) — WireGuard configs (`:z` relabels for SELinux)
-- `/lib/modules:/lib/modules:ro` — kernel modules
 
-`SYS_MODULE` is **not** granted: WireGuard is in-tree on Linux 5.6+ and the
-LoomWG plugin treats the capability as optional, telling you to load the module
-on the host if it is missing. For LoomOps read-only host observability the `hub`
-additionally uses `pid: host`, `SYSLOG`, and read-only mounts of `/run/systemd`,
-`/var/log`, and `/etc` (see `docs/plugins/LoomOps.md`).
+`NET_RAW` is **not** granted: `wg`, `ip`, `iptables` and `nft` use `NET_ADMIN`
+only, and no tool opens raw sockets. `SYS_MODULE` is **not** granted either:
+WireGuard is in-tree on Linux 5.6+ and the LoomWG plugin treats the capability
+as optional, telling you to load the module on the host if it is missing. For
+LoomOps read-only host observability the `hub` additionally uses `pid: host`,
+`SYSLOG`, and read-only mounts of `/run/systemd` and `/var/log` (see
+`docs/plugins/LoomOps.md`).
 
-**Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`, and the host D-Bus
-socket `/run/dbus/system_bus_socket`; **not used:** `nsenter`, `chroot`.
+**Not mounted:** `/:/host`, `/var/run/docker.sock`, `/sys`, `/lib/modules`, the
+host `/etc`, and the host D-Bus socket `/run/dbus/system_bus_socket`; **not
+used:** `nsenter`, `chroot`.
 
 `wg_create_peer` stores the client config under `/etc/wireguard/clients/conf` and a
 protected QR file under `/etc/wireguard/clients/qr_code`, both with mode `600`;
@@ -218,4 +220,7 @@ docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sq
 | Full root to the host | ✅ | ❌ removed |
 | Docker socket | ✅ | ❌ removed |
 | Host D-Bus socket | ✅ | ❌ removed (systemd's private socket via `/run/systemd` is used) |
+| Host `/etc` | ✅ (via `/:/host`) | ❌ not mounted (no tool reads `/host/etc`) |
+| `/lib/modules` | ✅ | ❌ not mounted (`SYS_MODULE` not granted) |
+| `NET_RAW` | ✅ | ❌ removed (unused: no raw sockets) |
 | setuid privilege escalation | allowed | blocked (`no-new-privileges: true`) |

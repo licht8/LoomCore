@@ -25,7 +25,7 @@ deliberately does not carry (RULES 1).
 prefix, host networking and its environment variables (schema:
 `docs/architecture/PLUGIN_MANIFEST.md`). For host observability it requests the
 `SYSLOG` capability and host PID namespace (`pid: "host"`) and read-only mounts of
-`/var/log`, `/var/log/journal`, `/run/systemd` and `/etc` under `/host/...` (see
+`/var/log`, `/var/log/journal` and `/run/systemd` under `/host/...` (see
 [Host observability](#host-observability)). Read-only tools work even when those
 grants are absent; the tools then report what is missing. The core reads and
 validates the manifest during discovery and warns on mismatch (never blocks).
@@ -117,8 +117,8 @@ whole host, not just the container:
 - `cap_add: [SYSLOG]` — needed to read `/dev/kmsg` via `ops_dmesg`.
 - Read-only mounts under `/host/...` (host paths are never shadowed):
   `/var/log → /host/var/log`, `/var/log/journal → /host/journal`,
-  `/run/systemd → /run/systemd`, `/etc → /host/etc`. The `/etc` mount is optional
-  and only used to read configuration.
+  `/run/systemd → /run/systemd`. The host `/etc` is **not** mounted — no tool
+  reads `/host/etc`.
 - The `systemd` package plus the read-only `/run/systemd` mount expose
   systemd's private socket, which `systemctl` uses when running as root. The
   host D-Bus socket `/run/dbus/system_bus_socket` is **not** mounted; if your

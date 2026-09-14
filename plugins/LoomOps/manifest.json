@@ -18,8 +18,7 @@
     "mounts": [
       {"source": "/var/log", "target": "/host/var/log", "mode": "ro"},
       {"source": "/var/log/journal", "target": "/host/journal", "mode": "ro"},
-      {"source": "/run/systemd", "target": "/run/systemd", "mode": "ro"},
-      {"source": "/etc", "target": "/host/etc", "mode": "ro"}
+      {"source": "/run/systemd", "target": "/run/systemd", "mode": "ro"}
     ]
   },
   "env": [
