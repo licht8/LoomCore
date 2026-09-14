@@ -612,6 +612,50 @@ def test_remove_peer_unknown_raises(load_loomwg, monkeypatch, tmp_path):
         config.remove_peer("wg0", _fake_key(14))
 
 
+def test_remove_peer_drops_only_target_block(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    keys = [_fake_key(seed) for seed in (20, 21, 22)]
+    config_file = tmp_path / "wg0.conf"
+    config_file.write_text(
+        "[Interface]\nPrivateKey = x\n\n"
+        + "\n\n".join(
+            f"[Peer]\nPublicKey = {key}\nAllowedIPs = 10.0.0.{index}/32"
+            for index, key in enumerate(keys, start=2)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config.remove_peer("wg0", keys[1])
+
+    text = config_file.read_text(encoding="utf-8")
+    assert "[end]" not in text
+    assert text.count("[Peer]") == 2
+    assert keys[1] not in text
+    assert keys[0] in text
+    assert keys[2] in text
+
+
+def test_remove_peer_sole_peer_keeps_valid_remainder(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    key = _fake_key(23)
+    config_file = tmp_path / "wg0.conf"
+    config_file.write_text(
+        f"[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = {key}\nAllowedIPs = 10.0.0.2/32\n",
+        encoding="utf-8",
+    )
+
+    config.remove_peer("wg0", key)
+
+    text = config_file.read_text(encoding="utf-8")
+    assert "[end]" not in text
+    assert "[Peer]" not in text
+    assert "[Interface]" in text
+    assert config.iter_peers("wg0") == []
+
+
 # === clients/client.py: allocation + create_client ===
 
 def test_allocate_addresses_exhaustion(load_loomwg, monkeypatch):

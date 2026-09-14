@@ -138,18 +138,7 @@ def remove_peer(interface: str, public_key: str) -> None:
     path = config_path(interface)
     if not path.is_file():
         raise FileNotFoundError(f"Configuration {path} not found")
-    lines = path.read_text(encoding="utf-8").splitlines()
-    blocks: list[list[str]] = []
-    current: list[str] = []
-    for line in lines + ["[end]"]:
-        if line.strip() == "[Peer]" or line.strip().startswith("[") and line.strip() != "[end]":
-            if current:
-                blocks.append(current)
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        blocks.append(current)
+    blocks = _blocks(path.read_text(encoding="utf-8"))
     retained = []
     removed = False
     for block in blocks:
