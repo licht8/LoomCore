@@ -12,7 +12,7 @@
 ## Self-hosted on a Linux VDS
 
 ```bash
-cp .env.vds.example .env
+cp .env.example .env
 chmod 600 .env
 # Fill in POSTGRES_PASSWORD, ADMIN_TOKEN, HETZNER_API_KEY
 nano .env

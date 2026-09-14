@@ -15,7 +15,7 @@ For a Rocky Linux 10 walkthrough (EPEL, firewalld, SELinux), see
 ```bash
 git clone https://github.com/licht8/LoomCore.git ~/LoomCore
 cd ~/LoomCore
-cp .env.vds.example .env
+cp .env.example .env
 chmod 600 .env
 nano .env
 ```

@@ -21,7 +21,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
 if [[ ! -f .env ]]; then
-  cp .env.vds.example .env
+  cp .env.example .env
   chmod 600 .env
   echo "Created $REPO_DIR/.env. Fill in HETZNER_API_KEY, POSTGRES_PASSWORD and ADMIN_TOKEN, then rerun."
   exit 0

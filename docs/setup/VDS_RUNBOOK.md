@@ -18,7 +18,7 @@ nothing here requires external access.
 ```bash
 git clone https://github.com/licht8/LoomCore.git ~/LoomCore
 cd ~/LoomCore
-cp .env.vds.example .env
+cp .env.example .env
 chmod 600 .env
 ```
 
