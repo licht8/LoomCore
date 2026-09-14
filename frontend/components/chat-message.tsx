@@ -13,23 +13,36 @@ import {
 import { cn } from "@/lib/utils"
 import type { ChatMessage, PlanStatus } from "@/lib/chat-types"
 import { authHeaders } from "@/lib/admin-token"
+import { getApiBase } from "@/lib/chat-api"
 import { Markdown } from "@/components/markdown"
 
 /** Fetch an artifact with the auth header, then save it via a blob URL. */
 async function downloadArtifact(url: string, fallbackName: string) {
-  const response = await fetch(url, { headers: authHeaders() })
-  if (!response.ok) return
-  const disposition = response.headers.get("Content-Disposition") || ""
-  const match = /filename="?([^"]+)"?/.exec(disposition)
-  const filename = match ? match[1] : fallbackName
-  const objectUrl = URL.createObjectURL(await response.blob())
-  const link = document.createElement("a")
-  link.href = objectUrl
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(objectUrl)
+  const target = url.startsWith("http") ? url : `${getApiBase()}${url}`
+  try {
+    const response = await fetch(target, {
+      credentials: "include",
+      headers: authHeaders(),
+    })
+    if (!response.ok) {
+      console.error(`Artifact download failed (${response.status}): ${target}`)
+      return
+    }
+    const disposition = response.headers.get("Content-Disposition") || ""
+    const match = /filename="?([^"]+)"?/.exec(disposition)
+    const filename = match ? match[1] : fallbackName
+    const objectUrl = URL.createObjectURL(await response.blob())
+    const link = document.createElement("a")
+    link.href = objectUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    // Give the browser time to start the download before releasing the URL.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  } catch (error) {
+    console.error(`Artifact download failed: ${target}`, error)
+  }
 }
 
 const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
