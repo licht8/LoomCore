@@ -29,6 +29,23 @@ _TEXTUAL_CALL_RE = re.compile(
     re.DOTALL,
 )
 _TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>", re.DOTALL)
+# A tool result the model imitated from a leaked history note instead of acting.
+_TEXTUAL_RESULT_RE = re.compile(r"Tool result\s*\((?P<name>[A-Za-z0-9_]+)\)")
+
+
+def _looks_like_tool_note(content: str) -> bool:
+    """Detect text that is really a leaked tool note, not an answer.
+
+    Older history stored tool output as an assistant-role note; replaying it made
+    the model narrate results instead of calling ``agent_plan``. Such messages are
+    dropped from the prompt and never re-created.
+    """
+    text = content.lstrip()
+    return (
+        text.startswith("[tool")
+        or text.startswith("Tool result (")
+        or text.startswith("Tool result:")
+    )
 
 
 class AIRouter:
@@ -211,40 +228,24 @@ class AIRouter:
     def _api_history(messages: list[dict]) -> list[dict]:
         """Sanitize stored history into roles the chat API accepts.
 
-        Internal roles must never reach the chat API: ``tool`` messages are
-        folded into an assistant note (the API has no matching tool_call id) and
-        ``plan`` messages are dropped entirely. Empty and unknown roles are
-        dropped too, so a malformed history can never produce a 400.
+        Only user and assistant text reach the chat API. Tool cards and plans are
+        dropped: the API has no matching tool_call id for them, and replaying a
+        tool result as assistant narration taught the model to narrate results
+        instead of calling ``agent_plan``. Assistant messages that are themselves
+        a leaked tool note (from older history) are dropped for the same reason.
+        Empty and unknown roles are dropped too, so a malformed history can never
+        produce a 400.
         """
         api_messages: list[dict] = []
         for message in messages:
             role = message.get("role")
             content = message.get("content") or ""
-            if role in ("user", "assistant"):
-                if content:
-                    api_messages.append({"role": role, "content": content})
-            elif role == "tool":
-                note = AIRouter._tool_note(message, content)
-                if note:
-                    api_messages.append({"role": "assistant", "content": note})
+            if role not in ("user", "assistant") or not content:
+                continue
+            if role == "assistant" and _looks_like_tool_note(content):
+                continue
+            api_messages.append({"role": role, "content": content})
         return api_messages
-
-    @staticmethod
-    def _tool_note(message: dict, content: str) -> str:
-        """Fold a stored tool card into a plain assistant note (best-effort).
-
-        The format is deliberately descriptive ("Tool result (...)") rather than
-        an invocation-like ``[tool name]`` so the model treats it as history and
-        does not imitate it as a way to call a tool.
-        """
-        calls = message.get("tool_calls") or []
-        name = ""
-        if calls and isinstance(calls[0], dict):
-            name = str(calls[0].get("name") or "")
-        if not name and not content:
-            return ""
-        label = f"Tool result ({name}):" if name else "Tool result:"
-        return f"{label}\n{content}".rstrip()
 
     @staticmethod
     def _recover_textual_plan_args(
@@ -252,11 +253,11 @@ class AIRouter:
     ) -> dict | None:
         """Recover a plan the model wrote as text instead of a real tool call.
 
-        Some completions return the intended call as prose (``[tool name] {...}``
-        or ``<tool_call>{...}</tool_call>``). Treat those as ``agent_plan``
-        arguments — a real tool name becomes a one-step direct action — so the
-        request still runs instead of surfacing as a chat answer. Returns None
-        when nothing usable parses.
+        Some completions return the intended call as prose (``[tool name] {...}``,
+        ``<tool_call>{...}</tool_call>``, or a narrated ``Tool result (name)``).
+        Treat those as ``agent_plan`` arguments — a real tool name becomes a
+        one-step direct action — so the request still runs instead of surfacing as
+        a chat answer. Returns None when nothing usable parses.
         """
         if not content:
             return None
@@ -264,6 +265,8 @@ class AIRouter:
         candidates: list[tuple[str, object]] = []
         for match in _TEXTUAL_CALL_RE.finditer(content):
             candidates.append((match.group("name"), match.group("args") or ""))
+        for match in _TEXTUAL_RESULT_RE.finditer(content):
+            candidates.append((match.group("name"), ""))
         for match in _TOOL_CALL_TAG_RE.finditer(content):
             try:
                 payload = json.loads(match.group("body"))

@@ -309,7 +309,7 @@ async def test_route_never_sends_internal_roles(patched_router):
 
 
 @pytest.mark.asyncio
-async def test_route_folds_tool_messages_preserving_order(patched_router):
+async def test_route_drops_tool_messages_preserving_order(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("ok")]
     state["history"] = [
@@ -325,14 +325,16 @@ async def test_route_folds_tool_messages_preserving_order(patched_router):
     await router.route("next", "sess-1")
 
     roles = [m["role"] for m in state["last_messages"]]
-    assert roles == ["system", "user", "assistant", "assistant", "user"]
-    folded = state["last_messages"][2]
-    assert folded["content"] == "Tool result (ops_disk_usage):\ndisk 42%"
+    assert roles == ["system", "user", "assistant", "user"]
+    assert state["last_messages"][2]["content"] == "done"
     assert state["last_messages"][-1]["content"] == "next"
+    assert not any(
+        "disk 42%" in str(m["content"]) for m in state["last_messages"][1:]
+    )
 
 
 @pytest.mark.asyncio
-async def test_route_drops_empty_tool_message_without_name(patched_router):
+async def test_route_drops_tool_messages_without_name(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("ok")]
     state["history"] = [
@@ -343,9 +345,26 @@ async def test_route_drops_empty_tool_message_without_name(patched_router):
     await router.route("next", "sess-1")
 
     messages = state["last_messages"]
-    assert len(messages) == 3
-    assert messages[1] == {"role": "assistant", "content": "Tool result (ops_disk_usage):"}
-    assert messages[2] == {"role": "user", "content": "next"}
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert messages[1] == {"role": "user", "content": "next"}
+
+
+@pytest.mark.asyncio
+async def test_route_drops_leaked_tool_notes_from_history(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+    state["history"] = [
+        _HistoryMessage("user", "hi"),
+        _HistoryMessage("assistant", "[tool core_list_tools]"),
+        _HistoryMessage("assistant", "Tool result (ops_disk_usage):\ndisk 42%"),
+        _HistoryMessage("assistant", "real answer"),
+    ]
+
+    await router.route("next", "sess-1")
+
+    messages = state["last_messages"]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[2]["content"] == "real answer"
 
 
 @pytest.mark.asyncio
@@ -387,6 +406,19 @@ async def test_route_recovers_textual_real_tool(patched_router):
     state["queue"] = [_text_response("[tool core_list_tools]")]
 
     result = await router.route("show tools", "sess-1")
+
+    assert result["type"] == "plan"
+    plan = result["plan"]
+    assert plan["mode"] == "direct"
+    assert plan["steps"][0]["tool"] == "core_list_tools"
+
+
+@pytest.mark.asyncio
+async def test_route_recovers_narrated_tool_result(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("Tool result (core_list_tools):\n")]
+
+    result = await router.route("what are the tools", "sess-1")
 
     assert result["type"] == "plan"
     plan = result["plan"]
