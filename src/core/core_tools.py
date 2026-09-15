@@ -13,6 +13,7 @@ import socket
 import time
 from collections.abc import Awaitable, Callable
 
+from src.core.contracts import validate_tool_args
 from src.core.security import classify_tool_risk
 from src.plugins import plugin_manager
 from src.plugins.manifest import (
@@ -102,6 +103,11 @@ CORE_TOOL_NAMES = frozenset(tool["name"] for tool in CORE_TOOLS_SCHEMA)
 
 # Risk declared alongside each core tool's schema.
 CORE_TOOL_RISK = {tool["name"]: tool.get("risk") for tool in CORE_TOOLS_SCHEMA}
+
+# Input schema declared alongside each core tool, keyed by name.
+CORE_TOOL_SCHEMAS = {
+    tool["name"]: tool.get("inputSchema") or {} for tool in CORE_TOOLS_SCHEMA
+}
 
 
 def resolve_tool_risk(tool_name: str) -> str:
@@ -300,4 +306,5 @@ async def dispatch_core_tool(name: str, arguments: dict | None = None) -> dict:
     handler = _HANDLERS.get(name)
     if handler is None:
         raise ValueError(f"Unknown core tool '{name}'")
+    validate_tool_args(name, arguments, CORE_TOOL_SCHEMAS.get(name))
     return await handler(arguments or {})

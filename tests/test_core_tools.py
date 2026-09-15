@@ -3,6 +3,7 @@
 import pytest
 
 from src.core import core_tools
+from src.core.contracts import ToolContractError
 
 
 class _FakeManager:
@@ -75,6 +76,17 @@ def test_schema_and_names():
 async def test_dispatch_unknown_tool_raises(fake_manager):
     with pytest.raises(ValueError):
         await core_tools.dispatch_core_tool("core_nope", {})
+
+
+@pytest.mark.asyncio
+async def test_dispatch_validates_core_arguments(fake_manager):
+    """Core meta-tools are validated at dispatch time, like plugin tools."""
+    with pytest.raises(ToolContractError, match="missing required argument"):
+        await core_tools.dispatch_core_tool("core_plugin_status", {})
+
+    # A schema-valid call still reaches the handler.
+    result = await core_tools.dispatch_core_tool("core_health", {})
+    assert result["data"]["status"] == "ok"
 
 
 @pytest.mark.asyncio
