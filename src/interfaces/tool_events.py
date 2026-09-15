@@ -9,6 +9,14 @@ from urllib.parse import quote
 
 from src.db.database import async_session_factory
 from src.db.session import add_message, add_plan_message
+from src.interfaces.events import (
+    PlanDoneEvent,
+    PlanProposedEvent,
+    PlanStepEvent,
+    ToolCallEvent,
+    ToolResponseEvent,
+    event_payload,
+)
 
 
 def extract_text(raw_result: dict) -> str:
@@ -114,47 +122,46 @@ def tool_success_payload(
     artifacts: list[dict] | None = None,
 ) -> dict:
     """Terminal tool_response marking a tool call as successful."""
-    payload = {
-        "type": "tool_response",
-        "tool": tool_name,
-        "content": content,
-        "result": content,
-        "status": "success",
-        "summary": "Done",
-        "artifacts": artifacts,
-    }
-    if risk:
-        payload["risk"] = risk
-    return payload
+    return event_payload(
+        ToolResponseEvent(
+            tool=tool_name,
+            content=content,
+            result=content,
+            status="success",
+            summary="Done",
+            artifacts=artifacts,
+            risk=risk,
+        )
+    )
 
 
 def tool_error_payload(
     tool_name: str, message: str, risk: str | None = None
 ) -> dict:
     """Terminal tool_response marking a tool call as failed."""
-    payload = {
-        "type": "tool_response",
-        "tool": tool_name,
-        "content": message,
-        "result": message,
-        "status": "error",
-        "summary": "Error",
-    }
-    if risk:
-        payload["risk"] = risk
-    return payload
+    return event_payload(
+        ToolResponseEvent(
+            tool=tool_name,
+            content=message,
+            result=message,
+            status="error",
+            summary="Error",
+            risk=risk,
+        )
+    )
 
 
 def tool_call_payload(tool_name: str, arguments: dict | None) -> dict:
     """The tool_call event shown while a tool is running."""
-    return {
-        "type": "tool_call",
-        "tool": tool_name,
-        "args": arguments,
-        "content": f"Calling tool: {tool_name}",
-        "status": "running",
-        "summary": "Running…",
-    }
+    return event_payload(
+        ToolCallEvent(
+            tool=tool_name,
+            args=arguments,
+            content=f"Calling tool: {tool_name}",
+            status="running",
+            summary="Running…",
+        )
+    )
 
 
 def plan_proposed_payload(plan: dict, requires_approval: bool) -> dict:
@@ -163,36 +170,39 @@ def plan_proposed_payload(plan: dict, requires_approval: bool) -> dict:
     ``requires_approval`` tells the UI whether to offer Approve/Edit/Reject; an
     all-safe plan is shown and executed without waiting.
     """
-    return {
-        "type": "plan_proposed",
-        "plan": plan,
-        "plan_id": plan.get("plan_id"),
-        "revision": plan.get("revision", 1),
-        "goal": plan.get("goal", ""),
-        "requires_approval": requires_approval,
-        "content": plan.get("goal", ""),
-        "summary": "Plan ready",
-    }
+    return event_payload(
+        PlanProposedEvent(
+            plan=plan,
+            plan_id=plan.get("plan_id"),
+            revision=plan.get("revision", 1),
+            goal=plan.get("goal", ""),
+            requires_approval=requires_approval,
+            content=plan.get("goal", ""),
+            summary="Plan ready",
+        )
+    )
 
 
 def plan_step_payload(plan: dict, step: dict, phase: str) -> dict:
     """A single step update (phase: started/done/failed)."""
-    return {
-        "type": "plan_step",
-        "plan_id": plan.get("plan_id"),
-        "revision": plan.get("revision", 1),
-        "status": plan.get("status"),
-        "step": step,
-        "phase": phase,
-    }
+    return event_payload(
+        PlanStepEvent(
+            plan_id=plan.get("plan_id"),
+            revision=plan.get("revision", 1),
+            status=plan.get("status"),
+            step=step,
+            phase=phase,
+        )
+    )
 
 
 def plan_done_payload(plan: dict) -> dict:
     """The terminal plan_done event (status: done/failed/rejected/cancelled)."""
-    return {
-        "type": "plan_done",
-        "plan": plan,
-        "plan_id": plan.get("plan_id"),
-        "revision": plan.get("revision", 1),
-        "status": plan.get("status"),
-    }
+    return event_payload(
+        PlanDoneEvent(
+            plan=plan,
+            plan_id=plan.get("plan_id"),
+            revision=plan.get("revision", 1),
+            status=plan.get("status"),
+        )
+    )

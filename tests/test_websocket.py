@@ -184,8 +184,16 @@ async def test_process_user_message_text_response(monkeypatch):
 
     await ws_module._process_user_message(send, "sess", "hi")
 
-    assert sent[0] == {"type": "thinking", "status": "processing"}
-    assert sent[-1] == {"type": "response", "content": "hello"}
+    assert sent[0] == {
+        "type": "thinking",
+        "status": "processing",
+        "schema_version": 1,
+    }
+    assert sent[-1] == {
+        "type": "response",
+        "content": "hello",
+        "schema_version": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -199,7 +207,7 @@ async def test_process_user_message_reports_llm_error(monkeypatch):
 
     await ws_module._process_user_message(send, "sess", "hi")
 
-    assert sent[-1] == {"type": "error", "error": "boom"}
+    assert sent[-1] == {"type": "error", "error": "boom", "schema_version": 1}
 
 
 @pytest.mark.asyncio
@@ -569,6 +577,44 @@ async def test_websocket_plan_edit_rejects_unknown_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_websocket_plan_edit_rejects_invalid_arguments(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    plan = build_plan(
+        {
+            "goal": "disable",
+            "steps": [
+                {
+                    "tool": "core_disable_plugin",
+                    "args": {"plugin": "LoomOps"},
+                    "why": "stop it",
+                }
+            ],
+        }
+    )
+
+    async def fake_route(user_text, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    edited = {"tool": "core_disable_plugin", "args": {}, "why": "no plugin"}
+    ws = FakeWebSocket(
+        [{"message": "disable"}, {"action": "plan_edit", "steps": [edited]}],
+        delay=0.05,
+    )
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    errors = [p for p in ws.sent if p["type"] == "error"]
+    assert errors and "Invalid plan" in errors[-1]["error"]
+    assert "missing required argument(s): plugin" in errors[-1]["error"]
+    types = [payload["type"] for payload in ws.sent]
+    assert "tool_call" not in types
+
+
+@pytest.mark.asyncio
 async def test_websocket_busy_message_queued_and_runs(monkeypatch):
     _patch_db(monkeypatch)
     calls = []
@@ -809,7 +855,11 @@ async def test_websocket_yes_without_pending_routes_normally(monkeypatch):
     await ws_module.websocket_endpoint(ws, "sess")
 
     assert calls == ["yes"]
-    assert ws.sent[-1] == {"type": "response", "content": "hello"}
+    assert ws.sent[-1] == {
+        "type": "response",
+        "content": "hello",
+        "schema_version": 1,
+    }
 
 
 @pytest.mark.asyncio

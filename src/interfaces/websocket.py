@@ -21,10 +21,22 @@ from src.core.confirmations import (
     CONFIRMATION_TIMEOUT_SECONDS,
     parse_confirmation,
 )
-from src.core.core_tools import CORE_TOOL_NAMES, dispatch_core_tool
+from src.core.core_tools import (
+    CORE_TOOL_NAMES,
+    dispatch_core_tool,
+    resolve_tool_risk,
+)
 from src.core.timing import log_stage, span
 from src.db.database import async_session_factory
 from src.db.session import add_assistant_message, ensure_session
+from src.interfaces.events import (
+    busy_payload,
+    cancelled_payload,
+    error_payload,
+    response_payload,
+    schema_warning_payload,
+    thinking_payload,
+)
 from src.interfaces.tool_events import (
     build_artifacts as _build_artifacts,
 )
@@ -206,7 +218,7 @@ async def _run_plan(
         final_plan = plan
         observations = []
         with contextlib.suppress(Exception):
-            await send({"type": "error", "error": str(exc)})
+            await send(error_payload(str(exc)))
     finally:
         log_stage(
             "execute_plan",
@@ -234,7 +246,7 @@ async def _run_plan(
             async with async_session_factory() as db:
                 await add_assistant_message(db, session_id, summary)
         with contextlib.suppress(Exception):
-            await send({"type": "response", "content": summary})
+            await send(response_payload(summary))
 
     # plan_done is terminal for the UI: send it only once the summary is out so
     # the client keeps the turn busy until the whole request has finished.
@@ -379,7 +391,7 @@ async def _process_user_message(
     started = time.monotonic()
     answer_type: str | None = None
     try:
-        await send({"type": "thinking", "status": "processing"})
+        await send(thinking_payload())
         logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
 
         route_started = time.monotonic()
@@ -391,22 +403,22 @@ async def _process_user_message(
         except asyncio.CancelledError:
             raise
         except LlmError as exc:
-            await send({"type": "error", "error": str(exc)})
+            await send(error_payload(str(exc)))
             return
         except Exception as exc:
-            await send({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+            await send(error_payload(f"{type(exc).__name__}: {exc}"))
             return
         finally:
             log_stage("route_call", time.monotonic() - route_started)
 
         unavailable = result.get("tool_schema_warning")
         if unavailable:
-            await send({"type": "schema_warning", "unavailable_plugins": unavailable})
+            await send(schema_warning_payload(unavailable))
 
         answer_type = result.get("type")
 
         if answer_type == "text":
-            await send({"type": "response", "content": result.get("content", "")})
+            await send(response_payload(result.get("content", "")))
             return
 
         if answer_type != "plan":
@@ -422,7 +434,7 @@ async def _process_user_message(
                 return
             # Direct but mutating: ask for a plain-language confirmation.
             goal = plan.get("goal") or "Proceed"
-            await send({"type": "response", "content": f"{goal} Reply yes to proceed."})
+            await send(response_payload(f"{goal} Reply yes to proceed."))
             _remember_pending(pending, plan, user_text)
             return
 
@@ -570,7 +582,7 @@ async def websocket_endpoint(
                     summary="Rejected",
                     risk=step.get("risk"),
                 )
-            await send({"type": "response", "content": "Cancelled."})
+            await send(response_payload("Cancelled."))
             return
         with contextlib.suppress(Exception):
             await _save_plan_message(session_id, plan)
@@ -587,7 +599,7 @@ async def websocket_endpoint(
             await persist_cancelled_tool()
             await persist_cancelled_plan()
             clear_pending()
-            await send({"type": "cancelled"})
+            await send(cancelled_payload())
             return
 
         # User rejected the pending plan
@@ -601,7 +613,7 @@ async def websocket_endpoint(
         # User approved the pending plan
         if action == "plan_approve":
             if is_busy():
-                await send({"type": "busy"})
+                await send(busy_payload())
                 return
             plan = pending.get("plan")
             if not plan:
@@ -614,19 +626,17 @@ async def websocket_endpoint(
         # User edited the pending plan
         if action == "plan_edit":
             if is_busy():
-                await send({"type": "busy"})
+                await send(busy_payload())
                 return
             plan = pending.get("plan")
             steps = data.get("steps")
             if not plan or not isinstance(steps, list):
                 return
-            revised = next_revision(plan, steps)
-            known = await airouter_with_plugins.known_tool_names()
-            errors = validate_plan(revised, known)
+            revised = next_revision(plan, steps, risk_of=resolve_tool_risk)
+            schemas = await airouter_with_plugins.tool_schemas()
+            errors = validate_plan(revised, set(schemas), schemas)
             if errors:
-                await send(
-                    {"type": "error", "error": "Invalid plan: " + "; ".join(errors)}
-                )
+                await send(error_payload("Invalid plan: " + "; ".join(errors)))
                 return
             user_text = pending.get("user_text", "")
             _remember_pending(pending, revised, user_text)
@@ -667,10 +677,7 @@ async def websocket_endpoint(
                     pending["reasked"] = True
                     pending["created_at"] = time.monotonic()
                     await send(
-                        {
-                            "type": "response",
-                            "content": "Reply yes to proceed, or no to cancel.",
-                        }
+                        response_payload("Reply yes to proceed, or no to cancel.")
                     )
                     return
             # Non-committal, expired, or a second unclear reply: terminalize a
@@ -687,12 +694,7 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
             logger.info(f"📥 Received client message: {data}")
             if not _allow_ws_message(identity):
-                await send(
-                    {
-                        "type": "error",
-                        "error": "Rate limit exceeded. Please slow down.",
-                    }
-                )
+                await send(error_payload("Rate limit exceeded. Please slow down."))
                 continue
             try:
                 await handle_message(data)
@@ -706,13 +708,13 @@ async def websocket_endpoint(
                 logger.error(f"❌ Error handling client message: {exc}")
                 logger.error(traceback.format_exc())
                 with contextlib.suppress(Exception):
-                    await send({"type": "error", "error": str(exc)})
+                    await send(error_payload(str(exc)))
 
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket disconnected for session {session_id}")
     except Exception as exc:
         with contextlib.suppress(Exception):
-            await send({"type": "error", "error": str(exc)})
+            await send(error_payload(str(exc)))
         logger.error(f"❌ Fatal WebSocket error for session {session_id}: {exc}")
         logger.error(traceback.format_exc())
     finally:
