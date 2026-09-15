@@ -15,6 +15,25 @@ DEFAULT_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 600
 MAX_OUTPUT_CHARS = 20_000
 
+# Basenames that can execute arbitrary code or otherwise escape the allowlist
+# even with ``shell=False``: interpreters, wrappers and process/session
+# launchers. They are refused even when an operator explicitly lists them in
+# ``LOOMOPS_ALLOWED_COMMANDS`` — allowlisting one of these is equivalent to
+# granting unrestricted command execution.
+DENIED_COMMANDS = frozenset(
+    {
+        "sh", "bash", "dash", "zsh", "ksh", "csh", "tcsh", "fish", "ash",
+        "mksh", "busybox",
+        "python", "python2", "python3", "perl", "ruby", "node", "php", "lua",
+        "tclsh", "awk", "gawk", "mawk", "nawk", "sed",
+        "env", "xargs", "find", "nice", "ionice", "timeout", "stdbuf",
+        "nohup", "setsid", "time", "watch",
+        "sudo", "doas", "su",
+        "ssh", "nsenter", "chroot", "unshare", "docker", "podman",
+        "make", "git",
+    }
+)
+
 
 def allowed_commands() -> set[str]:
     """Executable basenames the admin allowed (empty means deny all)."""
@@ -63,6 +82,11 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
     if executable not in allowed:
         raise ValueError(
             f"Command '{executable}' is not allowed. Allowed: {', '.join(sorted(allowed))}"
+        )
+    if executable in DENIED_COMMANDS:
+        raise ValueError(
+            f"Command '{executable}' can execute arbitrary code and is never "
+            f"allowed, even when listed in LOOMOPS_ALLOWED_COMMANDS"
         )
     if shutil.which(executable) is None:
         raise ValueError(f"Command '{executable}' is not installed in this container")

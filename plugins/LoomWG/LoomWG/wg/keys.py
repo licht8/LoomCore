@@ -19,7 +19,7 @@ def validate_public_key(value: str) -> str:
 
 
 def generate_keypair() -> dict[str, str]:
-    private_key = run_command(["wg", "genkey"])
+    private_key = run_command(["wg", "genkey"], sensitive=True)
     public_key = run_command(["wg", "pubkey"], timeout=5, input_text=private_key)
     if not private_key or not public_key:
         raise CommandError("WireGuard did not return keys")

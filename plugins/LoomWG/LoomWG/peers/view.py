@@ -69,7 +69,7 @@ def show_config(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
 
     try:
-        text = run_command(["wg", "showconf", interface])
+        text = run_command(["wg", "showconf", interface], sensitive=True)
         source = "live"
         active = True
     except CommandError:

@@ -34,7 +34,7 @@ async def chat_endpoint(
     authorization: str | None = Header(default=None),
 ):
     """Send a message to the AI and get a response (REST)."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
     try:
         return await airouter.route(payload.message, payload.session_id)
     except LlmError as exc:

@@ -7,18 +7,29 @@ const TOKEN_KEY = "loomcore_admin_token"
  */
 const TOKEN_SUBPROTOCOL_PREFIX = "loomcore.auth."
 
+/**
+ * Static token storage is per-tab (sessionStorage), never localStorage: a
+ * long-lived admin token must not survive the browser session or be readable
+ * from disk. Password + TOTP (the httpOnly session cookie) is the preferred
+ * login path; the static token is for API/automation use.
+ */
+function storage(): Storage | null {
+  if (typeof window === "undefined") return null
+  return window.sessionStorage
+}
+
 /** Get the stored admin bearer token. */
 export function getAdminToken(): string {
-  if (typeof window === "undefined") return ""
-  return localStorage.getItem(TOKEN_KEY) || ""
+  return storage()?.getItem(TOKEN_KEY) || ""
 }
 
 /** Save or clear the admin bearer token. */
 export function setAdminToken(token: string): void {
-  if (typeof window === "undefined") return
+  const store = storage()
+  if (!store) return
   const value = token.trim()
-  if (value) localStorage.setItem(TOKEN_KEY, value)
-  else localStorage.removeItem(TOKEN_KEY)
+  if (value) store.setItem(TOKEN_KEY, value)
+  else store.removeItem(TOKEN_KEY)
 }
 
 /** Authorization headers for REST calls (empty when no static token is set). */

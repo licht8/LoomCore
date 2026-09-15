@@ -236,7 +236,7 @@ def create_client(arguments: dict) -> dict:
         }:
             raise ValueError(f"Client address {address} is already in use")
     keypair = generate_keypair()
-    preshared_key = run_command(["wg", "genpsk"])
+    preshared_key = run_command(["wg", "genpsk"], sensitive=True)
     client_path, qr_path = client_paths(name)
     if client_path.exists() or qr_path.exists():
         raise ValueError(f"Client '{name}' already exists")

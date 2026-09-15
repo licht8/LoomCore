@@ -7,6 +7,7 @@ stdin/stdout. Call timeout: 30 seconds. A plugin crash does not take down the Hu
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -18,6 +19,7 @@ from pathlib import Path
 from time import monotonic, time
 
 from src.core.contracts import validate_tool_args, validate_tool_result
+from src.core.security_log import log_security_event
 from src.core.timing import log_stage
 from src.core.version import CORE_VERSION
 from src.plugins.manifest import (
@@ -32,6 +34,22 @@ from src.plugins.state import load_disabled, save_disabled
 logger = logging.getLogger("loomcore.plugins")
 
 _VALID_RISKS = frozenset({"safe", "moderate", "dangerous"})
+
+
+def allowed_plugins() -> set[str]:
+    """Plugin ids the admin trusts (empty means "no allowlist configured").
+
+    Plugins run as un-sandboxed subprocesses, so an allowlist is the practical
+    trust boundary: when ``LOOMCORE_PLUGINS_ALLOWED`` is set, only the listed
+    plugin ids may be launched (comma- or whitespace-separated). An empty value
+    preserves the previous behaviour of launching every discovered plugin.
+    """
+    raw = os.environ.get("LOOMCORE_PLUGINS_ALLOWED", "")
+    return {
+        part
+        for part in (chunk.strip() for chunk in raw.replace(",", " ").split())
+        if part
+    }
 
 
 def _normalize_risk(value: object) -> str:
@@ -171,10 +189,12 @@ class PluginManager:
 
         An invalid manifest is logged and the plugin skipped; a missing manifest
         falls back to the folder name as the plugin identity. A plugin is only
-        launched when ``default_enabled`` is true and it is not in the persisted
-        disabled set.
+        launched when ``default_enabled`` is true, it is not in the persisted
+        disabled set, and (when ``LOOMCORE_PLUGINS_ALLOWED`` is set) its id is
+        allow-listed.
         """
         discovered: list[str] = []
+        trusted = allowed_plugins()
         for plugin_dir in sorted(Path(plugins_dir).iterdir()):
             if not plugin_dir.is_dir() or not (plugin_dir / "main.py").is_file():
                 continue
@@ -188,10 +208,12 @@ class PluginManager:
 
             command = [sys.executable, str(plugin_dir / "main.py")]
             incompatible = list(manifest.get("_compatibility") or [])
+            untrusted = bool(trusted) and name not in trusted
             enabled = (
                 bool(manifest.get("default_enabled", True))
                 and name not in self._disabled
                 and not incompatible
+                and not untrusted
             )
             if enabled:
                 self.register(name, command)
@@ -206,8 +228,21 @@ class PluginManager:
                         f"Plugin '{name}' is incompatible with core "
                         f"{CORE_VERSION}; not launching"
                     )
+                elif untrusted:
+                    log_security_event(
+                        "plugin_rejected",
+                        plugin=name,
+                        reason="not_in_allowlist",
+                    )
+                    logger.warning(
+                        f"Plugin '{name}' is not in LOOMCORE_PLUGINS_ALLOWED; "
+                        f"not launching"
+                    )
                 else:
                     logger.info(f"Plugin '{name}' is disabled; not launching")
+                blocked = (
+                    ["plugin is not in LOOMCORE_PLUGINS_ALLOWED"] if untrusted else []
+                )
                 self._plugins[name] = ManagedPlugin(
                     name=name,
                     command=command,
@@ -215,7 +250,7 @@ class PluginManager:
                     enabled=False,
                     version=str(manifest.get("version") or ""),
                     manifest=manifest,
-                    permission_warnings=list(warnings) + incompatible,
+                    permission_warnings=list(warnings) + incompatible + blocked,
                 )
             discovered.append(name)
         return discovered
@@ -326,6 +361,20 @@ class PluginManager:
             return False
         if plugin.enabled:
             return True
+
+        trusted = allowed_plugins()
+        if trusted and plugin_name not in trusted:
+            log_security_event(
+                "plugin_rejected",
+                plugin=plugin_name,
+                reason="not_in_allowlist",
+                action="enable",
+            )
+            logger.error(
+                f"Plugin '{plugin_name}' is not in LOOMCORE_PLUGINS_ALLOWED; "
+                f"refusing to enable"
+            )
+            return False
 
         self._disabled.discard(plugin_name)
         plugin.enabled = True

@@ -21,7 +21,7 @@ async def get_plugins_status(
     authorization: str | None = Header(default=None),
 ):
     """Return the status of all plugins."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
     return {
         "plugins": {
             name: plugin_manager.get_plugin_status(name)
@@ -37,7 +37,7 @@ async def list_plugins_tools(
     authorization: str | None = Header(default=None),
 ):
     """Return the tool schemas of all plugins (for Swagger/UI)."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
     result: dict = {}
     try:
         result["tools"] = list(CORE_TOOLS_SCHEMA) + await plugin_manager.get_all_tools()
@@ -73,7 +73,7 @@ async def enable_plugin(
     authorization: str | None = Header(default=None),
 ):
     """Enable and start a disabled plugin (admin only)."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
     _require_plugin(plugin_id)
     enabled = await plugin_manager.enable_plugin(plugin_id)
     await _audit_plugin_action("enable", plugin_id, enabled)
@@ -90,7 +90,7 @@ async def disable_plugin(
     authorization: str | None = Header(default=None),
 ):
     """Stop a plugin and persist its disabled state (admin only)."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
     _require_plugin(plugin_id)
     disabled = await plugin_manager.disable_plugin(plugin_id)
     await _audit_plugin_action("disable", plugin_id, disabled)
@@ -107,7 +107,7 @@ async def reload_plugin(
     authorization: str | None = Header(default=None),
 ):
     """Restart an enabled plugin and refresh its tools (admin only)."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
     _require_plugin(plugin_id)
     reloaded = await plugin_manager.reload_plugin(plugin_id)
     await _audit_plugin_action("reload", plugin_id, reloaded)

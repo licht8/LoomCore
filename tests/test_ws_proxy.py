@@ -1,11 +1,13 @@
 """Tests for the WebSocket proxy authentication gate."""
 
+import asyncio
 import base64
+import logging
 
 import pytest
 
 from src.api import websocket as ws_api
-from src.auth import SESSION_COOKIE, create_jwt_token
+from src.auth import SESSION_COOKIE, create_jwt_token, revoke_jwt_token
 from src.config import settings
 
 LONG_SECRET = "test-session-secret-long-enough-for-hs256-123456"
@@ -129,3 +131,30 @@ async def test_proxy_ignores_query_token(monkeypatch, captured):
 
     assert captured == []
     assert websocket.closed == (1008, "Admin token required")
+
+
+@pytest.mark.asyncio
+async def test_watch_auth_closes_socket_when_credential_revoked(monkeypatch):
+    _jwt_mode(monkeypatch)
+    monkeypatch.setattr(ws_api, "_AUTH_RECHECK_SECONDS", 0)
+    token = create_jwt_token({"username": "admin", "jti": "ws-live"}, LONG_SECRET)
+    websocket = _FakeWebSocket(cookies={SESSION_COOKIE: token})
+    watchdog = asyncio.create_task(ws_api._watch_auth(websocket, token, None))
+
+    await asyncio.sleep(0.01)
+    revoke_jwt_token("ws-live")
+    await asyncio.wait_for(watchdog, timeout=1)
+
+    assert websocket.closed == (1008, "Session expired")
+
+
+@pytest.mark.asyncio
+async def test_proxy_logs_ws_auth_failure(monkeypatch, captured, caplog):
+    _token_mode(monkeypatch)
+    websocket = _FakeWebSocket(headers=_auth_header("wrong"))
+
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        await ws_api.ws_proxy(websocket, "sess-1")
+
+    assert websocket.closed == (1008, "Admin token required")
+    assert any("ws_auth_failure" in m for m in caplog.messages)

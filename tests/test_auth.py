@@ -6,6 +6,9 @@ import hmac
 import struct
 import time
 
+import pytest
+
+import src.auth as auth
 from src.auth import (
     create_jwt_token,
     decode_jwt_token,
@@ -17,6 +20,14 @@ from src.auth import (
 
 SECRET = "test-session-secret-long-enough-for-hs256-0123456789"
 TOTP_SECRET = base64.b32encode(b"12345678901234567890").decode()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_revocation(monkeypatch):
+    """Keep the revocation store in-memory unless a test opts into persistence."""
+    monkeypatch.delenv("LOOMCORE_REVOKED_FILE", raising=False)
+    monkeypatch.setattr(auth, "_revoked", {})
+    monkeypatch.setattr(auth, "_revoked_loaded", False)
 
 
 def _totp_code(secret: str, counter: int) -> str:
@@ -110,3 +121,30 @@ def test_generate_password_hash_uses_unique_salt():
     first = generate_password_hash("same")
     second = generate_password_hash("same")
     assert first != second
+
+
+# === persistent revocation store ===
+
+def test_revocation_persists_when_store_configured(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setenv("LOOMCORE_REVOKED_FILE", str(store))
+    token = create_jwt_token({"username": "admin", "jti": "persist-me"}, SECRET)
+    assert decode_jwt_token(token, SECRET) is not None
+
+    revoke_jwt_token("persist-me")
+
+    assert store.is_file()
+
+    # Simulate a fresh process: drop the in-memory cache and reload from disk.
+    monkeypatch.setattr(auth, "_revoked", {})
+    monkeypatch.setattr(auth, "_revoked_loaded", False)
+
+    assert decode_jwt_token(token, SECRET) is None
+
+
+def test_revocation_without_store_stays_in_memory(monkeypatch):
+    token = create_jwt_token({"username": "admin", "jti": "memory-only"}, SECRET)
+    revoke_jwt_token("memory-only")
+
+    assert decode_jwt_token(token, SECRET) is None
+    assert auth._revoked_path() is None

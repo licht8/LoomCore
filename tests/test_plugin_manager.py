@@ -12,6 +12,12 @@ from src.core.contracts import ToolContractError
 from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
 
 
+@pytest.fixture(autouse=True)
+def _no_plugin_allowlist(monkeypatch):
+    """Keep the plugin allowlist unset unless a test opts into it."""
+    monkeypatch.delenv("LOOMCORE_PLUGINS_ALLOWED", raising=False)
+
+
 class _FakeStdin:
     def __init__(self, proc):
         self._proc = proc
@@ -855,4 +861,87 @@ def test_drain_stderr_logs_plugin_output(caplog):
     assert "hello from plugin" in messages
     warning = next(r for r in caplog.records if "permission denied" in r.getMessage())
     assert warning.levelno == logging.WARNING
+
+
+# === plugin allowlist (LOOMCORE_PLUGINS_ALLOWED) ===
+
+
+def test_allowed_plugins_parses_commas_and_spaces(monkeypatch):
+    from src.plugins.manager import allowed_plugins
+
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomWG, LoomOps")
+    assert allowed_plugins() == {"LoomWG", "LoomOps"}
+
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomWG LoomOps")
+    assert allowed_plugins() == {"LoomWG", "LoomOps"}
+
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "")
+    assert allowed_plugins() == set()
+
+
+def test_discover_blocks_plugin_not_in_allowlist(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest())
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomOps")
+    manager = PluginManager()
+    monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("no launch"))
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    plugin = manager._plugins["demo"]
+    assert plugin.enabled is False
+    assert plugin.state == PluginState.STOPPED
+    assert plugin.proc is None
+    assert "plugin is not in LOOMCORE_PLUGINS_ALLOWED" in plugin.permission_warnings
+
+
+def test_discover_launches_allowlisted_plugin(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest())
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "demo")
+    manager = PluginManager()
+    registered: list[str] = []
+    monkeypatch.setattr(
+        manager,
+        "register",
+        lambda name, command, working_dir=None: registered.append(name),
+    )
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    assert registered == ["demo"]
+
+
+@pytest.mark.asyncio
+async def test_enable_refuses_plugin_not_in_allowlist(monkeypatch):
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomOps")
+    manager = PluginManager()
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+    plugin.state = PluginState.STOPPED
+    monkeypatch.setattr(
+        manager, "_do_register_inplace", lambda *a, **k: pytest.fail("no spawn")
+    )
+
+    assert await manager.enable_plugin("demo") is False
+    assert plugin.enabled is False
+    assert plugin.state == PluginState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_enable_allows_plugin_in_allowlist(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "demo")
+    manager = PluginManager(state_path=tmp_path / "state.json")
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+    plugin.state = PluginState.STOPPED
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def fake_init(name):
+        return None
+
+    async def fake_tools(name):
+        return [{"name": "demo_ok"}]
+
+    monkeypatch.setattr(manager, "_initialize_plugin", fake_init)
+    monkeypatch.setattr(manager, "get_tools", fake_tools)
+
+    assert await manager.enable_plugin("demo") is True
+    assert plugin.enabled is True
 

@@ -92,6 +92,30 @@ def test_run_command_rejects_missing_binary(load_loomops, monkeypatch):
         commands.run_command({"command": "uptime"})
 
 
+def test_run_command_denies_allowlisted_interpreter(load_loomops, monkeypatch):
+    commands = load_loomops("commands")["commands"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "sh")
+    monkeypatch.setattr(commands.shutil, "which", lambda name: f"/bin/{name}")
+
+    with pytest.raises(ValueError, match="arbitrary code"):
+        commands.run_command({"command": "sh -c 'id'"})
+
+
+def test_run_command_denies_allowlisted_python_list_form(load_loomops, monkeypatch):
+    commands = load_loomops("commands")["commands"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "python3")
+    monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    with pytest.raises(ValueError, match="arbitrary code"):
+        commands.run_command({"command": ["python3", "-c", "print(1)"]})
+
+
+def test_denied_commands_include_common_shell_escapes(load_loomops):
+    commands = load_loomops("commands")["commands"]
+    for name in ("bash", "env", "xargs", "sudo", "find", "timeout"):
+        assert name in commands.DENIED_COMMANDS
+
+
 def test_run_command_runs_allowed_and_audits(load_loomops, monkeypatch, tmp_path):
     commands = load_loomops("commands")["commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
@@ -357,6 +381,23 @@ def test_service_name_validation(load_loomops):
     services = load_loomops("services")["services"]
     with pytest.raises(ValueError, match="service"):
         services._service({"service": "bad name"})
+
+
+def test_service_name_rejects_option_like_value(load_loomops):
+    services = load_loomops("services")["services"]
+    with pytest.raises(ValueError, match="option"):
+        services._service({"service": "--all"})
+
+
+def test_service_name_rejects_shell_metacharacters(load_loomops):
+    services = load_loomops("services")["services"]
+    with pytest.raises(ValueError, match="invalid characters"):
+        services._service({"service": "nginx;malicious"})
+
+
+def test_service_name_accepts_instanced_unit(load_loomops):
+    services = load_loomops("services")["services"]
+    assert services._service({"service": "nginx@foo.service"}) == "nginx@foo.service"
 
 
 # === system_info ===

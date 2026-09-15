@@ -1,6 +1,8 @@
 """WebSocket route with authorization."""
 
+import asyncio
 import base64
+import contextlib
 import logging
 import secrets
 
@@ -8,6 +10,8 @@ from fastapi import APIRouter, WebSocket
 
 from src.auth import SESSION_COOKIE, decode_jwt_token
 from src.config import settings
+from src.core.client_ip import client_ip
+from src.core.security_log import log_security_event
 from src.interfaces.websocket import websocket_endpoint
 
 logger = logging.getLogger("loomcore.api.websocket")
@@ -15,6 +19,10 @@ logger = logging.getLogger("loomcore.api.websocket")
 router = APIRouter()
 
 _AUTH_SUBPROTOCOL_PREFIX = "loomcore.auth."
+
+# How often a live socket re-checks that its credential is still valid. A JWT
+# can expire or be revoked after the handshake; a socket must not outlive it.
+_AUTH_RECHECK_SECONDS = 60
 
 
 def _static_token_from_subprotocol(websocket: WebSocket) -> str | None:
@@ -37,23 +45,58 @@ def _static_token_from_subprotocol(websocket: WebSocket) -> str | None:
     return None
 
 
+def _jwt_valid(cookie: str | None) -> bool:
+    return decode_jwt_token(cookie, settings.session_secret) is not None
+
+
+def _static_token_valid(token: str | None) -> bool:
+    return bool(
+        settings.admin_token
+        and token
+        and secrets.compare_digest(token, settings.admin_token)
+    )
+
+
+async def _watch_auth(
+    websocket: WebSocket, cookie: str | None, token: str | None
+) -> None:
+    """Close an open socket when its credential expires or is revoked."""
+    try:
+        while True:
+            await asyncio.sleep(_AUTH_RECHECK_SECONDS)
+            if not (_jwt_valid(cookie) or _static_token_valid(token)):
+                log_security_event("ws_auth_revoked", client=client_ip(websocket))
+                logger.warning("WebSocket credential is no longer valid; closing")
+                await websocket.close(code=1008, reason="Session expired")
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # pragma: no cover - socket already gone
+        logger.debug("WebSocket auth watchdog stopped: %s", exc)
+
+
 @router.websocket("/ws/{session_id}")
 async def ws_proxy(websocket: WebSocket, session_id: str):
     """Proxy route: verify access, then hand off to the chat interface.
 
     Accepts either the JWT session cookie or the static admin token supplied
     via the ``loomcore.auth.<base64url>`` subprotocol. Query-string tokens are
-    intentionally NOT accepted (they leak into access logs and history).
+    intentionally NOT accepted (they leak into access logs and history). Auth
+    is re-checked periodically while the connection is open, so a revoked or
+    expired credential cannot keep a live socket.
     """
     cookie = websocket.cookies.get(SESSION_COOKIE)
-    jwt_ok = decode_jwt_token(cookie, settings.session_secret) is not None
     token = _static_token_from_subprotocol(websocket)
-    token_ok = bool(
-        settings.admin_token
-        and token
-        and secrets.compare_digest(token, settings.admin_token)
-    )
-    if not (jwt_ok or token_ok):
+    if not (_jwt_valid(cookie) or _static_token_valid(token)):
+        log_security_event(
+            "ws_auth_failure", client=client_ip(websocket), session_id=session_id
+        )
         await websocket.close(code=1008, reason="Admin token required")
         return
-    await websocket_endpoint(websocket, session_id)
+    watchdog = asyncio.create_task(_watch_auth(websocket, cookie, token))
+    try:
+        await websocket_endpoint(websocket, session_id)
+    finally:
+        watchdog.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watchdog

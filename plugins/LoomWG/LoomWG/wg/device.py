@@ -24,7 +24,15 @@ def run_command(
     command: list[str],
     timeout: int = 15,
     input_text: str | None = None,
+    *,
+    sensitive: bool = False,
 ) -> str:
+    """Run a host command and return its stdout.
+
+    When ``sensitive`` is true the command's output may contain key material
+    (``wg genkey``, ``wg genpsk``, ``wg showconf``); it is never written to the
+    logs and is redacted from error details as well.
+    """
     # Run directly — the container has the NET_ADMIN capability
     rendered = " ".join(command)
     try:
@@ -41,14 +49,20 @@ def run_command(
         raise CommandError(f"Failed to run {rendered}: {exc}") from exc
 
     if result.returncode != 0:
-        details = result.stderr.strip() or result.stdout.strip() or "no details"
+        if sensitive:
+            details = "output redacted"
+        else:
+            details = result.stderr.strip() or result.stdout.strip() or "no details"
         logger.warning("command exited %s: %s: %s", result.returncode, rendered, details)
         raise CommandError(
             f"Command {rendered} exited with code "
             f"{result.returncode}: {details}"
         )
     output = result.stdout.strip()
-    logger.info("%s -> %s", rendered, output[:500] if output else "(empty)")
+    if sensitive:
+        logger.info("%s -> (output redacted, %d chars)", rendered, len(output))
+    else:
+        logger.info("%s -> %s", rendered, output[:500] if output else "(empty)")
     return output
 
 

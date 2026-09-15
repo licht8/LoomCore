@@ -2,9 +2,12 @@ import re
 import secrets
 
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from src.auth import decode_jwt_token
 from src.config import settings
+from src.core.client_ip import client_ip
+from src.core.security_log import log_security_event
 
 
 def admin_jwt_mode_enabled() -> bool:
@@ -26,18 +29,24 @@ def _valid_static_token(token: str | None) -> bool:
     return secrets.compare_digest(token, settings.admin_token)
 
 
-def require_admin_token(token: str | None) -> None:
+def require_admin_token(token: str | None, request: Request | None = None) -> None:
     """Verify admin access via a JWT session or the static admin token.
 
     Both credentials are accepted regardless of the configured auth mode, so an
     operator can hand out the static token even when password+TOTP is enabled.
+    Failures are recorded as security events (the client IP is included when a
+    ``request`` is supplied).
     """
     if _valid_jwt(token) or _valid_static_token(token):
         return
+    client = client_ip(request) if request is not None else None
     if not admin_jwt_mode_enabled() and not settings.admin_token:
+        log_security_event("auth_failure", reason="not_configured", client=client)
         raise HTTPException(status_code=503, detail="Admin access is not configured")
     if admin_jwt_mode_enabled():
+        log_security_event("auth_failure", reason="login_required", client=client)
         raise HTTPException(status_code=401, detail="Admin login required")
+    log_security_event("auth_failure", reason="invalid_token", client=client)
     raise HTTPException(status_code=401, detail="Admin token required")
 
 

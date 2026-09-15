@@ -3,16 +3,71 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
+import logging
+import os
 import secrets
 import struct
 import sys
 import time
+from pathlib import Path
 
 import jwt
 
+logger = logging.getLogger("loomcore.auth")
+
 SESSION_COOKIE = "loomcore_session"
-# Simple blocklist for revoked tokens (token_id → revoke timestamp)
+# Simple blocklist for revoked tokens (token_id → revoke timestamp).
 _revoked: dict[str, float] = {}
+_revoked_loaded = False
+
+
+def _revoked_path() -> Path | None:
+    """Path of the persistent revocation store, or None for in-memory only.
+
+    Set ``LOOMCORE_REVOKED_FILE`` to keep logged-out tokens invalid across
+    restarts; without it revocations live only in this process.
+    """
+    configured = os.environ.get("LOOMCORE_REVOKED_FILE", "").strip()
+    return Path(configured).expanduser() if configured else None
+
+
+def _load_revoked() -> None:
+    """Load revocations from disk once, if a store path is configured."""
+    global _revoked, _revoked_loaded
+    if _revoked_loaded:
+        return
+    _revoked_loaded = True
+    path = _revoked_path()
+    if path is None:
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Cannot read revoked-session store '{path}': {exc}")
+        return
+    if isinstance(data, dict):
+        _revoked = {
+            str(token_id): float(timestamp)
+            for token_id, timestamp in data.items()
+            if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool)
+        }
+
+
+def _save_revoked() -> None:
+    """Persist revocations atomically; never fail the request on a write error."""
+    path = _revoked_path()
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(json.dumps(_revoked), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError as exc:
+        logger.warning(f"Cannot persist revoked sessions to '{path}': {exc}")
 
 
 def verify_password(password: str, encoded: str) -> bool:
@@ -61,8 +116,9 @@ def decode_jwt_token(token: str | None, secret: str, max_age: int = 28800) -> di
         age = int(time.time()) - payload.get("iat", 0)
         if age > max_age:
             return None
-        # Check if revoked
+        # Check if revoked (loaded from disk on first use, when configured)
         token_id = payload.get("jti")
+        _load_revoked()
         if token_id and _revoked.get(token_id, 0) > 0:
             return None
         return payload
@@ -71,9 +127,11 @@ def decode_jwt_token(token: str | None, secret: str, max_age: int = 28800) -> di
 
 
 def revoke_jwt_token(token_id: str | None) -> None:
-    """Revoke a token by id."""
+    """Revoke a token by id (persisted when LOOMCORE_REVOKED_FILE is set)."""
     if token_id:
+        _load_revoked()
         _revoked[token_id] = int(time.time())
+        _save_revoked()
 
 
 def generate_password_hash(password: str) -> str:

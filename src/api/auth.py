@@ -14,8 +14,10 @@ from src.auth import (
     verify_totp,
 )
 from src.config import settings
+from src.core.client_ip import client_ip
 from src.core.rate_limit import limiter
 from src.core.security import admin_jwt_mode_enabled
+from src.core.security_log import log_security_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -31,8 +33,16 @@ async def login(request: Request):
         and verify_totp(str(data.get("totp", "")), settings.admin_totp_secret)
     )
     if not valid:
+        log_security_event(
+            "login_failure",
+            username=data.get("username"),
+            client=client_ip(request),
+        )
         raise HTTPException(status_code=401, detail="Invalid login credentials")
     if not settings.session_secret:
+        log_security_event(
+            "login_failure", reason="session_secret_missing", client=client_ip(request)
+        )
         raise HTTPException(status_code=503, detail="SESSION_SECRET is not configured")
     token = create_jwt_token(
         {"username": settings.admin_username, "jti": secrets.token_urlsafe(32)},
@@ -43,7 +53,10 @@ async def login(request: Request):
         SESSION_COOKIE,
         token,
         httponly=True,
-        secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https",
+        secure=(
+            settings.secure_cookies
+            or request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+        ),
         samesite="strict",
         max_age=28800,
     )

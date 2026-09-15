@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     admin_password_hash: str = ""
     admin_totp_secret: str = ""
     session_secret: str = ""
+    secure_cookies: bool = False
+    trusted_proxies: str = "127.0.0.1,::1"
     plugins_dir: str = "/app/plugins"
     plugins_state_file: str = ""
     confirmations_file: str = ""

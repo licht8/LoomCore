@@ -518,7 +518,7 @@ def test_validate_public_key_rejects_wrong_length(load_loomwg):
 def test_generate_keypair(load_loomwg, monkeypatch):
     keys = load_loomwg("keys")["keys"]
 
-    def fake_run(command, timeout=15, input_text=None):
+    def fake_run(command, timeout=15, input_text=None, *, sensitive=False):
         return "PRIV" if command[1] == "genkey" else "PUB"
 
     monkeypatch.setattr(keys, "run_command", fake_run)
@@ -532,6 +532,43 @@ def test_generate_keypair_empty_raises(load_loomwg, monkeypatch):
 
     with pytest.raises(keys.CommandError):
         keys.generate_keypair()
+
+
+def test_generate_keypair_redacts_private_key_from_logs(load_loomwg, monkeypatch, caplog):
+    modules = load_loomwg("keys", "wireguard")
+    keys, device = modules["keys"], modules["wireguard"]
+    secret = "SECRET-PRIVATE-KEY-MATERIAL"
+
+    def fake_run(command, *args, **kwargs):
+        if command[-1] == "genkey":
+            return _Completed(stdout=secret)
+        return _Completed(stdout="PUBLICKEY==")
+
+    monkeypatch.setattr(device.subprocess, "run", fake_run)
+
+    with caplog.at_level("INFO", logger="LoomWG.wg"):
+        result = keys.generate_keypair()
+
+    assert result["private_key"] == secret
+    assert all(secret not in record.getMessage() for record in caplog.records)
+
+
+def test_run_command_redacts_sensitive_error_output(load_loomwg, monkeypatch, caplog):
+    device = load_loomwg("wireguard")["wireguard"]
+    secret = "SECRET-PRIVATE-KEY-MATERIAL"
+    monkeypatch.setattr(
+        device.subprocess,
+        "run",
+        lambda *a, **k: _Completed(returncode=1, stderr=secret),
+    )
+
+    with (
+        caplog.at_level("INFO", logger="LoomWG.wg"),
+        pytest.raises(device.CommandError, match="output redacted"),
+    ):
+        device.run_command(["wg", "genkey"], sensitive=True)
+
+    assert all(secret not in record.getMessage() for record in caplog.records)
 
 
 # === lifecycle.py ===

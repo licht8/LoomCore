@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from src.auth import SESSION_COOKIE
+from src.core.client_ip import client_ip
 from src.core.security import require_admin_token
+from src.core.security_log import log_security_event
 
 
 def extract_admin_token(
@@ -32,7 +34,7 @@ def require_admin_token_from_request(
     authorization: str | None = None,
 ) -> None:
     """Validate the admin token extracted from a request (shared helper)."""
-    require_admin_token(extract_admin_token(request, authorization))
+    require_admin_token(extract_admin_token(request, authorization), request)
 
 
 def chat_key_func(request: Request) -> str:
@@ -45,13 +47,19 @@ def chat_key_func(request: Request) -> str:
     token = extract_admin_token(request, request.headers.get("authorization"))
     if token:
         return "token:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
-    return "ip:" + (request.client.host if request.client else "unknown")
+    return "ip:" + client_ip(request)
 
 
 async def rate_limit_exceeded_handler(
     request: Request, exc: RateLimitExceeded
 ) -> JSONResponse:
-    """Custom 429 handler."""
+    """Custom 429 handler (also emits a security event for detection)."""
+    log_security_event(
+        "rate_limit_exceeded",
+        client=client_ip(request),
+        path=request.url.path,
+        method=request.method,
+    )
     return JSONResponse(
         status_code=429,
         content={"detail": "Too many requests. Please try again later."},

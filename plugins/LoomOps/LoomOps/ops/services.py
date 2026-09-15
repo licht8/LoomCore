@@ -7,6 +7,7 @@ raw `systemctl: command not found`.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,11 @@ from typing import Any
 from . import audit_event
 
 SYSTEMD_MARKER = Path("/run/systemd/system")
+
+# systemd unit names: letters, digits, and the separators systemd itself uses
+# (``.``, ``-``, ``_``, ``@``). Anything else is rejected, so a value like
+# ``--all`` can never be passed through as a systemctl option.
+_SERVICE_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
 
 
 def _require_systemd() -> str:
@@ -31,6 +37,10 @@ def _service(arguments: dict[str, Any]) -> str:
     service = str(arguments.get("service") or "").strip()
     if not service or any(char.isspace() for char in service):
         raise ValueError("service must be a non-empty name without spaces")
+    if service.startswith("-"):
+        raise ValueError("service must be a unit name, not an option")
+    if not _SERVICE_RE.fullmatch(service):
+        raise ValueError("service contains invalid characters")
     return service
 
 

@@ -60,6 +60,34 @@ async def test_login_success_sets_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_login_sets_secure_cookie_when_configured(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "secure_cookies", True)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+        )
+
+    assert "secure" in response.headers["set-cookie"].lower()
+
+
+@pytest.mark.asyncio
+async def test_login_cookie_not_secure_over_http(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "secure_cookies", False)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+        )
+
+    assert "secure" not in response.headers["set-cookie"].lower()
+
+
+@pytest.mark.asyncio
 async def test_login_rejects_bad_credentials(monkeypatch):
     _valid_credentials(monkeypatch)
 
