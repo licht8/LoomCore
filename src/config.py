@@ -21,7 +21,12 @@ class Settings(BaseSettings):
     admin_password_hash: str = ""
     admin_totp_secret: str = ""
     session_secret: str = ""
-    secure_cookies: bool = False
+    # Which admin credential paths are accepted: "token", "jwt", "both", or ""
+    # to auto-select ("jwt" when password+TOTP is configured, else "token").
+    auth_mode: str = ""
+    secure_cookies: bool = True
+    require_tls: bool = False
+    loomcore_revoked_file: str = "/data/revoked.json"
     trusted_proxies: str = "127.0.0.1,::1"
     llm_daily_call_limit: int = 1000
     plugins_dir: str = "/app/plugins"

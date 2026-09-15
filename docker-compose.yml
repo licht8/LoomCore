@@ -69,6 +69,14 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       ADMIN_TOTP_SECRET: ${ADMIN_TOTP_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # "token" | "jwt" | "both" | "" (auto: jwt when password+TOTP is set).
+      AUTH_MODE: ${AUTH_MODE:-}
+      # Secure cookie + TLS are on by default; a deliberate opt-out is required
+      # for plain-HTTP deployments (login refuses non-TLS requests otherwise).
+      SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      REQUIRE_TLS: ${REQUIRE_TLS:-true}
+      # Persistent revoked-JWT store lives on the loomdata volume.
+      LOOMCORE_REVOKED_FILE: ${LOOMCORE_REVOKED_FILE:-/data/revoked.json}
       # LoomOps is deny-by-default; empty command/path allowlists allow nothing.
       LOOMOPS_ALLOWED_COMMANDS: ${LOOMOPS_ALLOWED_COMMANDS:-}
       LOOMOPS_ALLOWED_PATHS: ${LOOMOPS_ALLOWED_PATHS:-}
@@ -88,6 +96,8 @@ services:
     volumes:
       # :z relabels for SELinux (RHEL/Rocky); harmless on other distros.
       - /etc/wireguard:/etc/wireguard:z
+      # Persistent revoked-JWT store (LOOMCORE_REVOKED_FILE=/data/revoked.json).
+      - loomdata:/data
       # /lib/modules is intentionally NOT mounted: SYS_MODULE is not granted, so
       # `modprobe` cannot load a module anyway. Re-add `/lib/modules:/lib/modules:ro`
       # together with SYS_MODULE only if you need in-container `modprobe wireguard`.
@@ -158,3 +168,4 @@ services:
 
 volumes:
   pgdata:
+  loomdata:

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import jwt
 
+from src.config import settings
+
 logger = logging.getLogger("loomcore.auth")
 
 SESSION_COOKIE = "loomcore_session"
@@ -25,11 +27,17 @@ _revoked_loaded = False
 def _revoked_path() -> Path | None:
     """Path of the persistent revocation store, or None for in-memory only.
 
-    Set ``LOOMCORE_REVOKED_FILE`` to keep logged-out tokens invalid across
-    restarts; without it revocations live only in this process.
+    ``LOOMCORE_REVOKED_FILE`` (``settings.loomcore_revoked_file``) points at a
+    file on a persistent volume so logged-out tokens stay invalid across
+    restarts; an empty value keeps revocations in this process only.
     """
-    configured = os.environ.get("LOOMCORE_REVOKED_FILE", "").strip()
+    configured = (settings.loomcore_revoked_file or "").strip()
     return Path(configured).expanduser() if configured else None
+
+
+def revocation_store_path() -> Path | None:
+    """Public accessor for the configured revocation-store path (startup checks)."""
+    return _revoked_path()
 
 
 def _load_revoked() -> None:

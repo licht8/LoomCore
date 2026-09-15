@@ -11,6 +11,7 @@ from fastapi import APIRouter, WebSocket
 from src.auth import SESSION_COOKIE, decode_jwt_token
 from src.config import settings
 from src.core.client_ip import client_ip
+from src.core.security import auth_mode
 from src.core.security_log import log_security_event
 from src.interfaces.websocket import websocket_endpoint
 
@@ -46,10 +47,14 @@ def _static_token_from_subprotocol(websocket: WebSocket) -> str | None:
 
 
 def _jwt_valid(cookie: str | None) -> bool:
+    if auth_mode() not in {"jwt", "both"}:
+        return False
     return decode_jwt_token(cookie, settings.session_secret) is not None
 
 
 def _static_token_valid(token: str | None) -> bool:
+    if auth_mode() not in {"token", "both"}:
+        return False
     return bool(
         settings.admin_token
         and token

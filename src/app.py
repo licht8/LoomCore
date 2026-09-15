@@ -14,6 +14,7 @@ from src.api import artifacts, auth, chat, health, plugins, sessions, websocket
 from src.api.deps import rate_limit_exceeded_handler
 from src.config import settings
 from src.core.rate_limit import limiter
+from src.core.startup_checks import check_security_posture
 from src.core.version import CORE_VERSION
 from src.plugins import plugin_manager
 from src.plugins.health import healthcheck_loop
@@ -46,6 +47,8 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Discover plugins and run the background healthcheck for the app lifetime."""
     print("🚀 LoomCore starting up...")
+
+    check_security_posture()
 
     discovered = plugin_manager.discover_plugins(settings.plugins_dir)
     print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")

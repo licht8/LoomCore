@@ -9,10 +9,25 @@ from src.config import settings
 from src.core.client_ip import client_ip
 from src.core.security_log import log_security_event
 
+VALID_AUTH_MODES = frozenset({"token", "jwt", "both"})
+
 
 def admin_jwt_mode_enabled() -> bool:
-    """Return True when admin auth uses JWT sessions instead of a bearer token."""
+    """Return True when password+TOTP admin credentials are configured."""
     return bool(settings.admin_password_hash and settings.admin_totp_secret)
+
+
+def auth_mode() -> str:
+    """Resolve the active admin auth mode: ``token``, ``jwt`` or ``both``.
+
+    An explicit ``AUTH_MODE`` wins; otherwise the mode is inferred from what is
+    configured, preferring ``jwt`` so a configured password+TOTP cannot be
+    silently bypassed by a leftover static token.
+    """
+    configured = settings.auth_mode.strip().lower()
+    if configured in VALID_AUTH_MODES:
+        return configured
+    return "jwt" if admin_jwt_mode_enabled() else "token"
 
 
 def _valid_jwt(token: str | None) -> bool:
@@ -30,20 +45,46 @@ def _valid_static_token(token: str | None) -> bool:
 
 
 def require_admin_token(token: str | None, request: Request | None = None) -> None:
-    """Verify admin access via a JWT session or the static admin token.
+    """Verify admin access via the credentials allowed by the active auth mode.
 
-    Both credentials are accepted regardless of the configured auth mode, so an
-    operator can hand out the static token even when password+TOTP is enabled.
-    Failures are recorded as security events (the client IP is included when a
-    ``request`` is supplied).
+    ``AUTH_MODE`` selects which of the two credentials are accepted: a JWT
+    session (``jwt``), the static admin token (``token``), or both. A valid
+    credential that the active mode disables is rejected with 403 rather than
+    silently accepted, so a configured password+TOTP cannot be bypassed by a
+    leftover static token. Failures are recorded as security events (the client
+    IP is included when a ``request`` is supplied).
     """
-    if _valid_jwt(token) or _valid_static_token(token):
-        return
+    mode = auth_mode()
     client = client_ip(request) if request is not None else None
-    if not admin_jwt_mode_enabled() and not settings.admin_token:
+    jwt_configured = admin_jwt_mode_enabled()
+    token_configured = bool(settings.admin_token)
+
+    if mode == "jwt":
+        available = jwt_configured
+    elif mode == "token":
+        available = token_configured
+    else:
+        available = jwt_configured or token_configured
+    if not available:
         log_security_event("auth_failure", reason="not_configured", client=client)
         raise HTTPException(status_code=503, detail="Admin access is not configured")
-    if admin_jwt_mode_enabled():
+
+    if mode in {"jwt", "both"} and _valid_jwt(token):
+        return
+    if mode in {"token", "both"} and _valid_static_token(token):
+        return
+
+    if mode == "jwt" and _valid_static_token(token):
+        log_security_event("auth_failure", reason="static_token_disabled", client=client)
+        raise HTTPException(
+            status_code=403, detail="Static admin token is disabled (AUTH_MODE=jwt)"
+        )
+    if mode == "token" and _valid_jwt(token):
+        log_security_event("auth_failure", reason="jwt_disabled", client=client)
+        raise HTTPException(
+            status_code=403, detail="JWT sessions are disabled (AUTH_MODE=token)"
+        )
+    if jwt_configured:
         log_security_event("auth_failure", reason="login_required", client=client)
         raise HTTPException(status_code=401, detail="Admin login required")
     log_security_event("auth_failure", reason="invalid_token", client=client)

@@ -17,6 +17,7 @@ from src.auth import (
     verify_password,
     verify_totp,
 )
+from src.config import settings
 
 SECRET = "test-session-secret-long-enough-for-hs256-0123456789"
 TOTP_SECRET = base64.b32encode(b"12345678901234567890").decode()
@@ -25,7 +26,7 @@ TOTP_SECRET = base64.b32encode(b"12345678901234567890").decode()
 @pytest.fixture(autouse=True)
 def _isolated_revocation(monkeypatch):
     """Keep the revocation store in-memory unless a test opts into persistence."""
-    monkeypatch.delenv("LOOMCORE_REVOKED_FILE", raising=False)
+    monkeypatch.setattr(settings, "loomcore_revoked_file", "")
     monkeypatch.setattr(auth, "_revoked", {})
     monkeypatch.setattr(auth, "_revoked_loaded", False)
 
@@ -127,7 +128,7 @@ def test_generate_password_hash_uses_unique_salt():
 
 def test_revocation_persists_when_store_configured(monkeypatch, tmp_path):
     store = tmp_path / "revoked.json"
-    monkeypatch.setenv("LOOMCORE_REVOKED_FILE", str(store))
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
     token = create_jwt_token({"username": "admin", "jti": "persist-me"}, SECRET)
     assert decode_jwt_token(token, SECRET) is not None
 

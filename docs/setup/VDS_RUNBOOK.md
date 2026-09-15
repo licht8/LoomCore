@@ -26,7 +26,8 @@ Generate secrets and edit `.env`:
 
 ```bash
 openssl rand -hex 24   # POSTGRES_PASSWORD
-openssl rand -hex 32   # ADMIN_TOKEN
+openssl rand -hex 32   # SESSION_SECRET (JWT login)
+python -m src.auth 'your-password'   # ADMIN_PASSWORD_HASH
 ```
 
 Required values:
@@ -34,12 +35,19 @@ Required values:
 | Key | Value |
 |---|---|
 | `POSTGRES_PASSWORD` | the random password above |
-| `ADMIN_TOKEN` | the random admin token above |
 | `HETZNER_API_KEY` | your Hetzner inference key |
 | `LOOMWG_ENDPOINT` | public IP or domain of the VDS |
 | `LOOMWG_SKIP_FIREWALL` | `1` (Rocky uses firewalld) |
+| `SESSION_SECRET` | the random session secret above (JWT login) |
+| `ADMIN_PASSWORD_HASH` | hash generated above (JWT login) |
+| `ADMIN_TOTP_SECRET` | base32 TOTP secret from your authenticator app |
 
-Store `ADMIN_TOKEN` somewhere safe — you need it for the UI/API.
+`AUTH_MODE` defaults to auto (JWT when password+TOTP is configured), so leave
+`ADMIN_TOKEN` empty unless you set `AUTH_MODE=both` for headless API access.
+Enable the nginx 443 block before the first login: `REQUIRE_TLS=true` refuses
+plain-HTTP logins by default.
+
+Store the credentials somewhere safe — you need them for the UI/API.
 
 ## 2. Start the stack
 
@@ -116,20 +124,25 @@ The compose mount already uses `:z`; relabeling is the fallback.
 cd ~/LoomCore
 TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2-)
 
-curl -s http://SERVER_IP/health
-curl -s -H "Authorization: Bearer $TOKEN" http://SERVER_IP/api/plugins/status
-curl -s -H "Authorization: Bearer $TOKEN" http://SERVER_IP/api/tools
-curl -s "http://SERVER_IP/api/chat?session_id=test1" \
+curl -s https://SERVER_NAME/health
+curl -s -H "Authorization: Bearer $TOKEN" https://SERVER_NAME/api/plugins/status
+curl -s -H "Authorization: Bearer $TOKEN" https://SERVER_NAME/api/tools
+curl -s "https://SERVER_NAME/api/chat?session_id=test1" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"message":"show wireguard status"}'
 ```
+
+Use `https://` (and enable the nginx 443 block first): with the default
+`REQUIRE_TLS=true` the hub refuses plain-HTTP admin logins. The `Authorization`
+curls above need `ADMIN_TOKEN` set with `AUTH_MODE=both`; on a JWT-only
+deployment (the default) log in through the UI and reuse the session cookie.
 
 Expected: `{"status":"ok"}`; a plugin status JSON; a tool list (the `core_*`
 meta-tools, the `wg_*` tools except the internal `wg_get_client_artifact`, and the
 `ops_*` tools); and a `tool_call`/text answer.
 
-Open the UI at `http://SERVER_IP/` and log in with the **Token** tab using
-`ADMIN_TOKEN`.
+Open the UI at `https://SERVER_NAME/` and sign in with the **Login and TOTP** tab
+(or the **Token** tab if `ADMIN_TOKEN` is configured).
 
 ### Plugins, core meta-tools and enable/disable
 
@@ -287,7 +300,7 @@ docker compose exec hub alembic upgrade head
 Notes:
 - The Postgres volume is unchanged, so data is preserved.
 - Container names change (`loom_hub` -> `loom_core`); `docker compose down` removes the old ones.
-- Browser localStorage keys changed (`loomcore_admin_token`, `loomcore_session_id`) — re-enter `ADMIN_TOKEN`.
+- Browser storage changed (`loomcore_admin_token` now lives in per-tab `sessionStorage`) — re-enter `ADMIN_TOKEN` or sign in again.
 
 ## 10. If something fails, send me
 
@@ -302,11 +315,14 @@ Notes:
 
 Run this after sections 1-6. It exercises the product the way an end user would.
 
-### 11.1 Login (token mode)
-1. Open `http://SERVER_IP/`.
-2. Switch to the **Token** tab, paste `ADMIN_TOKEN`, click **Sign in**.
+### 11.1 Login (JWT by default)
+1. Open `https://SERVER_NAME/`.
+2. Use the **Login and TOTP** tab: username, password, authenticator code.
 3. Expected: chat dashboard appears; sidebar shows the LoomWG plugin; no error banner.
-- Wrong token -> login rejected. Empty `ADMIN_TOKEN` -> 503 "Admin access not configured".
+- Wrong credentials -> login rejected (401). Plain HTTP -> 403 "TLS is required".
+- Token mode only: with `ADMIN_TOKEN` set and `AUTH_MODE=both`, the **Token** tab
+  works; under `AUTH_MODE=jwt` a static token is rejected (403). Nothing
+  configured -> 503 "Admin access is not configured".
 
 ### 11.2 Read-only chat (direct actions auto-run)
 - `show wireguard status` is a single obvious read-only action, so it runs as a
@@ -380,7 +396,7 @@ Expect: peer gone, no matching `PublicKey`, client files removed.
 - Refresh the page -> the whole conversation (messages, plan cards, tool cards with status/artifacts, errors) is restored from Postgres.
 - Click "Clear conversation" -> confirm; the feed empties and the assistant's stored memory is deleted (no `alembic` needed).
 - Reload while a plan is awaiting approval -> the plan card is restored in its `proposed` state.
-- Token mode "logout": clear the `loomcore_admin_token` key in browser `localStorage`.
+- Token mode "logout": clear the `loomcore_admin_token` key in browser `sessionStorage`.
 
 ### 11.8 Evidence to collect
 - `docker compose ps`, `docker compose logs --tail=200 hub`

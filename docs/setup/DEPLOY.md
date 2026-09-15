@@ -153,33 +153,39 @@ If timeouts persist, the provider/model is the bottleneck.
 
 ## Admin authentication
 
-Both credentials are accepted **at the same time** (`src/core/security.py:require_admin_token`):
+`AUTH_MODE` selects which credentials are accepted (`src/core/security.py`):
 
-1. **Bearer token:** set a long random `ADMIN_TOKEN` in `.env`. The token is
-   passed via the `Authorization: Bearer <token>` header (REST) or the
-   `loomcore.auth.<base64url>` WebSocket subprotocol. Query-string tokens are
-   **not** accepted. In the UI, use the "Token" tab on the login page — it is
-   stored in browser `localStorage`.
-2. **JWT cookie:** set `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET`, and
-   `SESSION_SECRET` together. The UI uses the "Login and TOTP" tab. Generate the
-   password hash with:
+| `AUTH_MODE` | Accepted credentials |
+|---|---|
+| `token` | static `ADMIN_TOKEN` only |
+| `jwt` | `ADMIN_PASSWORD_HASH` + `ADMIN_TOTP_SECRET` session cookies only |
+| `both` | either credential |
+| *(empty)* | auto: `jwt` when password+TOTP is configured, else `token` |
+
+1. **JWT cookie (recommended):** set `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET`
+   and `SESSION_SECRET` together. The UI uses the "Login and TOTP" tab. Generate
+   the password hash with:
    ```bash
    python -m src.auth 'your-password'
    ```
+2. **Static token:** set a long random `ADMIN_TOKEN` in `.env`. It is passed via
+   the `Authorization: Bearer <token>` header (REST) or the
+   `loomcore.auth.<base64url>` WebSocket subprotocol. Query-string tokens are
+   **not** accepted. In the UI, use the "Token" tab — it is kept in per-tab
+   `sessionStorage`, never `localStorage`.
 
-**Recommended: JWT-only.** Leave `ADMIN_TOKEN` empty and configure the JWT
-cookie (`ADMIN_PASSWORD_HASH` + `ADMIN_TOTP_SECRET` + `SESSION_SECRET`). The
-cookie is `HttpOnly`/`SameSite=Strict` and never touches `localStorage`, so it
-is not readable by the frontend or exposed to browser storage.
+Because auto mode prefers `jwt`, a leftover `ADMIN_TOKEN` can no longer silently
+bypass password+TOTP: under `AUTH_MODE=jwt` a valid static token is rejected
+(HTTP 403). Set `AUTH_MODE=both` explicitly if you need headless API access
+alongside the cookie login, and treat the token as a root credential — a leaked
+`ADMIN_TOKEN` grants full admin access regardless of password+TOTP. Omitting
+`ADMIN_TOKEN` is the safest configuration. Starting with both configured and no
+explicit `AUTH_MODE` logs a warning at startup.
 
-The static token is optional and meant for API/automation use. It keeps working
-even when JWT login is configured, and in the UI the "Token" tab stores it in
-browser `localStorage`. A leaked `ADMIN_TOKEN` grants full admin access
-regardless of password+TOTP, so setting it is a residual risk — omit it unless
-you need headless API access.
+The cookie is `HttpOnly`/`SameSite=Strict`; WebSocket, chat, the tool list and
+artifact downloads (`/api/artifacts/...`) all require auth. Never publish tokens
+and never leave access unconfigured (unconfigured access fails closed with 503).
 
-Never publish tokens and never leave access unconfigured. WebSocket, chat, the
-tool list, and artifact downloads (`/api/artifacts/...`) all require auth.
 
 ## Update
 
@@ -197,6 +203,13 @@ docker image prune -f
 and the static admin token all cross the public `:80` listener; without TLS they
 are sent in cleartext. `deploy/nginx/default.conf` ships a ready-to-use TLS
 server block (commented) and always-on security headers.
+
+The stack is secure by default: `SECURE_COOKIES=true` and `REQUIRE_TLS=true`.
+With `REQUIRE_TLS=true` the hub **refuses admin login over plain HTTP** (HTTP
+403) and fails to start if `SECURE_COOKIES` is disabled, so a fresh install never
+serves credentials in cleartext. To defer TLS, either set `REQUIRE_TLS=false`
+(logs a startup warning) or, for local plain-HTTP development only, also set
+`SECURE_COOKIES=false`.
 
 1. Stop the stack so `:80` is free, then obtain a certificate:
    ```bash
@@ -216,7 +229,9 @@ server block (commented) and always-on security headers.
 
 The frontend switches to `wss://` automatically. With `ADMIN_TOKEN` empty the
 UI uses the JWT cookie, which is `HttpOnly`/`SameSite=Strict` and never touches
-`localStorage`.
+browser storage. Revoked sessions are persisted to `LOOMCORE_REVOKED_FILE`
+(default `/data/revoked.json` on the `loomdata` volume) so logout survives a
+restart; an empty value falls back to in-memory (a warning is logged).
 
 ## Backups
 

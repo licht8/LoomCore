@@ -115,6 +115,56 @@ async def test_login_requires_session_secret(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_login_requires_tls_when_configured(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "require_tls", True)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+            headers={"X-Forwarded-For": "198.51.100.10"},
+        )
+
+    assert response.status_code == 403
+    assert "TLS" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_login_allowed_over_https_when_tls_required(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "require_tls", True)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+            headers={
+                "X-Forwarded-For": "198.51.100.11",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_login_disabled_in_token_mode(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static")
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+            headers={"X-Forwarded-For": "198.51.100.12"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_session_requires_cookie(monkeypatch):
     monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
 

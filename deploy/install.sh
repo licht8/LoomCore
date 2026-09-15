@@ -23,7 +23,14 @@ cd "$REPO_DIR"
 if [[ ! -f .env ]]; then
   cp .env.example .env
   chmod 600 .env
-  echo "Created $REPO_DIR/.env. Fill in HETZNER_API_KEY, POSTGRES_PASSWORD and ADMIN_TOKEN, then rerun."
+  echo "Created $REPO_DIR/.env. Edit it, then rerun:"
+  echo "  - HETZNER_API_KEY and POSTGRES_PASSWORD"
+  echo "  - JWT login: SESSION_SECRET, ADMIN_PASSWORD_HASH, ADMIN_TOTP_SECRET"
+  echo "    (hash a password with: python -m src.auth 'your-password')"
+  echo "  - Leave ADMIN_TOKEN empty unless you set AUTH_MODE=both for headless API access."
+  echo ""
+  echo "TLS is required by default (REQUIRE_TLS=true): enable the 443 block in"
+  echo "deploy/nginx/default.conf, or set REQUIRE_TLS=false to defer (not recommended)."
   exit 0
 fi
 
@@ -36,7 +43,8 @@ docker compose ps
 echo "=== Applying database migrations ==="
 docker compose exec -T hub alembic upgrade head
 
-echo "LoomCore is available on port 80."
+echo "LoomCore stack is running. Access it at https://<your-domain> once the"
+echo "nginx 443 block is enabled (REQUIRE_TLS=true; login refuses plain HTTP)."
 echo ""
 echo "WireGuard is installed by the LoomWG plugin: call wg_install_dependencies"
 echo "(loads the kernel module + installs container tools if needed), then configure"

@@ -108,6 +108,7 @@ def _clear_admin_settings(monkeypatch, **overrides):
         "admin_password_hash": "",
         "admin_totp_secret": "",
         "session_secret": "",
+        "auth_mode": "",
     }
     for key, value in {**defaults, **overrides}.items():
         monkeypatch.setattr(settings, key, value)
@@ -138,9 +139,24 @@ def test_require_admin_token_503_when_unconfigured(monkeypatch):
     assert exc.value.status_code == 503
 
 
-def test_require_admin_token_accepts_static_token_in_jwt_mode(monkeypatch):
+def test_require_admin_token_jwt_mode_rejects_static_token(monkeypatch):
     _clear_admin_settings(
         monkeypatch,
+        admin_password_hash="hash",
+        admin_totp_secret="secret",
+        session_secret="jwt-session-secret-long-enough-hs256",
+        admin_token="shared-token",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_token("shared-token")
+    assert exc.value.status_code == 403
+
+
+def test_require_admin_token_both_mode_accepts_static_token(monkeypatch):
+    _clear_admin_settings(
+        monkeypatch,
+        auth_mode="both",
         admin_password_hash="hash",
         admin_totp_secret="secret",
         session_secret="jwt-session-secret-long-enough-hs256",

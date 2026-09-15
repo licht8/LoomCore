@@ -40,15 +40,18 @@ def captured(monkeypatch):
 
 
 def _token_mode(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "")
     monkeypatch.setattr(settings, "admin_password_hash", "")
     monkeypatch.setattr(settings, "admin_totp_secret", "")
     monkeypatch.setattr(settings, "admin_token", "secret")
 
 
 def _jwt_mode(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "")
     monkeypatch.setattr(settings, "admin_password_hash", "hash")
     monkeypatch.setattr(settings, "admin_totp_secret", "totp")
     monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
+    monkeypatch.setattr(settings, "admin_token", "")
 
 
 @pytest.mark.asyncio
@@ -85,8 +88,9 @@ async def test_proxy_jwt_mode_authorized(monkeypatch, captured):
 
 
 @pytest.mark.asyncio
-async def test_proxy_jwt_mode_accepts_static_token(monkeypatch, captured):
+async def test_proxy_both_mode_accepts_static_token(monkeypatch, captured):
     _jwt_mode(monkeypatch)
+    monkeypatch.setattr(settings, "auth_mode", "both")
     monkeypatch.setattr(settings, "admin_token", "shared-token")
     websocket = _FakeWebSocket(headers=_auth_header("shared-token"))
 
@@ -94,6 +98,18 @@ async def test_proxy_jwt_mode_accepts_static_token(monkeypatch, captured):
 
     assert captured == [(websocket, "sess-3")]
     assert websocket.closed is None
+
+
+@pytest.mark.asyncio
+async def test_proxy_jwt_mode_rejects_static_token(monkeypatch, captured):
+    _jwt_mode(monkeypatch)
+    monkeypatch.setattr(settings, "admin_token", "shared-token")
+    websocket = _FakeWebSocket(headers=_auth_header("shared-token"))
+
+    await ws_api.ws_proxy(websocket, "sess-3")
+
+    assert captured == []
+    assert websocket.closed == (1008, "Admin token required")
 
 
 @pytest.mark.asyncio
