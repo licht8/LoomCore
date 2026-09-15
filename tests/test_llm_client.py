@@ -4,8 +4,10 @@ import httpx
 import pytest
 
 from src.config import settings
+from src.llm import budget
 from src.llm import client as client_module
 from src.llm.client import HetznerClient, LlmError, LlmTimeoutError
+from src.llm.exceptions import LlmBudgetExceeded
 
 
 class _FakeResponse:
@@ -101,3 +103,24 @@ async def test_http_status_error_is_not_retried(monkeypatch):
         )
 
     assert fake.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_daily_budget_blocks_and_logs_security_event(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 0)
+    monkeypatch.setattr(settings, "llm_daily_call_limit", 1)
+    budget.reset_llm_budget()
+    try:
+        _install(monkeypatch, [_FakeResponse(), _FakeResponse()])
+        client = HetznerClient(api_key="k")
+        await client.chat_completion([{"role": "user", "content": "hi"}])
+
+        with (
+            caplog.at_level("WARNING", logger="loomcore.security"),
+            pytest.raises(LlmBudgetExceeded),
+        ):
+            await client.chat_completion([{"role": "user", "content": "again"}])
+    finally:
+        budget.reset_llm_budget()
+
+    assert "llm_budget_exceeded" in caplog.text

@@ -98,6 +98,31 @@ def reset_ws_message_limits() -> None:
     _ws_message_times.clear()
 
 
+def _describe_client_message(data) -> str:
+    """Summarize an inbound frame for logs without exposing its content.
+
+    Client frames may carry private conversation text or plan steps; logging
+    them verbatim would put user content into the application log.
+    """
+    if isinstance(data, str):
+        return f"text({len(data)} chars)"
+    if isinstance(data, dict):
+        action = data.get("action")
+        parts = [f"action={action!r}"] if action else []
+        message = data.get("message")
+        if isinstance(message, str):
+            parts.append(f"message={len(message)} chars")
+        steps = data.get("steps")
+        if isinstance(steps, list):
+            parts.append(f"steps={len(steps)}")
+        if not parts:
+            parts.append(f"keys={sorted(data)}")
+        return "dict(" + ", ".join(parts) + ")"
+    if isinstance(data, list):
+        return f"list({len(data)})"
+    return type(data).__name__
+
+
 async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
     """Run a core meta-tool or the plugin tool that owns the name."""
     async with span("execute_tool", tool=tool_name):
@@ -692,7 +717,7 @@ async def websocket_endpoint(
         while True:
             # Read JSON from the client
             data = await websocket.receive_json()
-            logger.info(f"📥 Received client message: {data}")
+            logger.info(f"📥 Received client message: {_describe_client_message(data)}")
             if not _allow_ws_message(identity):
                 await send(error_payload("Rate limit exceeded. Please slow down."))
                 continue

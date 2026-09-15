@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from src.api import chat as chat_api
 from src.config import settings
 from src.llm.client import LlmError
+from src.llm.exceptions import LlmBudgetExceeded
 from src.main import app
 
 
@@ -60,6 +61,26 @@ async def test_chat_maps_llm_error_to_504(monkeypatch):
 
     assert response.status_code == 504
     assert response.json() == {"error": "upstream timeout"}
+
+
+@pytest.mark.asyncio
+async def test_chat_maps_budget_exceeded_to_429(monkeypatch):
+    _auth(monkeypatch)
+
+    async def boom(message, session_id):
+        raise LlmBudgetExceeded("daily LLM budget exhausted")
+
+    monkeypatch.setattr(chat_api.airouter, "route", boom)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/chat",
+            json={"session_id": "s1", "message": "hi"},
+            headers=_AUTH,
+        )
+
+    assert response.status_code == 429
+    assert response.json() == {"error": "daily LLM budget exhausted"}
 
 
 @pytest.mark.asyncio

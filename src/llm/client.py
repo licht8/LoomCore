@@ -5,17 +5,12 @@ import time
 import httpx
 
 from src.config import settings
+from src.core.security_log import log_security_event
 from src.core.timing import log_stage
+from src.llm.budget import consume_llm_budget
+from src.llm.exceptions import LlmBudgetExceeded, LlmError, LlmTimeoutError
 
 logger = logging.getLogger("loomcore.llm")
-
-
-class LlmError(RuntimeError):
-    """LLM request failed."""
-
-
-class LlmTimeoutError(LlmError):
-    """LLM did not respond within the configured timeout."""
 
 
 class HetznerClient:
@@ -45,9 +40,10 @@ class HetznerClient:
         """Send a request to the LLM and return the JSON response.
 
         ``tool_choice`` and ``temperature`` are forwarded when set (``None``
-        leaves the provider default). Retries transport/timeout errors up to
+        leaves the provider default).         Retries transport/timeout errors up to
         `HETZNER_MAX_RETRIES` times and raises `LlmTimeoutError`/`LlmError` with
-        a clear message on failure.
+        a clear message on failure. Each attempt consumes the process-wide daily
+        call budget and raises `LlmBudgetExceeded` when it is exhausted.
         """
         payload: dict = {
             "model": self.MODEL,
@@ -78,10 +74,20 @@ class HetznerClient:
 
         async with httpx.AsyncClient(timeout=self._timeout()) as client:
             for attempt in range(1, max_attempts + 1):
+                try:
+                    budget = consume_llm_budget()
+                except LlmBudgetExceeded as exc:
+                    log_security_event(
+                        "llm_budget_exceeded",
+                        limit=settings.llm_daily_call_limit,
+                        detail=str(exc),
+                    )
+                    raise
                 started = time.monotonic()
                 logger.info(
                     f"📡 LLM request: model={self.MODEL}, "
-                    f"attempt={attempt}/{max_attempts}"
+                    f"attempt={attempt}/{max_attempts}, "
+                    f"budget_used={budget['used']}"
                 )
                 try:
                     response = await client.post(url, headers=headers, json=payload)

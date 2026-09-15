@@ -1219,3 +1219,42 @@ async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch)
 
     assert "degraded (0 critical, 1 warning, 0 info)" in summary
     assert "0 warnings, 1 info" not in summary
+
+
+# --------------------------------------------------------------------------- #
+# inbound payload redaction in logs
+# --------------------------------------------------------------------------- #
+
+
+def test_describe_client_message_redacts_content():
+    assert ws_module._describe_client_message("a" * 500) == "text(500 chars)"
+
+    described = ws_module._describe_client_message(
+        {"action": "plan_edit", "steps": [1, 2, 3], "message": "secret"}
+    )
+    assert "secret" not in described
+    assert "action='plan_edit'" in described
+    assert "message=6 chars" in described
+    assert "steps=3" in described
+
+
+@pytest.mark.asyncio
+async def test_websocket_logs_payload_summary_not_content(monkeypatch, caplog):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+
+    async def fake_route(user_text, session_id):
+        return {"type": "text", "content": "ok"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    secret = "TOP SECRET MESSAGE do-not-log"
+    ws = FakeWebSocket([{"message": secret}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    with caplog.at_level("INFO", logger="loomcore.websocket"):
+        await ws_module.websocket_endpoint(ws, "sess")
+
+    assert secret not in caplog.text
+    assert "Received client message" in caplog.text
+    assert "message=" in caplog.text
