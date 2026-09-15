@@ -183,7 +183,7 @@ export function ChatInput({
       )}
 
       <div className="relative z-10 mx-auto flex max-w-[61rem] items-stretch gap-2">
-        {onClear && <div aria-hidden className="w-24 shrink-0" />}
+        {onClear && <div aria-hidden className="w-10 shrink-0" />}
         <form
           className="flex flex-1 items-center gap-2 rounded-2xl border border-input bg-background/50 px-3 py-2 shadow-sm backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-ring"
           onSubmit={handleSubmit}
@@ -234,10 +234,11 @@ export function ChatInput({
             variant="ghost"
             onClick={handleClear}
             disabled={isRunning}
-            className="h-auto w-24 shrink-0 self-stretch gap-2 rounded-2xl border border-input bg-background/50 text-sm font-medium shadow-sm backdrop-blur-md transition-shadow hover:bg-background/70 focus-visible:ring-2 focus-visible:ring-ring"
+            title="Clear conversation"
+            className="size-10 shrink-0 self-center rounded-full border border-input bg-background/50 text-muted-foreground shadow-sm backdrop-blur-md transition-all hover:bg-background/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Eraser className="size-4" />
-            Clear
+            <Eraser className="size-4.5" />
+            <span className="sr-only">Clear conversation</span>
           </Button>
         )}
       </div>
