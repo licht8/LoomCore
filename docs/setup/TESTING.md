@@ -27,6 +27,11 @@ pytest -q -m "not integration and not e2e"
 ruff check .
 ```
 
+The unit run also covers the explicit contracts: `tests/test_contracts.py`
+(tool arguments), `tests/test_events.py` (WebSocket event registry) and the
+`check_compatibility` cases in `tests/test_plugin_manifest.py` / the schema and
+declared-risk cases in `tests/test_plugin_manager.py`.
+
 WSL2 usually has no `python` command (only `python3`); the plugin manager
 launches subprocesses via `sys.executable`, so this is fine.
 

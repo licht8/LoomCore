@@ -28,7 +28,9 @@ with no declared mode becomes `direct`. See `build_plan` / `_effective_mode` in
 `validate_plan` also checks each step against the tool's `inputSchema`: a step
 that omits a required argument (for example `core_disable_plugin` without
 `plugin`) is rejected and the planner is re-asked, so a call that could only fail
-never reaches execution.
+never reaches execution. The same schema is enforced again at dispatch time in
+`execute_tool_by_name`, so an edited or hand-crafted plan cannot slip past the
+planner. See `src/core/contracts.py`.
 
 ## Flow
 
@@ -38,8 +40,10 @@ never reaches execution.
    about the current state of the system, or any request to act, must go through
    `agent_plan`; `reply` is only for conversation. A read question is never
    answered from memory: the answer is whatever the read tool returns this turn.
-2. **Classify** — every step's `risk` is set in code by `classify_tool_risk`
-   (`src/core/security.py`): `safe`, `moderate`, or `dangerous`.
+2. **Classify** — every step's `risk` is set in code: a tool's **declared** risk
+   (from its `inputSchema` entry, or `CORE_TOOLS_SCHEMA` for core tools) always
+   wins; otherwise `classify_tool_risk` (`src/core/security.py`) falls back to its
+   name heuristic. Values: `safe`, `moderate`, or `dangerous`.
 3. **Confirm**:
    - direct + safe — runs immediately, no card;
    - direct + non-safe — the assistant asks in plain text ("... Reply yes to
@@ -112,6 +116,9 @@ confirmation.
 
 ## Events and actions
 
+- Every server-to-client event is registered in `src/interfaces/events.py`
+  (`WS_SCHEMA_VERSION = 1`) and carries `schema_version`; the registry mirrors the
+  frontend `WsMessage` union field-for-field and is **additive-only**.
 - Server to client: `plan_proposed`, `plan_step`, `plan_done` for plan mode;
   `tool_call`, `tool_response`, and `response` for both modes.
 - Client to server: `plan_approve`, `plan_edit`, `plan_reject` for plan cards.
@@ -129,8 +136,10 @@ confirmation.
 | `src/llm/SOUL.md` | Voice for the summary call (never planning) |
 | `src/llm/router.py` | Planner call, `agent_plan` parsing, summary |
 | `src/interfaces/websocket.py` | Direct run, plan events, approval, execution |
+| `src/interfaces/events.py` | Versioned WebSocket event registry (`schema_version`) |
 | `src/interfaces/tool_events.py` | Payloads and persistence |
-| `src/core/security.py` | `classify_tool_risk` |
+| `src/core/contracts.py` | Tool argument/result validation (`jsonschema`) |
+| `src/core/security.py` | `classify_tool_risk` (heuristic fallback) |
 
 ## Non-goals
 

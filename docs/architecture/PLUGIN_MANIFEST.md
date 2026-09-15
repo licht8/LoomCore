@@ -17,6 +17,12 @@ runtime (see `manifest.py`) and logs warnings so a misconfigured deployment is
 visible immediately. This keeps the core thin (RULES 1) while giving every plugin
 one place to declare identity, permissions and environment.
 
+`requires_core` and `protocol` are enforced, not decorative: a plugin that
+requires a newer core or an unsupported MCP protocol version is **not launched**.
+It is still registered as a stopped, disabled plugin carrying the reason, so it
+shows up in `core_list_plugins`/`core_plugin_status` and `/api/plugins/status`
+instead of disappearing silently. An incompatible plugin never crashes startup.
+
 The persisted enable/disable state lives outside the plugin: by default
 `<plugins_dir>/../.loomcore/plugins.json` (`{"disabled": ["<id>", ...]}`),
 overridable with the `PLUGINS_STATE_FILE` setting.
@@ -31,9 +37,9 @@ overridable with the `PLUGINS_STATE_FILE` setting.
 | `version` | yes | string | `MAJOR.MINOR.PATCH`. |
 | `description` | yes | string | One line, shown to users. |
 | `entry` | yes | string | Entry file launched by the hub (`main.py`). |
-| `protocol` | yes | string | MCP protocol version (e.g. `2024-11-05`). |
+| `protocol` | yes | string | MCP protocol version (e.g. `2024-11-05`); the core launches the plugin only if it is in `SUPPORTED_PROTOCOLS`. |
 | `tools_prefix` | no | string | Tool name prefix (e.g. `wg_`). |
-| `requires_core` | no | string | Semver range of the core. |
+| `requires_core` | no | string | PEP 440 version range of the core (e.g. `>=0.0.1`); unsatisfied means the plugin is not launched. |
 | `platforms` | no | array | OSes the plugin supports (e.g. `["linux"]`). |
 | `permissions` | no | object | See below. |
 | `env` | no | array | Environment variables the plugin reads. |
@@ -79,6 +85,20 @@ Mismatches are logged and returned by diagnostics; they never block startup.
 {"name": "LOOMWG_ENDPOINT", "required": false, "default": "/etc/wireguard", "description": "..."}
 ```
 
+### Tool declarations
+
+Each entry in the plugin's `TOOLS_SCHEMA` (returned by `tools/list`) may carry two
+core-facing keys alongside `name`/`description`/`inputSchema`:
+
+- `risk` — `"safe"`, `"moderate"` or `"dangerous"`. The core uses it verbatim to
+  decide whether a step needs approval; a declared risk **overrides** the core's
+  name heuristic. A plugin declaring a tool `safe` bypasses approval by design —
+  plugins are trusted local subprocesses, only the LLM is untrusted, and the
+  declaration is visible in plan steps and audit records. Omitting `risk` falls
+  back to the heuristic.
+- `internal` — `true` marks a tool the LLM must never see; it is callable only by
+  the core. `internal_tools` in the manifest is the declarative counterpart.
+
 ## Adding a plugin
 
 1. Copy the template: `docs/architecture/plugin-template/` → `plugins/<PluginId>/`.
@@ -87,8 +107,9 @@ Mismatches are logged and returned by diagnostics; they never block startup.
 4. Declare the capabilities, mounts and env you actually use in `permissions`/`env`.
 5. Keep `manifest.py` and call its self-check at startup.
 6. Add tests under `tests/` and update `docs/plugins/<PluginId>.md`.
-7. Dangerous tools must be added to `explicit_dangerous` in
-   `src/core/security.py` so the core asks for approval.
+7. Declare `risk` (`safe`/`moderate`/`dangerous`) on every tool in
+   `TOOLS_SCHEMA` and mark core-only tools `internal: true`. The core reads these
+   from the schema — it does **not** need to be edited to add a plugin tool.
 
 The hub discovers any `plugins/<dir>/` that contains `main.py`; the template
 lives outside `plugins/` so it is never launched by accident.
