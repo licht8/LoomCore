@@ -2,10 +2,11 @@
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from src.auth import create_jwt_token
 from src.config import settings
-from src.core.security import classify_tool_risk, require_admin_token
+from src.core.security import classify_tool_risk, is_https, require_admin_token
 
 
 def test_install_dependencies_requires_approval():
@@ -109,9 +110,28 @@ def _clear_admin_settings(monkeypatch, **overrides):
         "admin_totp_secret": "",
         "session_secret": "",
         "auth_mode": "",
+        "require_tls": False,
     }
     for key, value in {**defaults, **overrides}.items():
         monkeypatch.setattr(settings, key, value)
+
+
+def _request(scheme="http", forwarded=None):
+    headers = []
+    if forwarded is not None:
+        headers.append((b"x-forwarded-proto", forwarded.encode()))
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": headers,
+            "scheme": scheme,
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 12345),
+            "query_string": b"",
+        }
+    )
 
 
 def test_require_admin_token_bearer_accepts_matching(monkeypatch):
@@ -184,3 +204,47 @@ def test_require_admin_token_jwt_mode(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         require_admin_token(None)
     assert exc.value.status_code == 401
+
+
+def test_is_https_recognizes_forwarded_and_websocket_schemes():
+    assert is_https(None) is False
+    assert is_https(_request(scheme="http")) is False
+    assert is_https(_request(scheme="ws")) is False
+    assert is_https(_request(scheme="wss")) is True
+    assert is_https(_request(forwarded="https")) is True
+    assert is_https(_request(forwarded="HTTPS, http")) is True
+
+
+def test_require_admin_token_requires_tls_for_static_token(monkeypatch):
+    _clear_admin_settings(monkeypatch, admin_token="top-secret", require_tls=True)
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_token("top-secret", _request())
+    assert exc.value.status_code == 403
+
+
+def test_require_admin_token_requires_tls_for_jwt_cookie(monkeypatch):
+    _clear_admin_settings(
+        monkeypatch,
+        admin_password_hash="hash",
+        admin_totp_secret="secret",
+        session_secret="jwt-session-secret-long-enough-hs256",
+        require_tls=True,
+    )
+    token = create_jwt_token(
+        {"username": "admin"}, "jwt-session-secret-long-enough-hs256"
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_token(token, _request())
+    assert exc.value.status_code == 403
+
+
+def test_require_admin_token_allows_forwarded_https(monkeypatch):
+    _clear_admin_settings(monkeypatch, admin_token="top-secret", require_tls=True)
+    assert require_admin_token("top-secret", _request(forwarded="https")) is None
+
+
+def test_require_admin_token_allows_http_when_tls_not_required(monkeypatch):
+    _clear_admin_settings(monkeypatch, admin_token="top-secret", require_tls=False)
+    assert require_admin_token("top-secret", _request()) is None

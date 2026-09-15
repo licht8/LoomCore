@@ -198,3 +198,58 @@ async def test_logout_revokes_token(monkeypatch):
 
     assert response.status_code == 200
     assert decode_jwt_token(token, LONG_SECRET) is None
+
+
+@pytest.mark.asyncio
+async def test_protected_endpoint_requires_tls_for_bearer_token(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+    monkeypatch.setattr(settings, "require_tls", True)
+
+    async with _client() as client:
+        response = await client.get(
+            "/api/plugins/status",
+            headers={
+                "Authorization": "Bearer static-token",
+                "X-Forwarded-For": "198.51.100.30",
+            },
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_protected_endpoint_requires_tls_for_cookie(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "")
+    monkeypatch.setattr(settings, "admin_password_hash", "hash")
+    monkeypatch.setattr(settings, "admin_totp_secret", "totp")
+    monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
+    monkeypatch.setattr(settings, "require_tls", True)
+    token = create_jwt_token({"username": "admin"}, LONG_SECRET)
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, token)
+        response = await client.get(
+            "/api/plugins/status",
+            headers={"X-Forwarded-For": "198.51.100.31"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_protected_endpoint_allows_token_when_tls_not_required(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+    monkeypatch.setattr(settings, "require_tls", False)
+
+    async with _client() as client:
+        response = await client.get(
+            "/api/plugins/status",
+            headers={
+                "Authorization": "Bearer static-token",
+                "X-Forwarded-For": "198.51.100.32",
+            },
+        )
+
+    assert response.status_code == 200

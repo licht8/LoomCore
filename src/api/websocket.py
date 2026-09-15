@@ -11,7 +11,7 @@ from fastapi import APIRouter, WebSocket
 from src.auth import SESSION_COOKIE, decode_jwt_token
 from src.config import settings
 from src.core.client_ip import client_ip
-from src.core.security import auth_mode
+from src.core.security import auth_mode, is_https
 from src.core.security_log import log_security_event
 from src.interfaces.websocket import websocket_endpoint
 
@@ -90,6 +90,15 @@ async def ws_proxy(websocket: WebSocket, session_id: str):
     is re-checked periodically while the connection is open, so a revoked or
     expired credential cannot keep a live socket.
     """
+    if settings.require_tls and not is_https(websocket):
+        log_security_event(
+            "ws_auth_failure",
+            reason="tls_required",
+            client=client_ip(websocket),
+            session_id=session_id,
+        )
+        await websocket.close(code=1008, reason="TLS required")
+        return
     cookie = websocket.cookies.get(SESSION_COOKIE)
     token = _static_token_from_subprotocol(websocket)
     if not (_jwt_valid(cookie) or _static_token_valid(token)):

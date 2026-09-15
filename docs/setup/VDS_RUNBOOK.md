@@ -108,6 +108,11 @@ getenforce
 Expected `ss -tlnp` (addresses): `0.0.0.0:80`, `127.0.0.1:8000`, `127.0.0.1:3000`,
 `127.0.0.1:5432`.
 
+`8000` **must** be `127.0.0.1`, never `0.0.0.0`: the TLS check trusts
+`X-Forwarded-Proto`, which is only safe while nginx is the sole thing that can
+reach the API. If `ss` shows `0.0.0.0:8000`, an off-host client could hit the API
+directly and spoof `X-Forwarded-Proto: https`, defeating `REQUIRE_TLS`.
+
 If `docker compose logs hub` shows the plugin failing to write `/etc/wireguard`,
 SELinux is likely blocking it:
 
@@ -133,9 +138,13 @@ curl -s "https://SERVER_NAME/api/chat?session_id=test1" \
 ```
 
 Use `https://` (and enable the nginx 443 block first): with the default
-`REQUIRE_TLS=true` the hub refuses plain-HTTP admin logins. The `Authorization`
-curls above need `ADMIN_TOKEN` set with `AUTH_MODE=both`; on a JWT-only
-deployment (the default) log in through the UI and reuse the session cookie.
+`REQUIRE_TLS=true` the hub refuses every admin auth path over plain HTTP —
+password login, the session cookie, the `Authorization` token **and** the
+WebSocket handshake — so a plain-HTTP Bearer token is rejected (403) just like a
+password. nginx forwards `X-Forwarded-Proto` on both `/api/` and `/ws/`, which
+is what lets the hub see the original scheme. The `Authorization` curls above
+need `ADMIN_TOKEN` set with `AUTH_MODE=both`; on a JWT-only deployment (the
+default) log in through the UI and reuse the session cookie.
 
 Expected: `{"status":"ok"}`; a plugin status JSON; a tool list (the `core_*`
 meta-tools, the `wg_*` tools except the internal `wg_get_client_artifact`, and the

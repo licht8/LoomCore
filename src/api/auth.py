@@ -16,22 +16,16 @@ from src.auth import (
 from src.config import settings
 from src.core.client_ip import client_ip
 from src.core.rate_limit import limiter
-from src.core.security import admin_jwt_mode_enabled, auth_mode
+from src.core.security import admin_jwt_mode_enabled, auth_mode, is_https
 from src.core.security_log import log_security_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _is_https(request: Request) -> bool:
-    """Return True when the request reached us over TLS (directly or via a proxy)."""
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    return proto == "https"
-
-
 @router.post("/login")
 @limiter.limit("5 per 60 seconds")
 async def login(request: Request):
-    if settings.require_tls and not _is_https(request):
+    if settings.require_tls and not is_https(request):
         log_security_event(
             "auth_failure", reason="tls_required", client=client_ip(request)
         )

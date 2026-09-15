@@ -205,11 +205,22 @@ are sent in cleartext. `deploy/nginx/default.conf` ships a ready-to-use TLS
 server block (commented) and always-on security headers.
 
 The stack is secure by default: `SECURE_COOKIES=true` and `REQUIRE_TLS=true`.
-With `REQUIRE_TLS=true` the hub **refuses admin login over plain HTTP** (HTTP
-403) and fails to start if `SECURE_COOKIES` is disabled, so a fresh install never
-serves credentials in cleartext. To defer TLS, either set `REQUIRE_TLS=false`
-(logs a startup warning) or, for local plain-HTTP development only, also set
-`SECURE_COOKIES=false`.
+With `REQUIRE_TLS=true` the hub **refuses every admin auth path over plain
+HTTP** (HTTP 403) — password login, the session cookie, the `Authorization:
+Bearer` static token and the WebSocket handshake — and fails to start if
+`SECURE_COOKIES` is disabled, so a fresh install never serves credentials in
+cleartext. `SECURE_COOKIES` only marks the cookie; TLS enforcement is
+independent and covers the token/WS paths too. To defer TLS, either set
+`REQUIRE_TLS=false` (logs a startup warning) or, for local plain-HTTP
+development only, also set `SECURE_COOKIES=false`.
+
+Enforcement trusts `X-Forwarded-Proto`, which is only safe because the API
+binds to `127.0.0.1:8000` (the image default **and** the compose override), so
+only the host-local nginx can reach it and set that header. Verify after deploy:
+`ss -tlnp | grep 8000` must show `127.0.0.1:8000`, never `0.0.0.0:8000` — an
+off-host client reaching 8000 directly could spoof `X-Forwarded-Proto: https`.
+nginx must forward the header on both `/api/` and `/ws/` (it does in the shipped
+config).
 
 1. Stop the stack so `:80` is free, then obtain a certificate:
    ```bash

@@ -18,10 +18,16 @@ def _auth_header(token: str) -> dict:
     return {"sec-websocket-protocol": f"loomcore.auth.{encoded}"}
 
 
+class _FakeUrl:
+    def __init__(self, scheme: str):
+        self.scheme = scheme
+
+
 class _FakeWebSocket:
-    def __init__(self, cookies=None, headers=None):
+    def __init__(self, cookies=None, headers=None, scheme="ws"):
         self.cookies = cookies or {}
         self.headers = headers or {}
+        self.url = _FakeUrl(scheme)
         self.closed = None
 
     async def close(self, code=1000, reason=""):
@@ -174,3 +180,50 @@ async def test_proxy_logs_ws_auth_failure(monkeypatch, captured, caplog):
 
     assert websocket.closed == (1008, "Admin token required")
     assert any("ws_auth_failure" in m for m in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_proxy_rejects_plain_ws_when_tls_required(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(settings, "require_tls", True)
+    websocket = _FakeWebSocket(headers=_auth_header("secret"), scheme="ws")
+
+    await ws_api.ws_proxy(websocket, "sess-tls")
+
+    assert captured == []
+    assert websocket.closed == (1008, "TLS required")
+
+
+@pytest.mark.asyncio
+async def test_proxy_allows_wss_when_tls_required(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(settings, "require_tls", True)
+    websocket = _FakeWebSocket(headers=_auth_header("secret"), scheme="wss")
+
+    await ws_api.ws_proxy(websocket, "sess-tls")
+
+    assert captured == [(websocket, "sess-tls")]
+
+
+@pytest.mark.asyncio
+async def test_proxy_allows_forwarded_https_when_tls_required(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(settings, "require_tls", True)
+    headers = _auth_header("secret")
+    headers["x-forwarded-proto"] = "https"
+    websocket = _FakeWebSocket(headers=headers, scheme="ws")
+
+    await ws_api.ws_proxy(websocket, "sess-tls")
+
+    assert captured == [(websocket, "sess-tls")]
+
+
+@pytest.mark.asyncio
+async def test_proxy_allows_plain_ws_when_tls_not_required(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(settings, "require_tls", False)
+    websocket = _FakeWebSocket(headers=_auth_header("secret"), scheme="ws")
+
+    await ws_api.ws_proxy(websocket, "sess-tls")
+
+    assert captured == [(websocket, "sess-tls")]

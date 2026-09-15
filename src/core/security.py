@@ -1,5 +1,6 @@
 import re
 import secrets
+from typing import Any
 
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -10,6 +11,28 @@ from src.core.client_ip import client_ip
 from src.core.security_log import log_security_event
 
 VALID_AUTH_MODES = frozenset({"token", "jwt", "both"})
+
+
+def is_https(request: Any) -> bool:
+    """Return True when the request reached us over TLS.
+
+    Works for both HTTP requests and WebSocket handshakes: a WebSocket scope
+    reports ``ws``/``wss`` rather than ``http``/``https``. Behind a
+    TLS-terminating proxy the scheme comes from ``X-Forwarded-Proto``; that
+    header is only trusted because the app binds to loopback, so only the local
+    reverse proxy can reach it. A missing request is treated as insecure (fail
+    closed).
+    """
+    if request is None:
+        return False
+    headers = getattr(request, "headers", None)
+    url = getattr(request, "url", None)
+    proto = headers.get("x-forwarded-proto") if headers is not None else None
+    if not proto and url is not None:
+        proto = url.scheme
+    if not proto:
+        return False
+    return proto.split(",")[0].strip().lower() in {"https", "wss"}
 
 
 def admin_jwt_mode_enabled() -> bool:
@@ -51,11 +74,21 @@ def require_admin_token(token: str | None, request: Request | None = None) -> No
     session (``jwt``), the static admin token (``token``), or both. A valid
     credential that the active mode disables is rejected with 403 rather than
     silently accepted, so a configured password+TOTP cannot be bypassed by a
-    leftover static token. Failures are recorded as security events (the client
-    IP is included when a ``request`` is supplied).
+    leftover static token. When ``REQUIRE_TLS`` is set, a non-TLS request is
+    rejected (403) regardless of which credential it carries. Failures are
+    recorded as security events (the client IP is included when a ``request``
+    is supplied).
     """
     mode = auth_mode()
     client = client_ip(request) if request is not None else None
+
+    # TLS is enforced for every credential path (session cookie and static
+    # Bearer token), not just the password login: a static token over plain HTTP
+    # is just as exposed as a password.
+    if settings.require_tls and not is_https(request):
+        log_security_event("auth_failure", reason="tls_required", client=client)
+        raise HTTPException(status_code=403, detail="TLS is required")
+
     jwt_configured = admin_jwt_mode_enabled()
     token_configured = bool(settings.admin_token)
 
