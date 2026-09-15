@@ -1,6 +1,18 @@
 import type { ChatMessage, Plan, PlanStatus, PlanStep, SessionMessage } from "@/lib/chat-types"
 
 /** Format the current timestamp as a local HH:MM label. */
+const PLANNER_TOOL_NAMES = new Set(["reply", "agent_plan"])
+
+/** True when a stored assistant message is just a leaked planner tool name. */
+function isBareToolName(content: string): boolean {
+  const cleaned = content
+    .trim()
+    .replace(/^[`"']+|[`"']+$/g, "")
+    .trim()
+    .toLowerCase()
+  return PLANNER_TOOL_NAMES.has(cleaned)
+}
+
 export function formatTimestamp(): string {
   return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
 }
@@ -145,6 +157,9 @@ export function hydrateMessages(rows: SessionMessage[]): ChatMessage[] {
     if (row.role === "user") {
       hydrated.push({ id: row.id, role: "user", content: row.content, timestamp })
     } else if (row.role === "assistant" && (row.content || "").trim()) {
+      // Older sessions may have persisted a leaked planner tool name as text;
+      // skip those rows so they never render as an assistant bubble.
+      if (isBareToolName(row.content)) continue
       hydrated.push({
         id: row.id,
         role: "assistant",
