@@ -13,6 +13,7 @@ import socket
 import time
 from collections.abc import Awaitable, Callable
 
+from src.core.security import classify_tool_risk
 from src.plugins import plugin_manager
 from src.plugins.manifest import (
     CAPABILITIES,
@@ -41,6 +42,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
             "Report LoomCore health (uptime and plugin counts). Safe to call."
         ),
         "inputSchema": _NO_ARGS_SCHEMA,
+        "risk": "safe",
     },
     {
         "name": "core_list_plugins",
@@ -48,16 +50,19 @@ CORE_TOOLS_SCHEMA: list[dict] = [
             "List every discovered plugin with its version, enabled state and health."
         ),
         "inputSchema": _NO_ARGS_SCHEMA,
+        "risk": "safe",
     },
     {
         "name": "core_plugin_status",
         "description": "Return detailed status, version and warnings for a single plugin.",
         "inputSchema": _PLUGIN_ARG_SCHEMA,
+        "risk": "safe",
     },
     {
         "name": "core_list_tools",
         "description": "List the tools exposed by the core and by enabled plugins.",
         "inputSchema": _NO_ARGS_SCHEMA,
+        "risk": "safe",
     },
     {
         "name": "core_capabilities",
@@ -65,6 +70,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
             "Report the core runtime capabilities and the declared plugin permissions."
         ),
         "inputSchema": _NO_ARGS_SCHEMA,
+        "risk": "safe",
     },
     {
         "name": "core_enable_plugin",
@@ -72,6 +78,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
             "Enable a disabled plugin, start it and persist the change. Requires approval."
         ),
         "inputSchema": _PLUGIN_ARG_SCHEMA,
+        "risk": "dangerous",
     },
     {
         "name": "core_disable_plugin",
@@ -79,6 +86,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
             "Stop a plugin and persist its disabled state. Requires approval."
         ),
         "inputSchema": _PLUGIN_ARG_SCHEMA,
+        "risk": "dangerous",
     },
     {
         "name": "core_reload_plugin",
@@ -86,10 +94,20 @@ CORE_TOOLS_SCHEMA: list[dict] = [
             "Restart an enabled plugin and refresh its tools. Requires approval."
         ),
         "inputSchema": _PLUGIN_ARG_SCHEMA,
+        "risk": "dangerous",
     },
 ]
 
 CORE_TOOL_NAMES = frozenset(tool["name"] for tool in CORE_TOOLS_SCHEMA)
+
+# Risk declared alongside each core tool's schema.
+CORE_TOOL_RISK = {tool["name"]: tool.get("risk") for tool in CORE_TOOLS_SCHEMA}
+
+
+def resolve_tool_risk(tool_name: str) -> str:
+    """Resolve a tool's risk: core declaration, then plugin, then heuristic."""
+    declared = CORE_TOOL_RISK.get(tool_name) or plugin_manager.tool_risk(tool_name)
+    return classify_tool_risk(tool_name, declared)
 
 
 def _result(text: str, **data) -> dict:

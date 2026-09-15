@@ -15,11 +15,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
 MANIFEST_FILENAME = "manifest.json"
 
 _REQUIRED_FIELDS = ("id", "name", "version", "description", "entry", "protocol")
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _KNOWN_SCHEMA_VERSION = 1
+
+# MCP protocol revisions this core speaks. A plugin declaring anything else is
+# not launched (surfaced in plugin status instead of failing startup).
+SUPPORTED_PROTOCOLS = frozenset({"2024-11-05"})
 
 # Linux capability numbers (see <linux/capability.h>).
 CAPABILITIES = {"NET_ADMIN": 12, "NET_RAW": 13, "SYS_MODULE": 16, "SYSLOG": 34}
@@ -150,6 +156,35 @@ def validate_manifest(
 
     if "internal_tools" in data and not isinstance(data["internal_tools"], list):
         issues.append("internal_tools must be a list")
+    return issues
+
+
+def check_compatibility(manifest: dict[str, Any], core_version: str) -> list[str]:
+    """Return reasons the plugin cannot run against this core (empty = compatible).
+
+    Checks the declared ``protocol`` revision against :data:`SUPPORTED_PROTOCOLS`
+    and ``requires_core`` (a PEP 440 specifier) against ``core_version``. A bad
+    declaration counts as incompatible so a broken plugin is surfaced rather
+    than launched.
+    """
+    issues: list[str] = []
+
+    protocol = manifest.get("protocol")
+    if isinstance(protocol, str) and protocol and protocol not in SUPPORTED_PROTOCOLS:
+        supported = ", ".join(sorted(SUPPORTED_PROTOCOLS))
+        issues.append(f"unsupported protocol '{protocol}' (supported: {supported})")
+
+    requires = manifest.get("requires_core")
+    if isinstance(requires, str) and requires.strip():
+        try:
+            specifier = SpecifierSet(requires)
+        except InvalidSpecifier:
+            issues.append(f"requires_core '{requires}' is not a valid version specifier")
+        else:
+            if core_version not in specifier:
+                issues.append(
+                    f"requires core {requires}, but this core is {core_version}"
+                )
     return issues
 
 

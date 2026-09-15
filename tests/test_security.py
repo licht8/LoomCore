@@ -90,6 +90,18 @@ def test_keyword_matching_ignores_substrings():
     assert classify_tool_risk("ops_address_lookup") == "safe"
 
 
+def test_declared_risk_overrides_heuristics():
+    # A plugin may downgrade a nominally dangerous name...
+    assert classify_tool_risk("ops_run_command", "safe") == "safe"
+    # ...or upgrade a name the heuristics would treat as safe.
+    assert classify_tool_risk("core_health", "dangerous") == "dangerous"
+
+
+def test_declared_risk_is_normalized_and_falls_back_when_unknown():
+    assert classify_tool_risk("core_health", "  SAFE ") == "safe"
+    assert classify_tool_risk("wg_remove_peer", "nonsense") == "dangerous"
+
+
 def _clear_admin_settings(monkeypatch, **overrides):
     defaults = {
         "admin_token": "",

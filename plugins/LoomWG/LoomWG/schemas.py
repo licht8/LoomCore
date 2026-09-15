@@ -254,3 +254,30 @@ TOOLS_SCHEMA.extend(
         },
     ]
 )
+
+# Per-tool risk declared to the core (Phase 1b). Read-only tools are safe,
+# tracking a new client is moderate, and anything that changes the interface,
+# keys or autostart is dangerous.
+_TOOL_RISK = {
+    "wg_list_interfaces": "safe",
+    "wg_interface_status": "safe",
+    "wg_list_peers": "safe",
+    "wg_diagnostics": "safe",
+    "wg_show_interface_config": "safe",
+    "wg_check_interface_config": "safe",
+    "wg_stats": "safe",
+    "wg_get_client_artifact": "safe",
+    "wg_create_peer": "moderate",
+    "wg_remove_peer": "dangerous",
+    "wg_setup_server": "dangerous",
+    "wg_install_dependencies": "dangerous",
+    "wg_interface_start": "dangerous",
+    "wg_interface_stop": "dangerous",
+    "wg_interface_restart": "dangerous",
+    "wg_service_enable": "dangerous",
+    "wg_service_disable": "dangerous",
+    "wg_export_existing_clients": "dangerous",
+}
+
+for _tool in TOOLS_SCHEMA:
+    _tool["risk"] = _TOOL_RISK.get(_tool["name"], "safe")

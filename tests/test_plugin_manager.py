@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from src.core.contracts import ToolContractError
 from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
 
 
@@ -91,6 +92,81 @@ def test_rebuild_cache_clears_stale_entries():
     manager._rebuild_tool_cache("demo", [{"name": "new"}])
 
     assert manager._tool_plugins == {"new": "demo"}
+
+
+# === tool schema + declared risk cache ===
+
+
+def _schema(name="demo_tool", *, risk=None, required=("a",)):
+    tool = {
+        "name": name,
+        "inputSchema": {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "required": list(required),
+        },
+    }
+    if risk is not None:
+        tool["risk"] = risk
+    return tool
+
+
+def test_index_tools_caches_schema_and_risk():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [_schema(risk="moderate")])
+
+    assert manager.tool_schema("demo_tool")["required"] == ["a"]
+    assert manager.tool_risk("demo_tool") == "moderate"
+
+
+def test_tool_accessors_default_for_unknown():
+    manager = PluginManager()
+    assert manager.tool_schema("nope") == {}
+    assert manager.tool_risk("nope") == ""
+
+
+def test_index_tools_ignores_unknown_risk_values():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [_schema(risk="scary")])
+
+    assert manager.tool_risk("demo_tool") == ""
+
+
+def test_rebuild_cache_clears_stale_schemas_and_risks():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [_schema(risk="safe")])
+
+    manager._rebuild_tool_cache("demo", [{"name": "new"}])
+
+    assert manager.tool_schema("demo_tool") == {}
+    assert manager.tool_risk("demo_tool") == ""
+    assert manager._tool_schemas == {}
+    assert manager._tool_risk == {}
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_by_name_rejects_invalid_args(monkeypatch):
+    manager = PluginManager()
+    manager._tool_plugins["wg_x"] = "demo"
+    manager._tool_schemas["wg_x"] = {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}},
+        "required": ["a"],
+    }
+    dispatched: list = []
+
+    async def fake_execute(plugin_name, tool_name, arguments):
+        dispatched.append(tool_name)
+        return {"ok": True}
+
+    monkeypatch.setattr(manager, "execute_tool", fake_execute)
+
+    with pytest.raises(ToolContractError):
+        await manager.execute_tool_by_name("wg_x", {"a": "not-an-int"})
+    assert dispatched == []
+
+    assert await manager.execute_tool_by_name("wg_x", {"a": 1}) == {"ok": True}
+    assert dispatched == ["wg_x"]
 
 
 @pytest.mark.asyncio
@@ -543,6 +619,30 @@ def test_discover_honours_default_enabled_false(monkeypatch, tmp_path):
     assert manager.is_enabled("demo") is False
     assert manager._plugins["demo"].proc is None
     assert manager._plugins["demo"].version == "1.0.0"
+
+
+def test_discover_surfaces_incompatible_plugin_without_launch(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest(requires_core=">=9.9.9"))
+    manager = PluginManager()
+    monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("no launch"))
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    plugin = manager._plugins["demo"]
+    assert plugin.enabled is False
+    assert plugin.state == PluginState.STOPPED
+    assert plugin.proc is None
+    assert any("requires core >=9.9.9" in w for w in plugin.permission_warnings)
+
+
+def test_discover_skips_unsupported_protocol(monkeypatch, tmp_path):
+    _add_plugin_dir(tmp_path, "demo", _manifest(protocol="1999-01-01"))
+    manager = PluginManager()
+    monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("no launch"))
+
+    assert manager.discover_plugins(str(tmp_path)) == ["demo"]
+    plugin = manager._plugins["demo"]
+    assert plugin.enabled is False
+    assert any("unsupported protocol" in w for w in plugin.permission_warnings)
 
 
 def test_discover_records_permission_warnings(monkeypatch, tmp_path):

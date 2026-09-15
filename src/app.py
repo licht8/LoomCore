@@ -14,6 +14,7 @@ from src.api import artifacts, auth, chat, health, plugins, sessions, websocket
 from src.api.deps import rate_limit_exceeded_handler
 from src.config import settings
 from src.core.rate_limit import limiter
+from src.core.version import CORE_VERSION
 from src.plugins import plugin_manager
 from src.plugins.health import healthcheck_loop
 
@@ -64,7 +65,7 @@ def create_app() -> FastAPI:
     _configure_logging()
     app = FastAPI(
         title="LoomCore",
-        version="0.0.1",
+        version=CORE_VERSION,
         docs_url="/docs" if settings.debug else None,
         lifespan=lifespan,
     )

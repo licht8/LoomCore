@@ -20,6 +20,8 @@ dependencies = [
     "slowapi",
     "pyjwt>=2.13.0",
     "alembic",
+    "jsonschema",
+    "packaging",
 ]
 
 [project.optional-dependencies]

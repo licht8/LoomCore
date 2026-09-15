@@ -17,9 +17,12 @@ from enum import StrEnum
 from pathlib import Path
 from time import monotonic, time
 
+from src.core.contracts import validate_tool_args, validate_tool_result
 from src.core.timing import log_stage
+from src.core.version import CORE_VERSION
 from src.plugins.manifest import (
     ManifestError,
+    check_compatibility,
     check_permissions,
     load_manifest,
     validate_manifest,
@@ -27,6 +30,15 @@ from src.plugins.manifest import (
 from src.plugins.state import load_disabled, save_disabled
 
 logger = logging.getLogger("loomcore.plugins")
+
+_VALID_RISKS = frozenset({"safe", "moderate", "dangerous"})
+
+
+def _normalize_risk(value: object) -> str:
+    """Normalize a plugin-declared risk, or '' when it is absent/invalid."""
+    if isinstance(value, str) and value.strip().lower() in _VALID_RISKS:
+        return value.strip().lower()
+    return ""
 
 # Leading severity tokens emitted by plugin stderr formatters.
 _PLUGIN_LOG_LEVELS = {
@@ -74,6 +86,10 @@ class PluginManager:
         self._tool_plugins: dict[str, str] = {}
         # Tools marked "internal": True (available only to the core, not the LLM)
         self._internal_tools: dict[str, str] = {}
+        # Per-tool contracts published by the plugin (name -> inputSchema).
+        self._tool_schemas: dict[str, dict] = {}
+        # Per-tool risk declared by the plugin (name -> safe/moderate/dangerous).
+        self._tool_risk: dict[str, str] = {}
 
         # Persisted enable/disable state (in-memory only when no path is given)
         self._state_path = state_path
@@ -171,8 +187,11 @@ class PluginManager:
                 continue
 
             command = [sys.executable, str(plugin_dir / "main.py")]
-            enabled = bool(manifest.get("default_enabled", True)) and (
-                name not in self._disabled
+            incompatible = list(manifest.get("_compatibility") or [])
+            enabled = (
+                bool(manifest.get("default_enabled", True))
+                and name not in self._disabled
+                and not incompatible
             )
             if enabled:
                 self.register(name, command)
@@ -180,7 +199,15 @@ class PluginManager:
                 if plugin is not None:
                     self._apply_manifest(plugin, manifest, warnings)
             else:
-                # Keep a record so the plugin can be enabled later, but do not spawn.
+                # Keep a record so the plugin can be enabled later (or so the
+                # reason it was not launched stays visible), but do not spawn.
+                if incompatible:
+                    logger.warning(
+                        f"Plugin '{name}' is incompatible with core "
+                        f"{CORE_VERSION}; not launching"
+                    )
+                else:
+                    logger.info(f"Plugin '{name}' is disabled; not launching")
                 self._plugins[name] = ManagedPlugin(
                     name=name,
                     command=command,
@@ -188,9 +215,8 @@ class PluginManager:
                     enabled=False,
                     version=str(manifest.get("version") or ""),
                     manifest=manifest,
-                    permission_warnings=warnings,
+                    permission_warnings=list(warnings) + incompatible,
                 )
-                logger.info(f"Plugin '{name}' is disabled; not launching")
             discovered.append(name)
         return discovered
 
@@ -224,6 +250,13 @@ class PluginManager:
         warnings = check_permissions(manifest)
         for warning in warnings:
             logger.warning(f"Plugin '{name}': {warning}")
+
+        incompatible = check_compatibility(manifest, CORE_VERSION)
+        for reason in incompatible:
+            logger.warning(f"Plugin '{name}': incompatible with this core: {reason}")
+        if incompatible:
+            # Surfaced through plugin status; discover_plugins sees the marker.
+            manifest["_compatibility"] = incompatible
         return manifest, warnings
 
     @staticmethod
@@ -258,6 +291,15 @@ class PluginManager:
     def permission_warnings(self, plugin_name: str) -> list[str]:
         plugin = self._plugins.get(plugin_name)
         return list(plugin.permission_warnings) if plugin else []
+
+    def tool_schema(self, tool_name: str) -> dict:
+        """Return the tool's advertised inputSchema (empty when unknown)."""
+        schema = self._tool_schemas.get(tool_name)
+        return schema if isinstance(schema, dict) else {}
+
+    def tool_risk(self, tool_name: str) -> str:
+        """Return the plugin-declared risk for a tool ('' when undeclared)."""
+        return self._tool_risk.get(tool_name, "")
 
     async def disable_plugin(self, plugin_name: str) -> bool:
         """Stop a plugin and persist its disabled state."""
@@ -479,6 +521,12 @@ class PluginManager:
             tool_name = tool.get("name")
             if not tool_name:
                 continue
+            schema = tool.get("inputSchema")
+            if isinstance(schema, dict) and schema:
+                self._tool_schemas[tool_name] = schema
+            risk = _normalize_risk(tool.get("risk"))
+            if risk:
+                self._tool_risk[tool_name] = risk
             if tool.get("internal"):
                 self._internal_tools[tool_name] = plugin_name
             else:
@@ -488,11 +536,18 @@ class PluginManager:
 
     def _rebuild_tool_cache(self, plugin_name: str, tools: list[dict]) -> None:
         """Rebuild the plugin's tool caches (drop old entries, add new ones)."""
-        # Remove this plugin's old entries
-        for cache in (self._tool_plugins, self._internal_tools):
-            stale = [name for name, owner in cache.items() if owner == plugin_name]
-            for name in stale:
-                del cache[name]
+        # Remove this plugin's old entries from every cache.
+        stale = [
+            name
+            for cache in (self._tool_plugins, self._internal_tools)
+            for name, owner in cache.items()
+            if owner == plugin_name
+        ]
+        for name in stale:
+            self._tool_plugins.pop(name, None)
+            self._internal_tools.pop(name, None)
+            self._tool_schemas.pop(name, None)
+            self._tool_risk.pop(name, None)
 
         # Add new ones: internal — core only, the rest — for the LLM
         self._index_tools(plugin_name, tools)
@@ -707,6 +762,13 @@ class PluginManager:
             plugin_name = self._internal_tools.get(tool_name)
         if not plugin_name:
             raise ValueError(f"Internal tool '{tool_name}' is not registered")
+        # Internal tools are core-controlled: a bad schema warns, never blocks.
+        schema = self._tool_schemas.get(tool_name)
+        if schema:
+            try:
+                validate_tool_args(tool_name, arguments, schema)
+            except ValueError as exc:
+                logger.warning(f"Internal tool '{tool_name}' contract mismatch: {exc}")
         return await self.execute_tool(plugin_name, tool_name, arguments)
 
     # ------------------------------------------------------------------
@@ -823,6 +885,11 @@ class PluginManager:
     async def execute_tool_by_name(
         self, tool_name: str, arguments: dict | None = None
     ) -> dict:
-        return await self.execute_tool(
+        """Invoke a tool by name, enforcing its advertised argument contract."""
+        validate_tool_args(tool_name, arguments, self._tool_schemas.get(tool_name))
+        result = await self.execute_tool(
             self.plugin_for_tool(tool_name), tool_name, arguments
         )
+        for warning in validate_tool_result(result):
+            logger.warning(f"Tool '{tool_name}' returned an unexpected result: {warning}")
+        return result

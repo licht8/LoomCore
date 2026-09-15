@@ -13,7 +13,7 @@ from src.core.agent import (
     plan_is_direct,
     validate_plan,
 )
-from src.core.core_tools import CORE_TOOLS_SCHEMA
+from src.core.core_tools import CORE_TOOLS_SCHEMA, resolve_tool_risk
 from src.core.timing import log_stage, span
 from src.db import session as db_session
 from src.db.database import async_session_factory
@@ -195,7 +195,7 @@ class AIRouter:
                     tool_args = recovered_args
 
                 if tool_name == AGENT_PLAN_TOOL:
-                    plan = build_plan(tool_args or {})
+                    plan = build_plan(tool_args or {}, risk_of=resolve_tool_risk)
                     errors = validate_plan(plan, known_tools, tool_schemas)
                     if not errors:
                         # A direct one-step action leaves no plan artifact; only
@@ -253,6 +253,11 @@ class AIRouter:
         """Return the names of every tool currently offered to the planner."""
         tools_schema, _extra = await self._collect_tools()
         return {tool["name"] for tool in tools_schema}
+
+    async def tool_schemas(self) -> dict[str, dict]:
+        """Return the input schema of every tool currently offered to the planner."""
+        tools_schema, _extra = await self._collect_tools()
+        return {tool["name"]: tool.get("inputSchema") or {} for tool in tools_schema}
 
     async def _begin_turn(self, session_id: str, user_message: str) -> list[dict]:
         """Load recent history and persist the user message; return history dicts."""

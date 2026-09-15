@@ -41,11 +41,18 @@ def require_admin_token(token: str | None) -> None:
     raise HTTPException(status_code=401, detail="Admin token required")
 
 
-def classify_tool_risk(tool_name: str) -> str:
+VALID_TOOL_RISKS = frozenset({"safe", "moderate", "dangerous"})
+
+
+def classify_tool_risk(tool_name: str, declared: str | None = None) -> str:
     """Determine the risk level of a tool call.
 
-    Returns: 'dangerous', 'moderate' or 'safe'.
+    A plugin- or core-declared risk (``declared``) takes precedence over the
+    name heuristics. Returns: 'dangerous', 'moderate' or 'safe'.
     """
+    if isinstance(declared, str) and declared.strip().lower() in VALID_TOOL_RISKS:
+        return declared.strip().lower()
+
     explicit_dangerous = {
         "wg_remove_peer",
         "wg_export_existing_clients",

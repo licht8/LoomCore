@@ -203,6 +203,40 @@ def test_check_permissions_pid_host_silent_when_active(monkeypatch):
     assert manifest_module.check_permissions(data) == []
 
 
+# === check_compatibility ===
+
+
+def test_check_compatibility_compatible():
+    data = _valid()
+    data["requires_core"] = ">=0.0.1"
+    assert manifest_module.check_compatibility(data, "0.0.1") == []
+
+
+def test_check_compatibility_unsatisfied_requires_core():
+    data = _valid()
+    data["requires_core"] = ">=9.9.9"
+    issues = manifest_module.check_compatibility(data, "0.0.1")
+    assert any("requires core >=9.9.9" in issue for issue in issues)
+
+
+def test_check_compatibility_unsupported_protocol():
+    data = _valid()
+    data["protocol"] = "1999-01-01"
+    issues = manifest_module.check_compatibility(data, "0.0.1")
+    assert any("unsupported protocol" in issue for issue in issues)
+
+
+def test_check_compatibility_invalid_specifier():
+    data = _valid()
+    data["requires_core"] = "not a specifier"
+    issues = manifest_module.check_compatibility(data, "0.0.1")
+    assert any("not a valid version specifier" in issue for issue in issues)
+
+
+def test_check_compatibility_ignores_missing_requires_core():
+    assert manifest_module.check_compatibility(_valid(), "0.0.1") == []
+
+
 # === PluginManifest view ===
 
 

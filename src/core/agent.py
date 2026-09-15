@@ -12,9 +12,12 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from src.core.contracts import ToolContractError, validate_tool_args
 from src.core.security import classify_tool_risk
 
 logger = logging.getLogger("loomcore.agent")
+
+_RiskResolver = Callable[[str], str]
 
 AGENT_PLAN_TOOL = "agent_plan"
 REPLY_TOOL = "reply"
@@ -99,15 +102,18 @@ REPLY_SCHEMA: dict = {
 PLANNER_TOOLS: list[dict] = [AGENT_PLAN_SCHEMA, REPLY_SCHEMA]
 
 
-def _normalize_step(index: int, raw: dict) -> dict:
+def _normalize_step(
+    index: int, raw: dict, risk_of: _RiskResolver | None = None
+) -> dict:
     tool = str(raw.get("tool") or "").strip()
     args = raw.get("args")
+    resolve_risk = risk_of or classify_tool_risk
     return {
         "id": str(raw.get("id") or f"s{index}"),
         "tool": tool,
         "args": args if isinstance(args, dict) else {},
         "why": str(raw.get("why") or "").strip(),
-        "risk": classify_tool_risk(tool),
+        "risk": resolve_risk(tool),
         "status": "pending",
     }
 
@@ -126,12 +132,14 @@ def _effective_mode(declared: object, steps: list[dict]) -> str:
     return "direct"
 
 
-def build_plan(raw_args: dict) -> dict:
+def build_plan(raw_args: dict, risk_of: _RiskResolver | None = None) -> dict:
     """Normalize a model-proposed plan into the stored plan object."""
     raw_steps = raw_args.get("steps")
     if not isinstance(raw_steps, list):
         raw_steps = []
-    steps = [_normalize_step(index, raw) for index, raw in enumerate(raw_steps, 1)]
+    steps = [
+        _normalize_step(index, raw, risk_of) for index, raw in enumerate(raw_steps, 1)
+    ]
     return {
         "type": "plan",
         "plan_id": f"pl_{uuid4().hex}",
@@ -144,11 +152,13 @@ def build_plan(raw_args: dict) -> dict:
     }
 
 
-def next_revision(plan: dict, steps: list[dict]) -> dict:
+def next_revision(
+    plan: dict, steps: list[dict], risk_of: _RiskResolver | None = None
+) -> dict:
     """Return a new revision with replaced steps, re-classified as risk."""
     updated = dict(plan)
     updated["steps"] = [
-        _normalize_step(index, raw) for index, raw in enumerate(steps, 1)
+        _normalize_step(index, raw, risk_of) for index, raw in enumerate(steps, 1)
     ]
     updated["revision"] = int(plan.get("revision", 1)) + 1
     updated["mode"] = "plan"
@@ -189,14 +199,11 @@ def validate_plan(
         args = step.get("args", {})
         if not isinstance(args, dict):
             errors.append(f"arguments for {tool or '?'} are not an object")
-        elif tool in schemas:
-            required = schemas[tool].get("required")
-            if isinstance(required, list):
-                missing = [name for name in required if name not in args]
-                if missing:
-                    errors.append(
-                        f"{tool} is missing required argument(s): {', '.join(missing)}"
-                    )
+        elif tool:
+            try:
+                validate_tool_args(tool, args, schemas.get(tool))
+            except ToolContractError as exc:
+                errors.append(str(exc))
     return errors
 
 

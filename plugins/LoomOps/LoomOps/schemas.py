@@ -203,3 +203,26 @@ TOOLS_SCHEMA = [
         },
     },
 ]
+
+# Per-tool risk declared to the core (Phase 1b). Observation tools are safe;
+# anything that mutates the host is dangerous.
+_TOOL_RISK = {
+    "ops_run_command": "dangerous",
+    "ops_write_file": "dangerous",
+    "ops_kill_process": "dangerous",
+    "ops_systemctl_restart": "dangerous",
+    "ops_read_file": "safe",
+    "ops_list_processes": "safe",
+    "ops_systemctl_status": "safe",
+    "ops_disk_usage": "safe",
+    "ops_network_status": "safe",
+    "ops_system_metrics": "safe",
+    "ops_log_search": "safe",
+    "ops_dmesg": "safe",
+    "ops_failed_units": "safe",
+    "ops_network_connections": "safe",
+    "ops_scan_health": "safe",
+}
+
+for _tool in TOOLS_SCHEMA:
+    _tool["risk"] = _TOOL_RISK.get(_tool["name"], "safe")
