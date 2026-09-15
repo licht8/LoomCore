@@ -2,14 +2,13 @@
 
 import { FormEvent, useEffect, useState, type ReactNode } from "react"
 import { authHeaders, getAdminToken, setAdminToken } from "@/lib/admin-token"
+import { getApiBase } from "@/lib/chat-api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-const STATUS_URL = "/api/plugins/status"
-
 async function validateToken(token: string): Promise<boolean> {
   try {
-    const response = await fetch(STATUS_URL, {
+    const response = await fetch(`${getApiBase()}/api/plugins/status`, {
       credentials: "include",
       headers: authHeaders(token),
     })
@@ -37,14 +36,14 @@ export function AdminGate({ children }: { children: ReactNode }) {
       })
       return
     }
-    fetch("/api/auth/session", { credentials: "include" })
+    fetch(`${getApiBase()}/api/auth/session`, { credentials: "include" })
       .then((response) => setAuthenticated(response.ok))
       .catch(() => setAuthenticated(false))
   }, [])
 
   async function login(event: FormEvent) {
     event.preventDefault()
-    const response = await fetch("/api/auth/login", {
+    const response = await fetch(`${getApiBase()}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",

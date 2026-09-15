@@ -1,4 +1,5 @@
-import { Activity, ShieldCheck } from "lucide-react"
+import { AdminSessionButton } from "@/components/admin-session-button"
+import { HubStatusButton } from "@/components/hub-status-button"
 
 export function DashboardHeader() {
   return (
@@ -9,20 +10,8 @@ export function DashboardHeader() {
       </div>
       <div className="flex items-center gap-3">
         <div className="hidden items-center gap-2 sm:flex">
-          <div className="flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-2">
-            <Activity className="size-3.5 text-emerald-500" />
-            <div>
-              <p className="text-xs font-medium text-foreground">Self-hosted Hub</p>
-              <p className="text-[11px] text-muted-foreground">Control plane online</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-2">
-            <ShieldCheck className="size-3.5 text-primary" />
-            <div>
-              <p className="text-xs font-medium text-foreground">Admin session</p>
-              <p className="text-[11px] text-muted-foreground">Protected access</p>
-            </div>
-          </div>
+          <HubStatusButton />
+          <AdminSessionButton />
         </div>
       </div>
     </header>
