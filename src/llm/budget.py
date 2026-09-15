@@ -2,17 +2,16 @@
 
 Per-identity rate limits bound how fast one caller can spend, but a shared or
 compromised admin token could still drain the provider balance over time. This
-is a coarse global ceiling on the number of LLM calls per UTC day; set
-``LLM_DAILY_CALL_LIMIT=0`` (the default) to disable it.
+is a coarse global ceiling on the number of LLM calls per UTC day; it defaults
+to 1000 calls/day and ``LLM_DAILY_CALL_LIMIT=0`` disables it.
 """
 
-import threading
 from datetime import UTC, datetime
 
 from src.config import settings
 from src.llm.exceptions import LlmBudgetExceeded
 
-_lock = threading.Lock()
+# single-threaded event-loop access; no lock needed. Revisit if a second thread is introduced.
 _state = {"day": "", "count": 0}
 
 
@@ -22,16 +21,14 @@ def _today() -> str:
 
 def reset_llm_budget() -> None:
     """Clear the in-memory counter (tests and process start)."""
-    with _lock:
-        _state["day"] = ""
-        _state["count"] = 0
+    _state["day"] = ""
+    _state["count"] = 0
 
 
 def llm_budget_status() -> dict:
     """Return the current daily budget usage."""
     limit = settings.llm_daily_call_limit
-    with _lock:
-        used = _state["count"] if _state["day"] == _today() else 0
+    used = _state["count"] if _state["day"] == _today() else 0
     return {
         "day": _today(),
         "used": used,
@@ -48,17 +45,16 @@ def consume_llm_budget(cost: int = 1) -> dict:
     """
     limit = settings.llm_daily_call_limit
     today = _today()
-    with _lock:
-        if _state["day"] != today:
-            _state["day"] = today
-            _state["count"] = 0
-        if limit > 0 and _state["count"] + cost > limit:
-            raise LlmBudgetExceeded(
-                f"Daily LLM call budget exhausted ({_state['count']}/{limit}); "
-                "the limit resets at UTC midnight"
-            )
-        _state["count"] += cost
-        used = _state["count"]
+    if _state["day"] != today:
+        _state["day"] = today
+        _state["count"] = 0
+    if limit > 0 and _state["count"] + cost > limit:
+        raise LlmBudgetExceeded(
+            f"Daily LLM call budget exhausted ({_state['count']}/{limit}); "
+            "the limit resets at UTC midnight"
+        )
+    _state["count"] += cost
+    used = _state["count"]
     return {
         "day": today,
         "used": used,

@@ -138,6 +138,12 @@ errors and then returns a clear message. Tune via `.env` (seconds / count):
 | `HETZNER_WRITE_TIMEOUT` | `30` |
 | `HETZNER_POOL_TIMEOUT` | `15` |
 | `HETZNER_MAX_RETRIES` | `2` |
+| `LLM_DAILY_CALL_LIMIT` | `1000` |
+
+`LLM_DAILY_CALL_LIMIT` is a process-wide daily ceiling on LLM HTTP calls (`0`
+disables it). It counts calls, not turns: a normal turn uses 2 (planner +
+summary), plus 1 per planner re-ask and 1 per transport retry, so expect 2-4
+calls per turn. It resets at UTC midnight.
 
 The 90s read timeout is a safety bound: with thinking disabled a full turn is a
 few seconds, so a request that hangs this long is a provider stall, not real work.

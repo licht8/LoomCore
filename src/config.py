@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     session_secret: str = ""
     secure_cookies: bool = False
     trusted_proxies: str = "127.0.0.1,::1"
-    llm_daily_call_limit: int = 0
+    llm_daily_call_limit: int = 1000
     plugins_dir: str = "/app/plugins"
     plugins_state_file: str = ""
     confirmations_file: str = ""
