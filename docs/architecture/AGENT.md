@@ -28,9 +28,10 @@ with no declared mode becomes `direct`. See `build_plan` / `_effective_mode` in
 `validate_plan` also checks each step against the tool's `inputSchema`: a step
 that omits a required argument (for example `core_disable_plugin` without
 `plugin`) is rejected and the planner is re-asked, so a call that could only fail
-never reaches execution. The same schema is enforced again at dispatch time in
-`execute_tool_by_name`, so an edited or hand-crafted plan cannot slip past the
-planner. See `src/core/contracts.py`.
+never reaches execution. The same schema is enforced again at dispatch time —
+plugin tools in `execute_tool_by_name`, core meta-tools in `dispatch_core_tool` —
+so an edited or hand-crafted plan cannot slip past the planner. See
+`src/core/contracts.py`.
 
 ## Flow
 

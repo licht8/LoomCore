@@ -129,7 +129,12 @@ EVENT_MODELS: dict[str, type[_Event]] = {
 
 
 def event_payload(model: _Event) -> dict:
-    """Serialize an event model to a wire dict, dropping unset fields."""
+    """Serialize an event model to a wire dict, dropping unset fields.
+
+    ``exclude_none`` is deliberate: unset optional fields (for example
+    ``artifacts`` on a success) are omitted rather than sent as ``null``. The TS
+    union marks these fields optional, so the payload stays additive.
+    """
     return model.model_dump(exclude_none=True)
 
 

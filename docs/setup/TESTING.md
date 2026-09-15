@@ -58,6 +58,19 @@ uvicorn src.main:app --reload --port 8000
 container. For auth, set either `ADMIN_TOKEN` or `ADMIN_PASSWORD_HASH` +
 `ADMIN_TOTP_SECRET` + `SESSION_SECRET` (password hash: `python -m src.auth 'password'`).
 
+### Plugin-less run
+
+`PLUGINS_DIR` must point at an **existing** directory; an empty one is the
+supported "no plugins" configuration (a non-existent path crashes startup).
+
+```bash
+mkdir -p tmp/no-plugins
+PLUGINS_DIR="$PWD/tmp/no-plugins" uvicorn src.main:app --port 8000
+```
+
+Startup logs `🔌 Plugins loaded: none`; `/api/tools` then lists only the `core_*`
+meta-tools and `/api/plugins/status` is `{"plugins": {}}`. `tmp/` is gitignored.
+
 ## E2E WireGuard
 
 The test creates a temporary config directory, then brings the `wgloomtest`
