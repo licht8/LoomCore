@@ -9,7 +9,6 @@ import { headerPillClass } from "@/components/header-pill"
 import { InfoRow } from "@/components/info-row"
 import {
   Popover,
-  PopoverArrow,
   PopoverContent,
   PopoverDescription,
   PopoverTitle,
@@ -68,7 +67,6 @@ export function AdminSessionButton() {
       </PopoverTrigger>
 
       <PopoverContent className="w-80">
-        <PopoverArrow />
         <div className="flex items-start justify-between gap-3">
           <div>
             <PopoverTitle>Admin session</PopoverTitle>

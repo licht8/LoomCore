@@ -49,19 +49,6 @@ function PopoverContent({
   )
 }
 
-function PopoverArrow({ className, ...props }: PopoverPrimitive.Arrow.Props) {
-  return (
-    <PopoverPrimitive.Arrow
-      data-slot="popover-arrow"
-      className={cn(
-        "size-2.5 rotate-45 border-b border-r border-border bg-card/85",
-        className,
-      )}
-      {...props}
-    />
-  )
-}
-
 function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
   return (
     <PopoverPrimitive.Title
@@ -100,7 +87,6 @@ export {
   PopoverTrigger,
   PopoverPortal,
   PopoverContent,
-  PopoverArrow,
   PopoverTitle,
   PopoverDescription,
   PopoverClose,

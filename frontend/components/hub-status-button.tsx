@@ -16,7 +16,6 @@ import { headerPillClass } from "@/components/header-pill"
 import { InfoRow } from "@/components/info-row"
 import {
   Popover,
-  PopoverArrow,
   PopoverContent,
   PopoverDescription,
   PopoverTitle,
@@ -103,7 +102,7 @@ export function HubStatusButton() {
       <PopoverTrigger className={headerPillClass}>
         <span className="relative flex size-3.5 items-center justify-center">
           {online && (
-            <span className="absolute inline-flex size-3.5 animate-ping rounded-full bg-emerald-400/50" />
+            <span className="absolute inline-flex size-3.5 animate-ping rounded-full bg-emerald-400/50 [animation-duration:3s]" />
           )}
           <Activity
             className={cn(
@@ -120,7 +119,6 @@ export function HubStatusButton() {
       </PopoverTrigger>
 
       <PopoverContent className="w-80">
-        <PopoverArrow />
         <div className="flex items-start justify-between gap-3">
           <div>
             <PopoverTitle>Self-hosted Hub</PopoverTitle>
