@@ -125,3 +125,9 @@ def test_planner_prompt_forbids_prefixing_with_the_tool_name():
     lowered = PLANNER_PROMPT.lower()
     assert "never prefix it with" in lowered
     assert "only the user-facing message" in lowered
+
+
+def test_planner_prompt_forbids_bare_tool_names():
+    lowered = PLANNER_PROMPT.lower()
+    assert "never output a tool name by itself" in lowered
+    assert "call the tool instead" in lowered
