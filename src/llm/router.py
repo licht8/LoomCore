@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Iterable
 
 from src.config import settings
 from src.core.agent import (
@@ -37,6 +38,16 @@ _TOOL_PREFIX_RE = re.compile(
     r"^\s*(?:reply|agent_plan)\s*(?::\s*|[-–—]\s+)", re.IGNORECASE
 )
 
+# A provider that ignores tool_choice="required" sometimes returns the tool name
+# as plain text. Such a token is not an answer and must never be shown or stored.
+_BARE_TOOL_NAMES = frozenset({AGENT_PLAN_TOOL, REPLY_TOOL})
+_MALFORMED_NUDGE = (
+    "You wrote a tool name as plain text instead of calling the tool. Call "
+    "`reply` with the user-facing message, or call `agent_plan` with the plan "
+    "arguments; never write a tool name by itself."
+)
+_CONFUSED_REPLY = "Sorry, I didn't quite catch that — could you rephrase your request?"
+
 
 def _strip_tool_prefix(text: str) -> str:
     """Remove a leading planner tool-name marker from assistant text."""
@@ -46,6 +57,18 @@ def _strip_tool_prefix(text: str) -> str:
         if match is None:
             return cleaned.strip()
         cleaned = cleaned[match.end() :]
+
+
+def _is_bare_tool_name(text: str, known_tools: Iterable[str] = ()) -> bool:
+    """True when ``text`` is only a tool name rather than a real message.
+
+    Normalizes surrounding whitespace and quotes/backticks, then checks the
+    planner tools plus the currently offered catalog names.
+    """
+    cleaned = text.strip().strip("`\"'").strip().lower()
+    if not cleaned:
+        return False
+    return cleaned in _BARE_TOOL_NAMES or cleaned in known_tools
 
 
 def _balanced_json(text: str, start: int) -> str | None:
@@ -152,6 +175,7 @@ class AIRouter:
         )
 
         errors: list[str] = []
+        bare_answer = False
         planner_started = time.monotonic()
         planner_attempts = 0
         try:
@@ -171,30 +195,46 @@ class AIRouter:
                     llm_response
                 )
 
+                bare_answer = False
+
                 if tool_name == REPLY_TOOL:
                     reply_text = ""
                     if isinstance(tool_args, dict):
                         reply_text = str(tool_args.get("text") or "").strip()
                     reply_text = _strip_tool_prefix(reply_text or content)
-                    await self._persist_assistant(session_id, reply_text, raw_tool_calls)
-                    return {"type": "text", "content": reply_text} | message_extra
-
-                if not raw_tool_calls:
+                    if reply_text and not _is_bare_tool_name(reply_text, known_tools):
+                        await self._persist_assistant(
+                            session_id, reply_text, raw_tool_calls
+                        )
+                        return {"type": "text", "content": reply_text} | message_extra
+                    # An empty or bare-name reply is a malformed completion.
+                    bare_answer = True
+                elif not raw_tool_calls:
                     recovered_args = self._recover_textual_plan_args(
                         content, user_message, known_tools
                     )
                     if recovered_args is None:
                         answer = _strip_tool_prefix(content)
-                        await self._persist_assistant(session_id, answer, None)
-                        return {"type": "text", "content": answer} | message_extra
-                    logger.warning(
-                        "Recovered a tool call the planner wrote as text "
-                        f"(session={session_id}, steps={len(recovered_args.get('steps', []))})"
-                    )
-                    tool_name = AGENT_PLAN_TOOL
-                    tool_args = recovered_args
+                        if answer and not _is_bare_tool_name(answer, known_tools):
+                            await self._persist_assistant(session_id, answer, None)
+                            return {"type": "text", "content": answer} | message_extra
+                        bare_answer = True
+                    else:
+                        logger.warning(
+                            "Recovered a tool call the planner wrote as text "
+                            f"(session={session_id}, "
+                            f"steps={len(recovered_args.get('steps', []))})"
+                        )
+                        tool_name = AGENT_PLAN_TOOL
+                        tool_args = recovered_args
 
-                if tool_name == AGENT_PLAN_TOOL:
+                if bare_answer:
+                    logger.warning(
+                        "Planner returned a bare tool name as text "
+                        f"(session={session_id}, content={content!r})"
+                    )
+                    errors = ["the planner wrote a bare tool name instead of calling it"]
+                elif tool_name == AGENT_PLAN_TOOL:
                     plan = build_plan(tool_args or {}, risk_of=resolve_tool_risk)
                     errors = validate_plan(plan, known_tools, tool_schemas)
                     if not errors:
@@ -212,13 +252,21 @@ class AIRouter:
                         {
                             "role": "user",
                             "content": (
-                                "That plan was rejected: "
-                                + "; ".join(errors)
-                                + ". Call agent_plan again with a corrected plan that "
-                                "uses only catalog tool names."
+                                _MALFORMED_NUDGE
+                                if bare_answer
+                                else (
+                                    "That plan was rejected: "
+                                    + "; ".join(errors)
+                                    + ". Call agent_plan again with a corrected plan "
+                                    "that uses only catalog tool names."
+                                )
                             ),
                         }
                     )
+
+            if bare_answer:
+                await self._persist_assistant(session_id, _CONFUSED_REPLY, None)
+                return {"type": "text", "content": _CONFUSED_REPLY} | message_extra
 
             failure = "I could not form a valid plan: " + "; ".join(errors)
             await self._persist_assistant(session_id, failure, None)
@@ -301,9 +349,9 @@ class AIRouter:
         dropped: the API has no matching tool_call id for them, and replaying a
         tool result as assistant narration taught the model to narrate results
         instead of calling ``agent_plan``. Assistant messages that are themselves
-        a leaked tool note (from older history) are dropped for the same reason.
-        Empty and unknown roles are dropped too, so a malformed history can never
-        produce a 400.
+        a leaked tool note or a bare tool name (from older history) are dropped for
+        the same reason. Empty and unknown roles are dropped too, so a malformed
+        history can never produce a 400.
         """
         api_messages: list[dict] = []
         for message in messages:
@@ -311,7 +359,9 @@ class AIRouter:
             content = message.get("content") or ""
             if role not in ("user", "assistant") or not content:
                 continue
-            if role == "assistant" and _looks_like_tool_note(content):
+            if role == "assistant" and (
+                _looks_like_tool_note(content) or _is_bare_tool_name(content)
+            ):
                 continue
             api_messages.append({"role": role, "content": content})
         return api_messages

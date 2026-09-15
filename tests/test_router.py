@@ -568,3 +568,83 @@ async def test_route_ignores_unknown_textual_tool(patched_router):
 
     assert result["type"] == "text"
     assert result["content"] == "[tool ghost_tool] {}"
+
+
+def test_is_bare_tool_name_variants():
+    is_bare = router_module._is_bare_tool_name
+
+    assert is_bare("reply")
+    assert is_bare("  agent_plan  ")
+    assert is_bare("`reply`")
+    assert is_bare('"agent_plan"')
+    assert is_bare("Reply")
+    assert is_bare("core_health", {"core_health", "ops_disk_usage"})
+    assert not is_bare("Reply is required")
+    assert not is_bare("hello")
+    assert not is_bare("")
+    assert not is_bare("core_health")
+
+
+@pytest.mark.asyncio
+async def test_route_bare_reply_name_is_not_shown(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("reply"), _reply_response("Hi there!")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "Hi there!"
+    assert state["calls"] == 2
+    assert [content for _, content, _ in state["assistant_saved"]] == ["Hi there!"]
+
+
+@pytest.mark.asyncio
+async def test_route_bare_agent_plan_name_falls_back_after_reask(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("agent_plan"), _text_response("agent_plan")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == router_module._CONFUSED_REPLY
+    assert state["calls"] == 2
+    assert state["assistant_saved"][0][1] == router_module._CONFUSED_REPLY
+
+
+@pytest.mark.asyncio
+async def test_route_bare_known_tool_name_is_malformed(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("core_health"), _text_response("hello")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["content"] == "hello"
+    assert state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_route_reply_tool_call_with_empty_text_is_malformed(patched_router):
+    router, state = patched_router
+    state["queue"] = [_reply_response(""), _reply_response("Hi there!")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["content"] == "Hi there!"
+    assert state["calls"] == 2
+
+
+def test_api_history_drops_bare_tool_names():
+    api = router_module.AIRouter._api_history
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "agent_plan"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "assistant", "content": "Alright."},
+        {"role": "assistant", "content": "[tool core_health] {}"},
+    ]
+
+    assert api(messages) == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "Alright."},
+    ]
