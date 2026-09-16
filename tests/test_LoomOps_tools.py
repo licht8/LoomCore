@@ -92,6 +92,41 @@ def test_run_command_rejects_missing_binary(load_loomops, monkeypatch):
         commands.run_command({"command": "uptime"})
 
 
+def test_run_command_rejects_path_qualified_name(load_loomops, monkeypatch):
+    commands = load_loomops("commands")["commands"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "ls")
+    monkeypatch.setattr(commands.shutil, "which", lambda name: f"/bin/{name}")
+    calls = []
+    monkeypatch.setattr(
+        commands.subprocess, "run", lambda *a, **k: calls.append(a) or _Completed()
+    )
+
+    for command in ("./ls", "/bin/ls", "../bin/ls"):
+        with pytest.raises(ValueError, match="by name, not by path"):
+            commands.run_command({"command": command})
+
+    assert calls == []
+
+
+def test_run_command_executes_resolved_absolute_path(load_loomops, monkeypatch, tmp_path):
+    commands = load_loomops("commands")["commands"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return _Completed(stdout="up 3 days\n")
+
+    monkeypatch.setattr(commands.subprocess, "run", fake_run)
+
+    result = commands.run_command({"command": "uptime -p"})
+
+    assert seen["argv"] == ["/usr/bin/uptime", "-p"]
+    assert result["argv"] == ["/usr/bin/uptime", "-p"]
+
+
 def test_run_command_denies_allowlisted_interpreter(load_loomops, monkeypatch):
     commands = load_loomops("commands")["commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "sh")
@@ -128,14 +163,14 @@ def test_run_command_runs_allowed_and_audits(load_loomops, monkeypatch, tmp_path
     result = commands.run_command({"command": "uptime -p"})
 
     assert result["exit_code"] == 0
-    assert result["argv"] == ["uptime", "-p"]
+    assert result["argv"] == ["/usr/bin/uptime", "-p"]
     assert "up 3 days" in result["output"]
     records = [
         json.loads(line)
         for line in (tmp_path / "audit.log").read_text(encoding="utf-8").splitlines()
     ]
     assert records[0]["event"] == "ops_run_command"
-    assert records[0]["argv"] == ["uptime", "-p"]
+    assert records[0]["argv"] == ["/usr/bin/uptime", "-p"]
 
 
 def test_run_command_accepts_list_form(load_loomops, monkeypatch, tmp_path):
@@ -153,7 +188,7 @@ def test_run_command_accepts_list_form(load_loomops, monkeypatch, tmp_path):
 
     commands.run_command({"command": ["ip", "-j", "addr"]})
 
-    assert seen["argv"] == ["ip", "-j", "addr"]
+    assert seen["argv"] == ["/sbin/ip", "-j", "addr"]
 
 
 def test_run_command_timeout_is_reported(load_loomops, monkeypatch, tmp_path):

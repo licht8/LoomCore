@@ -74,9 +74,12 @@ approval before running. Every other tool is read-only and runs without approval
 ## Safety model
 
 - **No shell.** `ops_run_command` splits the command with `shlex` and runs the argv
-  directly (`shell=False`). The executable basename must be in
-  `LOOMOPS_ALLOWED_COMMANDS` and resolvable via `shutil.which`; anything else is
-  rejected before a process starts.
+  directly (`shell=False`). The executable must be given **by name** — a
+  path-qualified `argv[0]` (for example `./ls` or `/bin/ls`) is rejected. The name
+  must be in `LOOMOPS_ALLOWED_COMMANDS`; it is resolved once via `shutil.which` to
+  an absolute path and that exact path is executed, so a `PATH` change between the
+  check and the spawn cannot swap the binary. Anything else is rejected before a
+  process starts.
 - **Deny by default.** With `LOOMOPS_ALLOWED_COMMANDS` unset, every
   `ops_run_command` is refused. Likewise `ops_read_file`/`ops_write_file` refuse
   all paths until `LOOMOPS_ALLOWED_PATHS` is set.

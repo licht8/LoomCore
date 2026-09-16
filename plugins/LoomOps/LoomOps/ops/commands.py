@@ -74,6 +74,10 @@ def _split_command(command: Any) -> list[str]:
 def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
     argv = _split_command(arguments.get("command"))
     executable = Path(argv[0]).name
+    if argv[0] != executable:
+        raise ValueError(
+            f"Command must be given by name, not by path: '{argv[0]}'"
+        )
     allowed = allowed_commands()
     if not allowed:
         raise ValueError(
@@ -88,13 +92,18 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
             f"Command '{executable}' can execute arbitrary code and is never "
             f"allowed, even when listed in LOOMOPS_ALLOWED_COMMANDS"
         )
-    if shutil.which(executable) is None:
+    resolved = shutil.which(executable)
+    if resolved is None:
         raise ValueError(f"Command '{executable}' is not installed in this container")
+    # Execute the absolute path resolved above, never the caller-supplied
+    # argv[0]: a PATH change between the check and the spawn cannot swap the
+    # binary (TOCTOU).
+    run_argv = [resolved, *argv[1:]]
 
     timeout = command_timeout()
     try:
         completed = subprocess.run(
-            argv,
+            run_argv,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -103,11 +112,11 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     except subprocess.TimeoutExpired:
         audit_error = audit_event(
-            "ops_run_command", argv=argv, timeout=timeout, timed_out=True
+            "ops_run_command", argv=run_argv, timeout=timeout, timed_out=True
         )
         return {
-            "output": f"Command timed out after {timeout}s: {' '.join(argv)}",
-            "argv": argv,
+            "output": f"Command timed out after {timeout}s: {' '.join(run_argv)}",
+            "argv": run_argv,
             "timed_out": True,
             "audit_error": audit_error,
         }
@@ -117,16 +126,16 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
     stdout, stdout_truncated = _truncate(completed.stdout or "")
     stderr, stderr_truncated = _truncate(completed.stderr or "")
     audit_error = audit_event(
-        "ops_run_command", argv=argv, exit_code=completed.returncode
+        "ops_run_command", argv=run_argv, exit_code=completed.returncode
     )
-    lines = [f"$ {' '.join(argv)}", f"exit code: {completed.returncode}"]
+    lines = [f"$ {' '.join(run_argv)}", f"exit code: {completed.returncode}"]
     if stdout:
         lines.append(stdout)
     if stderr:
         lines.append(f"stderr:\n{stderr}")
     return {
         "output": "\n".join(lines),
-        "argv": argv,
+        "argv": run_argv,
         "exit_code": completed.returncode,
         "stdout": stdout,
         "stderr": stderr,
