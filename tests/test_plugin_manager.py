@@ -331,6 +331,42 @@ def test_get_plugin_status_missing_and_present():
     assert present["is_healthy"] is True
 
 
+def test_get_plugin_status_reports_published_tool_count():
+    manager = PluginManager()
+    _add_plugin(manager)
+    manager._rebuild_tool_cache(
+        "demo",
+        [
+            {"name": "wg_interface_status"},
+            {"name": "wg_get_client_artifact", "internal": True},
+        ],
+    )
+
+    status = manager.get_plugin_status("demo")
+
+    # All published tools count, external and internal alike.
+    assert status["tools"] == 2
+
+
+def test_get_plugin_status_tool_count_updates_on_rebuild():
+    manager = PluginManager()
+    _add_plugin(manager)
+    manager._rebuild_tool_cache("demo", [{"name": "old"}, {"name": "old2"}])
+
+    manager._rebuild_tool_cache("demo", [{"name": "new"}])
+
+    assert manager.get_plugin_status("demo")["tools"] == 1
+
+
+def test_index_tools_without_registered_plugin_does_not_raise():
+    manager = PluginManager()
+
+    external = manager._index_tools("ghost", [{"name": "tool_a"}])
+
+    assert [tool["name"] for tool in external] == ["tool_a"]
+    assert manager._tool_plugins == {"tool_a": "ghost"}
+
+
 # === restart ===
 
 @pytest.mark.asyncio

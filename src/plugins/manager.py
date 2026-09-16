@@ -565,6 +565,11 @@ class PluginManager:
 
     def _index_tools(self, plugin_name: str, tools: list[dict]) -> list[dict]:
         """Cache a plugin's tools; return the LLM-facing (non-internal) tools."""
+        plugin = self._plugins.get(plugin_name)
+        if plugin is not None:
+            # Record every published tool (external + internal) so
+            # get_plugin_status can report an accurate count.
+            plugin.tools = list(tools)
         external: list[dict] = []
         for tool in tools:
             tool_name = tool.get("name")

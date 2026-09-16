@@ -40,6 +40,32 @@ def test_discover_missing_dir_is_unsupported(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_lifespan_primes_plugin_tool_cache(monkeypatch, tmp_path):
+    """Startup must index plugin tools so status shows real counts immediately."""
+    from src import app as app_module
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    primed = []
+
+    def fake_discover(_dir):
+        return ["demo"]
+
+    async def fake_get_all_tools():
+        primed.append(True)
+        return [{"name": "demo_tool"}]
+
+    monkeypatch.setattr(settings, "plugins_dir", str(plugins_dir))
+    monkeypatch.setattr(app_module.plugin_manager, "discover_plugins", fake_discover)
+    monkeypatch.setattr(app_module.plugin_manager, "get_all_tools", fake_get_all_tools)
+
+    async with app_module.lifespan(app):
+        pass
+
+    assert primed == [True]
+
+
+@pytest.mark.asyncio
 async def test_tools_endpoint_lists_only_core_without_plugins(monkeypatch):
     _auth(monkeypatch)
 

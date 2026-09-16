@@ -53,6 +53,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     discovered = plugin_manager.discover_plugins(settings.plugins_dir)
     print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
 
+    # Prime the tool cache so plugin tool counts and schemas are available
+    # immediately (discover_plugins only spawns the subprocesses).
+    try:
+        tools = await plugin_manager.get_all_tools()
+        print(f"🛠️  Tools indexed: {len(tools)}")
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        logger.warning(f"Failed to prime plugin tools at startup: {exc}")
+
     # Start the background healthcheck every 30 seconds
     healthcheck_task = asyncio.create_task(healthcheck_loop())
     try:
