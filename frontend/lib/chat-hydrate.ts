@@ -13,6 +13,18 @@ function isBareToolName(content: string): boolean {
   return PLANNER_TOOL_NAMES.has(cleaned)
 }
 
+/**
+ * True when a stored assistant message is a leaked planner tool call written as
+ * text instead of being executed, e.g. `agent_plan { "steps": [...] }`. Such rows
+ * must never render as an assistant bubble.
+ */
+function isLeakedToolCall(content: string): boolean {
+  if (isBareToolName(content)) return true
+  const match = content.match(/^\s*(?:reply|agent_plan|core_[a-z_]+)\s*\{/)
+  if (match && /[{}]/.test(content)) return true
+  return /"steps"\s*:\s*\[/.test(content)
+}
+
 export function formatTimestamp(): string {
   return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
 }
@@ -157,9 +169,9 @@ export function hydrateMessages(rows: SessionMessage[]): ChatMessage[] {
     if (row.role === "user") {
       hydrated.push({ id: row.id, role: "user", content: row.content, timestamp })
     } else if (row.role === "assistant" && (row.content || "").trim()) {
-      // Older sessions may have persisted a leaked planner tool name as text;
-      // skip those rows so they never render as an assistant bubble.
-      if (isBareToolName(row.content)) continue
+      // Older sessions may have persisted a leaked planner tool name or an
+      // unwrapped tool call as text; skip those rows so they never render.
+      if (isLeakedToolCall(row.content)) continue
       hydrated.push({
         id: row.id,
         role: "assistant",

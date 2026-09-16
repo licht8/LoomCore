@@ -570,6 +570,109 @@ async def test_route_ignores_unknown_textual_tool(patched_router):
     assert result["content"] == "[tool ghost_tool] {}"
 
 
+@pytest.mark.asyncio
+async def test_route_recovers_unwrapped_agent_plan_text(patched_router):
+    router, state = patched_router
+    plan_args = {
+        "goal": "List available tools",
+        "mode": "direct",
+        "steps": [{"tool": "core_list_tools", "args": {}, "why": "show tools"}],
+    }
+    state["queue"] = [_text_response(f"agent_plan {json.dumps(plan_args)}")]
+
+    result = await router.route("show tools", "sess-1")
+
+    assert result["type"] == "plan"
+    assert result["plan"]["steps"][0]["tool"] == "core_list_tools"
+    assert state["assistant_saved"] == []
+
+
+@pytest.mark.asyncio
+async def test_route_recovers_unwrapped_reply_text(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response('reply { "text": "Hi there!" }')]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "Hi there!"
+    assert state["assistant_saved"][0][1] == "Hi there!"
+    assert state["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_route_recovers_unwrapped_known_tool_text(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("core_list_tools {}")]
+
+    result = await router.route("what are the tools", "sess-1")
+
+    assert result["type"] == "plan"
+    plan = result["plan"]
+    assert plan["mode"] == "direct"
+    assert plan["steps"][0]["tool"] == "core_list_tools"
+
+
+@pytest.mark.asyncio
+async def test_route_unwrapped_unknown_tool_not_executed(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response('ghost_tool {"a": 1}')]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_route_unwrapped_plan_after_reask_never_leaks(patched_router):
+    router, state = patched_router
+    hovered = 'agent_plan {"goal": "x", "steps": [{"tool": ""}]} extra prose'
+    state["queue"] = [_text_response(hovered), _text_response(hovered)]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert "agent_plan" not in result["content"]
+    assert "steps" not in result["content"]
+    assert state["calls"] == 2
+
+
+def test_leaked_plan_object_detects_json_steps():
+    detect = router_module._leaked_plan_object
+
+    assert detect('{"goal": "x", "steps": [{"tool": "core_health"}]}') is not None
+    assert detect('Sure thing.\n{"steps": [{"tool": "core_health"}]}') is not None
+    assert detect("no json here") is None
+    assert detect('{"goal": "x"}') is None
+
+
+def test_recover_textual_plan_args_reply_sentinel():
+    recover = router_module.AIRouter._recover_textual_plan_args
+
+    recovered = recover('reply { "text": "hello" }', "hi", set())
+
+    assert recovered is not None and recovered.get("__reply__") is True
+    assert recovered["text"] == "hello"
+
+
+def test_api_history_drops_leaked_plan_text():
+    api = router_module.AIRouter._api_history
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": 'agent_plan {"goal": "x", "steps": [{"tool": "core_health"}]}',
+        },
+        {"role": "assistant", "content": "Alright."},
+    ]
+
+    assert api(messages) == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "Alright."},
+    ]
+
+
 def test_is_bare_tool_name_variants():
     is_bare = router_module._is_bare_tool_name
 

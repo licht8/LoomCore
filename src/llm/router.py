@@ -37,6 +37,17 @@ _TEXTUAL_RESULT_RE = re.compile(r"Tool result\s*\((?P<name>[A-Za-z0-9_]+)\)")
 _TOOL_PREFIX_RE = re.compile(
     r"^\s*(?:reply|agent_plan)\s*(?::\s*|[-–—]\s+)", re.IGNORECASE
 )
+# The planner sometimes writes the tool name immediately followed by its JSON
+# arguments ("agent_plan { ... }", "reply { "text": ... }"). That is a textual
+# tool call, not chat text, and must be recovered instead of shown to the user.
+_NAME_BRACED_JSON_RE = re.compile(
+    r"(?<![\w.])"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*"
+    r"(?P<body>\{)"
+)
+# Any top-level JSON object that carries a "steps" array is a leaked plan.
+_JSON_STEPS_RE = re.compile(r'"(?P<key>steps)"\s*:\s*\[')
 
 # A provider that ignores tool_choice="required" sometimes returns the tool name
 # as plain text. Such a token is not an answer and must never be shown or stored.
@@ -117,6 +128,29 @@ def _looks_like_tool_note(content: str) -> bool:
         or text.startswith("Tool result (")
         or text.startswith("Tool result:")
     )
+
+
+def _leaked_plan_object(content: str) -> dict | None:
+    """Return the first JSON object at/after a ``steps`` key, or None.
+
+    Guards the text path: a plan the planner wrote as plain text must never be
+    shown as a chat answer, even when the surrounding markup is unrecognized.
+    """
+    for match in _JSON_STEPS_RE.finditer(content):
+        # Back up to the object that opened before this "steps" key.
+        start = content.rfind("{", 0, match.start())
+        if start == -1:
+            continue
+        raw = _balanced_json(content, start)
+        if raw is None:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("steps"):
+            return payload
+    return None
 
 
 class AIRouter:
@@ -213,9 +247,22 @@ class AIRouter:
                     recovered_args = self._recover_textual_plan_args(
                         content, user_message, known_tools
                     )
-                    if recovered_args is None:
+                    if recovered_args is not None and recovered_args.get("__reply__"):
+                        # A textual "reply { ... }": recover it as chat text.
+                        reply_text = _strip_tool_prefix(
+                            str(recovered_args.get("text") or "")
+                        )
+                        if reply_text and not _is_bare_tool_name(reply_text, known_tools):
+                            await self._persist_assistant(session_id, reply_text, None)
+                            return {"type": "text", "content": reply_text} | message_extra
+                        bare_answer = True
+                    elif recovered_args is None:
                         answer = _strip_tool_prefix(content)
-                        if answer and not _is_bare_tool_name(answer, known_tools):
+                        if (
+                            answer
+                            and not _is_bare_tool_name(answer, known_tools)
+                            and _leaked_plan_object(answer) is None
+                        ):
                             await self._persist_assistant(session_id, answer, None)
                             return {"type": "text", "content": answer} | message_extra
                         bare_answer = True
@@ -360,7 +407,9 @@ class AIRouter:
             if role not in ("user", "assistant") or not content:
                 continue
             if role == "assistant" and (
-                _looks_like_tool_note(content) or _is_bare_tool_name(content)
+                _looks_like_tool_note(content)
+                or _is_bare_tool_name(content)
+                or _leaked_plan_object(content) is not None
             ):
                 continue
             api_messages.append({"role": role, "content": content})
@@ -373,10 +422,12 @@ class AIRouter:
         """Recover a plan the model wrote as text instead of a real tool call.
 
         Some completions return the intended call as prose (``[tool name] {...}``,
-        ``<tool_call>{...}</tool_call>``, or a narrated ``Tool result (name)``).
-        Treat those as ``agent_plan`` arguments — a real tool name becomes a
-        one-step direct action — so the request still runs instead of surfacing as
-        a chat answer. Returns None when nothing usable parses.
+        ``name { ... }`` without any wrapper, ``<tool_call>{...}</tool_call>``, or
+        a narrated ``Tool result (name)``). Treat those as ``agent_plan``
+        arguments — a real tool name becomes a one-step direct action — so the
+        request still runs instead of surfacing as a chat answer. A textual
+        ``reply`` returns a ``{"__reply__": True, "text": ...}`` sentinel so the
+        caller can answer in chat. Returns None when nothing usable parses.
         """
         if not content:
             return None
@@ -384,6 +435,10 @@ class AIRouter:
         candidates: list[tuple[str, object]] = []
         for match in _TEXTUAL_CALL_RE.finditer(content):
             candidates.append((match.group("name"), _balanced_json(content, match.end()) or ""))
+        for match in _NAME_BRACED_JSON_RE.finditer(content):
+            candidates.append(
+                (match.group("name"), _balanced_json(content, match.start("body")) or "")
+            )
         for match in _TEXTUAL_RESULT_RE.finditer(content):
             candidates.append((match.group("name"), ""))
         for match in _FENCED_JSON_RE.finditer(content):
@@ -422,6 +477,11 @@ class AIRouter:
             if name == AGENT_PLAN_TOOL:
                 if args.get("steps"):
                     return args
+                continue
+            if name == REPLY_TOOL:
+                # Unwrapped "reply { ... }": surface it as chat text, not a plan.
+                if isinstance(args.get("text"), str) and args["text"].strip():
+                    return {"__reply__": True, "text": args["text"]}
                 continue
             if name in known_tools:
                 # A real tool named directly in prose: run it as one direct step.
