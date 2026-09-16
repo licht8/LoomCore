@@ -1,4 +1,3 @@
-import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Plus_Jakarta_Sans, Geist_Mono } from 'next/font/google'
 import './globals.css'
@@ -16,7 +15,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'LoomCore Assistant — AI Infrastructure Management',
   description: 'Manage your AI infrastructure with the LoomCore Assistant.',
-  generator: 'v0.app',
   icons: {
     icon: [
       {
@@ -53,7 +51,6 @@ export default function RootLayout({
     <html lang="en" className={`bg-background ${jakarta.variable} ${geistMono.variable}`}>
       <body className="font-sans antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )
