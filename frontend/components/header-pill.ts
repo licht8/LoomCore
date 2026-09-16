@@ -1,2 +1,0 @@
-export const headerPillClass =
-  "group flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-2 text-left outline-none transition-all duration-300 hover:-translate-y-px hover:bg-muted/70 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/50 data-[popup-open]:-translate-y-px data-[popup-open]:bg-muted/70 data-[popup-open]:shadow-md data-[popup-open]:ring-2 data-[popup-open]:ring-ring/40"

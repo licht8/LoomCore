@@ -1,78 +1,99 @@
-import { Activity, MessageSquareText, Sparkles } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+"use client"
+
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { MessageSquare, Puzzle, Settings } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
+import { motion, useReducedMotion } from "motion/react"
+
 import { cn } from "@/lib/utils"
+
+const tapTransition = {
+  type: "spring",
+  stiffness: 400,
+  damping: 25,
+} as const
 
 type NavItem = {
   label: string
-  icon: "assistant" | "status"
-  active?: boolean
+  href: string
+  icon: LucideIcon
 }
 
 const navItems: NavItem[] = [
-  { label: "AI Assistant", icon: "assistant", active: true },
-  { label: "System Status", icon: "status" },
+  { label: "AI Assistant", href: "/", icon: MessageSquare },
+  { label: "Plugins", href: "/plugins", icon: Puzzle },
 ]
 
-const icons = {
-  assistant: MessageSquareText,
-  status: Activity,
+function itemClass(active: boolean) {
+  return cn(
+    "group relative flex h-10 items-center gap-2 rounded-md px-3 text-sm transition-colors duration-150",
+    active
+      ? "font-medium text-foreground"
+      : "font-normal text-foreground/70 hover:bg-foreground/[0.03] hover:text-foreground",
+  )
+}
+
+function iconClass(active: boolean) {
+  return cn(
+    "size-5 transition-colors",
+    active
+      ? "text-foreground"
+      : "text-muted-foreground/70 group-hover:text-muted-foreground",
+  )
+}
+
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  const Icon = item.icon
+  const reduceMotion = useReducedMotion()
+  return (
+    <motion.div
+      whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+      transition={tapTransition}
+    >
+      <Link
+        href={item.href}
+        aria-current={active ? "page" : undefined}
+        className={itemClass(active)}
+      >
+        {active && (
+          <span
+            aria-hidden
+            className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-foreground/60"
+          />
+        )}
+        <Icon className={iconClass(active)} strokeWidth={1.75} />
+        {item.label}
+      </Link>
+    </motion.div>
+  )
 }
 
 export function DashboardSidebar() {
-  return (
-    <aside className="glass flex w-64 shrink-0 flex-col rounded-3xl bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-3 px-6 py-6">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-sidebar-accent text-sidebar-accent-foreground">
-          <Sparkles className="size-5" />
-        </div>
-        <div className="leading-tight">
-          <p className="text-sm font-bold tracking-tight">LoomCore</p>
-          <p className="text-xs text-sidebar-foreground/60">AI Infrastructure</p>
-        </div>
-      </div>
+  const pathname = usePathname()
+  const isActive = (href: string) => pathname === href
 
-      <nav className="flex flex-col gap-1.5 px-3 py-2">
-        {navItems.map((item) => {
-          const Icon = icons[item.icon]
-          return (
-            <button
-              key={item.label}
-              className={cn(
-                "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-300",
-                item.active
-                  ? "bg-gradient-to-r from-sidebar-accent to-sidebar-accent/40 text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-sidebar-foreground",
-              )}
-              aria-current={item.active ? "page" : undefined}
-            >
-              <span
-                className={cn(
-                  "flex size-8 items-center justify-center rounded-lg transition-all duration-300",
-                  item.active
-                    ? "bg-white/15 text-sidebar-accent-foreground"
-                    : "bg-white/5 text-sidebar-foreground/60 group-hover:bg-white/10 group-hover:text-sidebar-foreground",
-                )}
-              >
-                <Icon className="size-4" />
-              </span>
-              {item.label}
-            </button>
-          )
-        })}
+  return (
+    <aside className="glass-sidebar flex w-64 shrink-0 flex-col rounded-2xl px-3 pb-5">
+      <div className="flex h-[var(--header-h)] items-center px-3 text-lg font-semibold tracking-tight text-foreground">
+        Loom Panel
+      </div>
+      <div className="mx-3 border-t border-border/50" />
+
+      <nav className="flex flex-col gap-1.5 py-4">
+        {navItems.map((item) => (
+          <NavLink key={item.href} item={item} active={isActive(item.href)} />
+        ))}
+        {/* System Status — hidden until functional */}
       </nav>
 
-      <div className="mt-auto px-4 pb-6">
-        <div className="rounded-2xl bg-white/5 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-sidebar-foreground/70">Plugin LoomWG</span>
-            <Badge className="gap-1.5 border-transparent bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/15">
-              <span className="size-1.5 rounded-full bg-emerald-400" />
-              Active
-            </Badge>
-          </div>
-          <p className="mt-2 text-xs leading-relaxed text-sidebar-foreground/50">
-            Workload gateway connected and streaming telemetry.
-          </p>
+      <div className="mt-auto flex flex-col py-4">
+        <div className="mx-3 border-t border-border/50" />
+        <div className="flex flex-col gap-1.5 pt-4">
+          <button type="button" className={itemClass(false)}>
+            <Settings className={iconClass(false)} strokeWidth={1.75} />
+            Settings
+          </button>
         </div>
       </div>
     </aside>

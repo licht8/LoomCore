@@ -624,7 +624,9 @@ class PluginManager:
         """Return plugin status in the API format.
 
         Returns:
-            {"name": ..., "state": ..., "pid": ..., "restart_attempt": ..., "is_healthy": ...}
+            {"name": ..., "state": ..., "pid": ..., "restart_attempt": ...,
+             "is_healthy": ..., "enabled": ..., "version": ..., "description": ...,
+             "tools": ..., "permission_warnings": ...}
         """
         plugin = self._plugins.get(plugin_name)
         if not plugin:
@@ -634,16 +636,27 @@ class PluginManager:
                 "pid": None,
                 "restart_attempt": 0,
                 "is_healthy": False,
+                "enabled": False,
+                "version": "",
+                "description": "",
+                "tools": 0,
+                "permission_warnings": [],
             }
 
         pid = plugin.proc.pid if plugin.proc is not None else None
         healthy = self.is_healthy(plugin_name)
+        manifest = plugin.manifest or {}
         return {
             "name": plugin_name,
             "state": plugin.state.value,
             "pid": pid,
             "restart_attempt": plugin.restart_attempt,
             "is_healthy": healthy,
+            "enabled": plugin.enabled,
+            "version": plugin.version,
+            "description": str(manifest.get("description") or ""),
+            "tools": len(plugin.tools),
+            "permission_warnings": list(plugin.permission_warnings),
         }
 
     # ------------------------------------------------------------------

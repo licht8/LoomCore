@@ -72,6 +72,10 @@
   --border: oklch(0.9 0.03 315);
   --input: oklch(0.9 0.03 315);
   --ring: oklch(0.72 0.13 305);
+  /* Liquid glass surface (popover only) */
+  --glass-edge: oklch(0 0 0 / 8%);
+  --glass-ring: oklch(1 0 0 / 60%);
+  --sidebar-surface: oklch(from var(--card) calc(l * 0.97) c h);
   --chart-1: oklch(0.5 0.24 305);
   --chart-2: oklch(0.72 0.13 305);
   --chart-3: oklch(0.62 0.18 300);
@@ -112,6 +116,9 @@
   --border: oklch(0.85 0.04 310 / 18%);
   --input: oklch(0.85 0.04 310 / 20%);
   --ring: oklch(0.72 0.04 305);
+  --glass-edge: oklch(1 0 0 / 15%);
+  --glass-ring: oklch(1 0 0 / 8%);
+  --sidebar-surface: oklch(from var(--card) calc(l * 0.9) c h);
   --chart-1: oklch(0.72 0.045 305);
   --chart-2: oklch(0.62 0.04 300);
   --chart-3: oklch(0.55 0.045 298);
@@ -149,6 +156,9 @@
     --border: oklch(0.85 0.04 310 / 18%);
     --input: oklch(0.85 0.04 310 / 20%);
     --ring: oklch(0.72 0.04 305);
+    --glass-edge: oklch(1 0 0 / 15%);
+    --glass-ring: oklch(1 0 0 / 8%);
+    --sidebar-surface: oklch(from var(--card) calc(l * 0.9) c h);
     --chart-1: oklch(0.72 0.045 305);
     --chart-2: oklch(0.62 0.04 300);
     --chart-3: oklch(0.55 0.045 298);
@@ -182,9 +192,60 @@
 @utility glass {
   background-color: color-mix(in oklab, var(--card) 100%, transparent);
   backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   border: 1px solid oklch(1 0 0 / 12%);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 14%),
     0 12px 40px -12px oklch(0.2 0.06 295 / 45%);
+}
+
+@utility glass-sidebar {
+  background-color: var(--sidebar-surface);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid oklch(1 0 0 / 12%);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 14%),
+    0 12px 40px -12px oklch(0.2 0.06 295 / 45%);
+}
+
+@utility liquid-glass {
+  position: relative;
+  background-color: color-mix(in oklab, var(--popover) 70%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-edge);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-ring),
+    0 8px 32px rgb(0 0 0 / 12%),
+    0 2px 8px rgb(0 0 0 / 8%);
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 1px;
+    border-radius: inherit;
+    background: linear-gradient(0deg, rgb(0 0 0 / 15%), transparent);
+    pointer-events: none;
+  }
+}
+
+@keyframes plugin-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.plugin-row-in {
+  animation: plugin-row-in 160ms ease-out backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-row-in {
+    animation: none;
+  }
 }

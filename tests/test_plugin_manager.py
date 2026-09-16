@@ -319,6 +319,11 @@ def test_get_plugin_status_missing_and_present():
         "pid": None,
         "restart_attempt": 0,
         "is_healthy": False,
+        "enabled": False,
+        "version": "",
+        "description": "",
+        "tools": 0,
+        "permission_warnings": [],
     }
     assert present["state"] == PluginState.IDLE.value
     assert present["pid"] == 4242
@@ -835,6 +840,7 @@ def test_get_plugin_status_disabled_has_no_pid():
 
     assert status["pid"] is None
     assert status["is_healthy"] is False
+    assert status["enabled"] is False
 
 
 def test_drain_stderr_logs_plugin_output(caplog):
