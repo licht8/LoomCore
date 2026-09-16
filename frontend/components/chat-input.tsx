@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Eraser, Paperclip, Pause, SendHorizonal } from "lucide-react"
+import { Eraser, Paperclip, Pause, SendHorizonal, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
@@ -23,6 +23,7 @@ interface ChatInputProps {
   isSending?: boolean
   planRequest?: PlanRequest | null
   onPlanResponse?: (action: "approve" | "edit" | "reject", steps?: PlanStep[]) => void
+  error?: string | null
 }
 
 /**
@@ -43,6 +44,7 @@ export function ChatInput({
   isSending = false,
   planRequest,
   onPlanResponse,
+  error,
 }: ChatInputProps) {
   const [text, setText] = useState("")
   const [clearOpen, setClearOpen] = useState(false)
@@ -181,6 +183,14 @@ export function ChatInput({
           )}
         </div>
       )}
+
+      {/* Error banner — in-flow, snug above the input, glass-styled */}
+      {error ? (
+        <div className="relative z-10 mx-auto mb-2 flex max-w-3xl items-center justify-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-center text-xs font-medium text-destructive shadow-sm backdrop-blur-md">
+          <TriangleAlert className="size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">{error}</span>
+        </div>
+      ) : null}
 
       <div className="relative z-10 mx-auto flex max-w-[61rem] items-stretch gap-2">
         {onClear && <div aria-hidden className="w-10 shrink-0" />}

@@ -97,15 +97,6 @@ export function ChatRoom() {
         </div>
       </div>
 
-      {/* Error block — red banner above the input */}
-      {error && (
-        <div className="absolute inset-x-0 bottom-[132px] mx-auto max-w-3xl px-6">
-          <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-2 text-center text-xs font-medium text-destructive">
-            ⚠️ {error}
-          </div>
-        </div>
-      )}
-
       <ChatInput
         onSend={handleSend}
         onCancel={cancelRequest}
@@ -114,6 +105,7 @@ export function ChatRoom() {
         isSending={isSending}
         planRequest={planRequest}
         onPlanResponse={sendPlanResponse}
+        error={error}
       />
     </>
   )
