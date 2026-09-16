@@ -55,6 +55,7 @@ export async function fetchAdminSession(): Promise<boolean> {
   try {
     const response = await fetch(`${getApiBase()}/api/auth/session`, {
       credentials: "include",
+      headers: authHeaders(),
     })
     return response.ok
   } catch {

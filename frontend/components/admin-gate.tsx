@@ -6,15 +6,52 @@ import { getApiBase } from "@/lib/chat-api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-async function validateToken(token: string): Promise<boolean> {
+type TokenCheck = "ok" | "invalid" | "error"
+
+/**
+ * How long a verified session is trusted without re-checking. Tab switches no
+ * longer remount the gate (it lives in the shared dashboard layout), but this
+ * also absorbs React StrictMode's double-invocation in development.
+ */
+const VERIFIED_TTL_MS = 30_000
+
+let lastVerifiedAt = 0
+
+/**
+ * Validate the stored static token against the session endpoint.
+ *
+ * A transient failure (rate limit, server error, network hiccup) must never be
+ * mistaken for a bad credential — only 401/403 mean the token is truly rejected.
+ */
+async function checkToken(token: string): Promise<TokenCheck> {
   try {
-    const response = await fetch(`${getApiBase()}/api/plugins/status`, {
+    const response = await fetch(`${getApiBase()}/api/auth/session`, {
       credentials: "include",
       headers: authHeaders(token),
     })
-    return response.ok
+    if (response.ok) return "ok"
+    if (response.status === 401 || response.status === 403) return "invalid"
+    return "error"
   } catch {
-    return false
+    return "error"
+  }
+}
+
+/**
+ * Check the httpOnly session cookie. Only an explicit 401/403 means the session
+ * is gone; a 429/5xx/network error is transient and must not log the user out.
+ */
+async function checkSessionCookie(signal: AbortSignal): Promise<TokenCheck> {
+  try {
+    const response = await fetch(`${getApiBase()}/api/auth/session`, {
+      credentials: "include",
+      signal,
+    })
+    if (response.ok) return "ok"
+    if (response.status === 401 || response.status === 403) return "invalid"
+    return "error"
+  } catch {
+    return "error"
   }
 }
 
@@ -28,17 +65,37 @@ export function AdminGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState("")
 
   useEffect(() => {
+    const controller = new AbortController()
+    const { signal } = controller
+
+    const settle = (result: TokenCheck) => {
+      if (signal.aborted) return
+      if (result === "ok") {
+        lastVerifiedAt = Date.now()
+        setAuthenticated(true)
+        return
+      }
+      if (result === "invalid") {
+        lastVerifiedAt = 0
+        setAuthenticated(false)
+        return
+      }
+      // Transient failure: trust a recent verification, else fail closed.
+      setAuthenticated(Date.now() - lastVerifiedAt < VERIFIED_TTL_MS)
+    }
+
     const savedToken = getAdminToken()
     if (savedToken) {
-      validateToken(savedToken).then((ok) => {
-        if (!ok) setAdminToken("")
-        setAuthenticated(ok)
+      checkToken(savedToken).then((result) => {
+        if (signal.aborted) return
+        if (result === "invalid") setAdminToken("")
+        settle(result)
       })
-      return
+      return () => controller.abort()
     }
-    fetch(`${getApiBase()}/api/auth/session`, { credentials: "include" })
-      .then((response) => setAuthenticated(response.ok))
-      .catch(() => setAuthenticated(false))
+
+    checkSessionCookie(signal).then(settle)
+    return () => controller.abort()
   }, [])
 
   async function login(event: FormEvent) {
@@ -53,6 +110,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
       setError("Invalid username, password, or TOTP code")
       return
     }
+    lastVerifiedAt = Date.now()
     setAuthenticated(true)
   }
 
@@ -63,11 +121,12 @@ export function AdminGate({ children }: { children: ReactNode }) {
       setError("Enter the admin token")
       return
     }
-    if (!(await validateToken(value))) {
+    if ((await checkToken(value)) !== "ok") {
       setError("Invalid admin token")
       return
     }
     setAdminToken(value)
+    lastVerifiedAt = Date.now()
     setAuthenticated(true)
   }
 
