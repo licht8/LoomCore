@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api", tags=["plugins"])
 
 
 @router.get("/plugins/status")
-@limiter.limit("10 per 60 seconds")
+@limiter.limit("60 per 60 seconds")
 async def get_plugins_status(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -31,7 +31,7 @@ async def get_plugins_status(
 
 
 @router.get("/tools")
-@limiter.limit("10 per 60 seconds")
+@limiter.limit("60 per 60 seconds")
 async def list_plugins_tools(
     request: Request,
     authorization: str | None = Header(default=None),

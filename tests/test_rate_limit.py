@@ -15,6 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from src.api.deps import chat_key_func
+from src.main import app
 
 # === Utilities ===
 
@@ -195,6 +196,64 @@ async def test_tools_rate_limit(tools_app):
         assert r2.status_code == 200
         r3 = await client.get("/tools")
         assert r3.status_code == 429
+
+
+# === Read-only plugin endpoints on the real app — 60/min ===
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_plugins_status_allows_60_per_minute(monkeypatch):
+    """The read-only status endpoint tolerates UI polling: 60/min, not 429."""
+    import src.api.plugins as plugins_module
+
+    monkeypatch.setattr(
+        plugins_module, "require_admin_token", lambda *args, **kwargs: None
+    )
+    ip = "198.51.100.211"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for i in range(60):
+            response = await client.get(
+                "/api/plugins/status", headers={"X-Forwarded-For": ip}
+            )
+            assert response.status_code == 200, (
+                f"Request {i + 1}: expected 200, got {response.status_code}"
+            )
+        limited = await client.get(
+            "/api/plugins/status", headers={"X-Forwarded-For": ip}
+        )
+
+    assert limited.status_code == 429
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_mutation_endpoints_stay_strict():
+    """Plugin mutations keep their tighter 10/min limit."""
+    from src.core.rate_limit import limiter
+
+    limits = limiter._route_limits
+
+    def assert_limit(name: str, amount: int) -> None:
+        entry = limits.get(name)
+        assert entry, f"No rate limit registered for {name}"
+        rate = entry[0].limit
+        assert (rate.amount, rate.multiples) == (amount, 60), (
+            f"{name}: expected {amount}/60, got {rate}"
+        )
+
+    for name in (
+        "src.api.plugins.enable_plugin",
+        "src.api.plugins.disable_plugin",
+        "src.api.plugins.reload_plugin",
+    ):
+        assert_limit(name, 10)
+
+    for name in (
+        "src.api.plugins.get_plugins_status",
+        "src.api.plugins.list_plugins_tools",
+    ):
+        assert_limit(name, 60)
 
 
 # === Task 4: WebSocket — not limited ===
