@@ -91,6 +91,42 @@ def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
     return _error(request_id, -32601, f"Unknown method: {method}")
 
 
+def _internal_error(request_id: Any, message: str) -> dict[str, Any]:
+    return _error(request_id, -32603, message)
+
+
+def _serialize(payload: dict[str, Any]) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError, RecursionError):
+        logger.exception("Failed to serialize response")
+        try:
+            return json.dumps(
+                _internal_error(payload.get("id"), "Internal error"),
+                ensure_ascii=False,
+            )
+        except (TypeError, ValueError, RecursionError):
+            logger.exception("Failed to serialize error response")
+            return json.dumps(
+                _error(None, -32603, "Internal error"), ensure_ascii=False
+            )
+
+
+def _handle_line(line: str) -> dict[str, Any]:
+    try:
+        request = json.loads(line)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        return _error(0, -32700, str(exc))
+    if not isinstance(request, dict):
+        return _error(0, -32600, "Invalid Request")
+    request_id = request.get("id", 0)
+    try:
+        return _dispatch(request)
+    except Exception:
+        logger.exception("Unhandled error while dispatching request %r", request_id)
+        return _internal_error(request_id, "Internal error")
+
+
 def _self_check() -> None:
     manifest = load_manifest()
     for issue in validate_manifest(manifest):
@@ -108,11 +144,7 @@ def main() -> None:
     for line in sys.stdin:
         if not line.strip():
             continue
-        try:
-            payload = _dispatch(json.loads(line))
-        except json.JSONDecodeError as exc:
-            payload = _error(0, -32700, str(exc))
-        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        sys.stdout.write(_serialize(_handle_line(line)) + "\n")
         sys.stdout.flush()
 
 

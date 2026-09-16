@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from . import __version__
+
+logger = logging.getLogger(__name__)
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -78,9 +81,45 @@ def run(
     for line in sys.stdin:
         if not line.strip():
             continue
-        try:
-            payload = dispatch(json.loads(line), handlers, tools_schema)
-        except json.JSONDecodeError as exc:
-            payload = error(0, -32700, str(exc))
-        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        sys.stdout.write(_serialize(_handle_line(line, handlers, tools_schema)) + "\n")
         sys.stdout.flush()
+
+
+def _internal_error(request_id: Any, message: str) -> dict[str, Any]:
+    return error(request_id, -32603, message)
+
+
+def _serialize(payload: dict[str, Any]) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError, RecursionError):
+        logger.exception("Failed to serialize response")
+        try:
+            return json.dumps(
+                _internal_error(payload.get("id"), "Internal error"),
+                ensure_ascii=False,
+            )
+        except (TypeError, ValueError, RecursionError):
+            logger.exception("Failed to serialize error response")
+            return json.dumps(
+                error(None, -32603, "Internal error"), ensure_ascii=False
+            )
+
+
+def _handle_line(
+    line: str,
+    handlers: dict[str, Handler],
+    tools_schema: list[dict[str, Any]],
+) -> dict[str, Any]:
+    try:
+        request = json.loads(line)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        return error(0, -32700, str(exc))
+    if not isinstance(request, dict):
+        return error(0, -32600, "Invalid Request")
+    request_id = request.get("id", 0)
+    try:
+        return dispatch(request, handlers, tools_schema)
+    except Exception:
+        logger.exception("Unhandled error while dispatching request %r", request_id)
+        return _internal_error(request_id, "Internal error")

@@ -1,8 +1,10 @@
 """Unit tests for the LoomOps plugin tools (no real privileged operations)."""
 
+import io
 import json
 import os
 import signal
+import sys
 
 import pytest
 
@@ -769,3 +771,152 @@ def test_failed_units_handler(load_loomops, monkeypatch, tmp_path):
 
     assert result["units"] == ["nginx.service"]
     assert result["count"] == 1
+
+
+# === protocol.py: transport resilience ===
+
+def _run_protocol(protocol, monkeypatch, handlers, *lines: str) -> list[dict]:
+    stdin = io.StringIO("\n".join(lines) + "\n")
+    stdout = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    protocol.run(handlers, [])
+    return [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+
+
+def test_protocol_answers_unexpected_tool_exception(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+
+    def boom(arguments):
+        raise KeyError("boom")
+
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": boom},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": {}},
+            }
+        ),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    )
+
+    assert [r["id"] for r in responses] == [1, 2]
+    assert responses[0]["error"]["code"] == -32603
+    assert responses[0]["error"]["message"] == "Internal error"
+    assert responses[1]["result"] == {"tools": []}
+
+
+def test_protocol_answers_unserializable_result(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": lambda arguments: {1, 2, 3}},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": {}},
+            }
+        ),
+    )
+
+    assert responses[0]["id"] == 5
+    assert responses[0]["error"]["code"] == -32603
+    assert responses[0]["error"]["message"] == "Internal error"
+
+
+def test_protocol_non_object_payload_is_invalid_request(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {},
+        "[]",
+        "5",
+        '"x"',
+        "null",
+        json.dumps({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}),
+    )
+
+    assert [r["error"]["code"] for r in responses[:4]] == [-32600] * 4
+    assert [r["id"] for r in responses[:4]] == [0] * 4
+    assert responses[4]["id"] == 9
+    assert responses[4]["result"] == {"tools": []}
+
+
+def _deep_structure(depth: int = 10000) -> dict:
+    value: dict = {}
+    for _ in range(depth):
+        value = {"a": value}
+    return value
+
+
+def test_protocol_deeply_nested_line_is_parse_error(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {},
+        "[" * 10000 + "]" * 10000,
+        json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}),
+    )
+
+    assert responses[0]["error"]["code"] == -32700
+    assert responses[0]["id"] == 0
+    assert responses[1]["result"] == {"tools": []}
+
+
+def test_protocol_deeply_nested_result_is_answered(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": lambda arguments: _deep_structure()},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": {}},
+            }
+        ),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    )
+
+    assert [r["id"] for r in responses] == [1, 2]
+    assert responses[0]["error"]["code"] == -32603
+    assert responses[0]["error"]["message"] == "Internal error"
+
+
+def test_protocol_parse_error_and_unknown_method(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {},
+        "not json",
+        json.dumps({"jsonrpc": "2.0", "id": 7, "method": "does/not/exist"}),
+    )
+
+    assert responses[0]["error"]["code"] == -32700
+    assert responses[0]["id"] == 0
+    assert responses[1]["error"]["code"] == -32601
+    assert responses[1]["id"] == 7
+
+
+def test_protocol_serialize_falls_back_to_constant_payload(load_loomops):
+    protocol = load_loomops("protocol")["protocol"]
+    payload = {"jsonrpc": "2.0", "id": _deep_structure(10000), "result": None}
+
+    response = json.loads(protocol._serialize(payload))
+
+    assert response["error"]["code"] == -32603
+    assert response["error"]["message"] == "Internal error"
+    assert response["id"] is None
