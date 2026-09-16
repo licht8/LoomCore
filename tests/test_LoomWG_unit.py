@@ -571,6 +571,59 @@ def test_run_command_redacts_sensitive_error_output(load_loomwg, monkeypatch, ca
     assert all(secret not in record.getMessage() for record in caplog.records)
 
 
+def test_read_interface_redacts_key_material_from_logs(load_loomwg, monkeypatch, caplog):
+    device = load_loomwg("wireguard")["wireguard"]
+    private_key = "SECRET-INTERFACE-PRIVATE-KEY"
+    psk = "SECRET-PEER-PRESHARED-KEY"
+    dump = (
+        f"{private_key} wServerPub== 51820 off\n"
+        f"wPeerPub== {psk} 91.90.160.72:51361 "
+        "10.66.66.4/32 0 1 2 off"
+    )
+    monkeypatch.setattr(
+        device.subprocess, "run", lambda *a, **k: _Completed(stdout=dump)
+    )
+
+    with caplog.at_level("INFO", logger="LoomWG.wg"):
+        device.read_interface("wg0")
+
+    assert caplog.records, "expected at least one log record"
+    assert all(private_key not in record.getMessage() for record in caplog.records)
+    assert all(psk not in record.getMessage() for record in caplog.records)
+
+
+def test_key_bearing_commands_are_marked_sensitive(load_loomwg, monkeypatch, tmp_path):
+    modules = load_loomwg("wireguard", "validate", "client")
+    device, validate, client = modules["wireguard"], modules["validate"], modules["client"]
+
+    recorded: list = []
+
+    def make_spy(output=""):
+        def fake_run(command, timeout=15, input_text=None, *, sensitive=False):
+            recorded.append((command, sensitive))
+            return output
+
+        return fake_run
+
+    monkeypatch.setattr(device, "run_command", make_spy(_dump_output(int(time.time()))))
+    device.read_interface("wg0")
+
+    config_file = tmp_path / "wg0.conf"
+    config_file.write_text("[Interface]\nAddress = 10.0.0.1/24\n", encoding="utf-8")
+    monkeypatch.setattr(client, "config_path", lambda interface: config_file)
+    monkeypatch.setattr(client, "parse_sections", lambda path: [])
+    monkeypatch.setattr(client, "run_command", make_spy("header"))
+    client._used_addresses("wg0")
+
+    monkeypatch.setattr(validate, "run_command", make_spy(""))
+    validate.validate_config_text("[Interface]\nPrivateKey = abc\n")
+    monkeypatch.setattr(validate, "config_directory", lambda: tmp_path)
+    validate.check_config({"interface": "wg0"})
+
+    assert recorded, "expected recorded command calls"
+    assert all(sensitive is True for _, sensitive in recorded)
+
+
 # === lifecycle.py ===
 
 def test_lifecycle_start_already_running(load_loomwg, monkeypatch):

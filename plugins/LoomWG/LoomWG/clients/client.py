@@ -121,7 +121,7 @@ def _used_addresses(interface: str) -> set:
                 if network.prefixlen in (32, 128):
                     used.add(network.network_address)
     try:
-        output = run_command(["wg", "show", interface, "dump"])
+        output = run_command(["wg", "show", interface, "dump"], sensitive=True)
     except CommandError:
         output = ""
     for line in output.splitlines()[1:]:

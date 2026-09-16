@@ -110,7 +110,7 @@ def _parse_timestamp(value: str) -> str | None:
 
 
 def read_interface(interface: str) -> dict[str, Any]:
-    dump_output = run_command(["wg", "show", interface, "dump"])
+    dump_output = run_command(["wg", "show", interface, "dump"], sensitive=True)
     lines = dump_output.splitlines()
     if not lines:
         raise CommandError(f"Interface {interface} returned no data")

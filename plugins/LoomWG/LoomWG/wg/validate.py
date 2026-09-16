@@ -47,7 +47,7 @@ def validate_config_text(text: str) -> None:
         os.chmod(tmp_path, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as tmp_file:
             tmp_file.write(text)
-        run_command(["wg-quick", "strip", str(tmp_path)])
+        run_command(["wg-quick", "strip", str(tmp_path)], sensitive=True)
     finally:
         with contextlib.suppress(OSError):
             tmp_path.unlink()
@@ -173,7 +173,7 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
 
     if interface_name:
         try:
-            run_command(["wg-quick", "strip", interface_name])
+            run_command(["wg-quick", "strip", interface_name], sensitive=True)
         except CommandError as exc:
             errors.append(f"wg-quick strip failed: {exc}")
 
