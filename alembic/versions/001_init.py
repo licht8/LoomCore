@@ -32,7 +32,6 @@ def upgrade() -> None:
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("status", sa.String, server_default="active"),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
     )
 
     op.create_table(
@@ -44,7 +43,6 @@ def upgrade() -> None:
         sa.Column("tool_calls", postgresql.JSONB),
         sa.Column("tool_result", sa.Text),
         sa.Column("created_at", sa.String, nullable=False),
-        sa.ForeignKeyConstraint(["session_id"], ["sessions.id"]),
     )
 
 
