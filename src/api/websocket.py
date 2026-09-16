@@ -58,7 +58,9 @@ def _static_token_valid(token: str | None) -> bool:
     return bool(
         settings.admin_token
         and token
-        and secrets.compare_digest(token, settings.admin_token)
+        and secrets.compare_digest(
+            token.encode("utf-8"), settings.admin_token.encode("utf-8")
+        )
     )
 
 

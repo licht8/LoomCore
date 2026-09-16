@@ -64,7 +64,9 @@ def _valid_static_token(token: str | None) -> bool:
     """Return True when the token matches the configured static admin token."""
     if not settings.admin_token or not token:
         return False
-    return secrets.compare_digest(token, settings.admin_token)
+    return secrets.compare_digest(
+        token.encode("utf-8"), settings.admin_token.encode("utf-8")
+    )
 
 
 def require_admin_token(token: str | None, request: Request | None = None) -> None:

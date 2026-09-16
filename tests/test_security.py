@@ -151,6 +151,16 @@ def test_require_admin_token_bearer_rejects_wrong_and_missing(monkeypatch):
     assert missing.value.status_code == 401
 
 
+def test_require_admin_token_rejects_non_ascii_token(monkeypatch):
+    # compare_digest rejects non-ASCII str with TypeError; a crafted Bearer
+    # token must yield a clean 401 instead of a 500.
+    _clear_admin_settings(monkeypatch, admin_token="top-secret")
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_token("caf\u00e9")
+    assert exc.value.status_code == 401
+
+
 def test_require_admin_token_503_when_unconfigured(monkeypatch):
     _clear_admin_settings(monkeypatch)
 
@@ -170,6 +180,20 @@ def test_require_admin_token_jwt_mode_rejects_static_token(monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         require_admin_token("shared-token")
+    assert exc.value.status_code == 403
+
+
+def test_require_admin_token_jwt_mode_non_ascii_token_is_403(monkeypatch):
+    _clear_admin_settings(
+        monkeypatch,
+        admin_password_hash="hash",
+        admin_totp_secret="secret",
+        session_secret="jwt-session-secret-long-enough-hs256",
+        admin_token="caf\u00e9",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_token("caf\u00e9")
     assert exc.value.status_code == 403
 
 

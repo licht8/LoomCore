@@ -83,6 +83,37 @@ async def test_proxy_token_mode_rejects_wrong_token(monkeypatch, captured):
 
 
 @pytest.mark.asyncio
+async def test_proxy_rejects_non_ascii_token_without_crashing(monkeypatch, captured):
+    # A non-ASCII token reaches _static_token_valid as a str; comparing it with
+    # the ASCII admin token must return False, not raise TypeError.
+    _token_mode(monkeypatch)
+    websocket = _FakeWebSocket(headers=_auth_header("caf\u00e9"))
+
+    await ws_api.ws_proxy(websocket, "sess-1")
+
+    assert captured == []
+    assert websocket.closed == (1008, "Admin token required")
+
+
+def test_static_token_valid_handles_non_ascii(monkeypatch):
+    _token_mode(monkeypatch)
+
+    assert ws_api._static_token_valid("caf\u00e9") is False
+
+
+@pytest.mark.asyncio
+async def test_proxy_accepts_non_ascii_admin_token(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(settings, "admin_token", "p\u00e4ssw\u00f6rd")
+    websocket = _FakeWebSocket(headers=_auth_header("p\u00e4ssw\u00f6rd"))
+
+    await ws_api.ws_proxy(websocket, "sess-1")
+
+    assert captured == [(websocket, "sess-1")]
+    assert websocket.closed is None
+
+
+@pytest.mark.asyncio
 async def test_proxy_jwt_mode_authorized(monkeypatch, captured):
     _jwt_mode(monkeypatch)
     token = create_jwt_token({"username": "admin"}, LONG_SECRET)
@@ -165,6 +196,20 @@ async def test_watch_auth_closes_socket_when_credential_revoked(monkeypatch):
 
     await asyncio.sleep(0.01)
     revoke_jwt_token("ws-live")
+    await asyncio.wait_for(watchdog, timeout=1)
+
+    assert websocket.closed == (1008, "Session expired")
+
+
+@pytest.mark.asyncio
+async def test_watch_auth_closes_on_non_ascii_token(monkeypatch):
+    # A non-ASCII token must not die inside the watchdog's broad except; the
+    # socket has to be closed as invalid instead of silently outliving auth.
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(ws_api, "_AUTH_RECHECK_SECONDS", 0)
+    websocket = _FakeWebSocket()
+    watchdog = asyncio.create_task(ws_api._watch_auth(websocket, None, "caf\u00e9"))
+
     await asyncio.wait_for(watchdog, timeout=1)
 
     assert websocket.closed == (1008, "Session expired")
