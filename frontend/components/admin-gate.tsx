@@ -18,14 +18,15 @@ const VERIFIED_TTL_MS = 30_000
 let lastVerifiedAt = 0
 
 /**
- * Validate the stored static token against the session endpoint.
+ * Validate the stored static token against an endpoint guarded by
+ * require_admin_token, which is the one that actually accepts the Bearer header.
  *
  * A transient failure (rate limit, server error, network hiccup) must never be
  * mistaken for a bad credential — only 401/403 mean the token is truly rejected.
  */
 async function checkToken(token: string): Promise<TokenCheck> {
   try {
-    const response = await fetch(`${getApiBase()}/api/auth/session`, {
+    const response = await fetch(`${getApiBase()}/api/plugins/status`, {
       credentials: "include",
       headers: authHeaders(token),
     })

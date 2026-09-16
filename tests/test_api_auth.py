@@ -188,6 +188,35 @@ async def test_session_accepts_valid_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_accepts_static_bearer_token(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+
+    async with _client() as client:
+        response = await client.get(
+            "/api/auth/session",
+            headers={"Authorization": "Bearer static-token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True}
+
+
+@pytest.mark.asyncio
+async def test_session_rejects_wrong_bearer_token(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+
+    async with _client() as client:
+        response = await client.get(
+            "/api/auth/session",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_logout_revokes_token(monkeypatch):
     monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
     token = create_jwt_token({"username": "admin", "jti": "logout-jti"}, LONG_SECRET)

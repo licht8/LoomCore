@@ -2,9 +2,10 @@
 
 import secrets
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from src.api.deps import extract_admin_token
 from src.auth import (
     SESSION_COOKIE,
     create_jwt_token,
@@ -16,7 +17,12 @@ from src.auth import (
 from src.config import settings
 from src.core.client_ip import client_ip
 from src.core.rate_limit import limiter
-from src.core.security import admin_jwt_mode_enabled, auth_mode, is_https
+from src.core.security import (
+    admin_jwt_mode_enabled,
+    auth_mode,
+    is_https,
+    require_admin_token,
+)
 from src.core.security_log import log_security_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -86,8 +92,24 @@ async def logout(request: Request):
 
 
 @router.get("/session")
-async def auth_session(request: Request):
-    payload = decode_jwt_token(request.cookies.get(SESSION_COOKIE), settings.session_secret)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"authenticated": True}
+async def auth_session(request: Request, authorization: str | None = Header(default=None)):
+    """Report whether the caller holds a valid admin credential.
+
+    Accepts either credential the active auth mode allows: the httpOnly session
+    cookie (JWT, the pre-existing path) or the static Bearer token (so the token
+    login can verify itself against this non-rate-limited endpoint). A valid
+    credential the active mode disables gets 403 rather than being silently
+    accepted.
+    """
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if cookie:
+        payload = decode_jwt_token(cookie, settings.session_secret)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return {"authenticated": True}
+
+    if authorization and authorization.startswith("Bearer "):
+        require_admin_token(extract_admin_token(request, authorization), request)
+        return {"authenticated": True}
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
