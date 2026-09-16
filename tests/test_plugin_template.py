@@ -175,3 +175,21 @@ def test_serialize_falls_back_to_constant_payload(template_main):
     assert response["error"]["code"] == -32603
     assert response["error"]["message"] == "Internal error"
     assert response["id"] is None
+
+
+def test_non_object_params_is_invalid_params(template_main, monkeypatch):
+    responses = _drive(
+        template_main,
+        monkeypatch,
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": ["x"],
+        },
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/list"},
+    )
+
+    assert responses[0]["id"] == 5
+    assert responses[0]["error"] == {"code": -32602, "message": "Invalid params"}
+    assert responses[1]["result"]["tools"][0]["name"] == "example_echo"

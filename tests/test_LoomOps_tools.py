@@ -920,3 +920,25 @@ def test_protocol_serialize_falls_back_to_constant_payload(load_loomops):
     assert response["error"]["code"] == -32603
     assert response["error"]["message"] == "Internal error"
     assert response["id"] is None
+
+
+def test_protocol_non_object_params_is_invalid_params(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": ["x"],
+            }
+        ),
+        json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/list"}),
+    )
+
+    assert responses[0]["id"] == 5
+    assert responses[0]["error"] == {"code": -32602, "message": "Invalid params"}
+    assert responses[1]["result"] == {"tools": []}

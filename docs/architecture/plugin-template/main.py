@@ -63,6 +63,11 @@ def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
 def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
     method = request.get("method", "")
     request_id = request.get("id", 0)
+    params = request.get("params")
+    if params is None:
+        params = {}
+    elif not isinstance(params, dict):
+        return _error(request_id, -32602, "Invalid params")
     if method == "initialize":
         manifest = load_manifest()
         return _response(
@@ -79,7 +84,6 @@ def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
     if method == "tools/list":
         return _response(request_id, {"tools": TOOLS_SCHEMA})
     if method == "tools/call":
-        params = request.get("params") or {}
         name = params.get("name", "")
         handler = HANDLERS.get(name)
         if handler is None:

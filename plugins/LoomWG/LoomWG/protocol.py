@@ -41,7 +41,11 @@ def dispatch(
 ) -> dict[str, Any]:
     request_id = request.get("id", 0)
     method = request.get("method", "")
-    params = request.get("params") or {}
+    params = request.get("params")
+    if params is None:
+        params = {}
+    elif not isinstance(params, dict):
+        return error(request_id, -32602, "Invalid params")
 
     if method == "initialize":
         return response(
