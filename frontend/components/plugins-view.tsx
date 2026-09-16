@@ -39,8 +39,20 @@ export function PluginsView() {
 
   useEffect(() => {
     load()
-    const timer = setInterval(() => load(), 20000)
-    return () => clearInterval(timer)
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") load()
+    }, 5 * 60 * 1000)
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
   }, [load])
 
   const runAction = useCallback(
