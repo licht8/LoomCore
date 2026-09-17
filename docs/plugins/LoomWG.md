@@ -121,6 +121,10 @@ advertised as safe by accident.
 - **New client:** `wg_create_peer {name}` → generates keys, adds the peer, and writes
   `clients/conf/<name>.conf` + `clients/qr_code/<name>.png`, returning links.
   `wg_export_existing_clients` re-issues links later.
+- **Config hygiene:** `endpoint` (request, stored record or `LOOMWG_ENDPOINT`) and
+  every other value interpolated into the rendered client config is rejected when it
+  contains control characters, so a newline cannot smuggle extra `wg-quick`
+  directives (e.g. `PostUp`) into a config a user imports.
 - **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored
   private key. Peers without a stored key (external/backfilled) are rekeyed when
   `rotate=true` (the default); with `rotate=false` they are reported as failed.

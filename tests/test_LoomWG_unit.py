@@ -30,6 +30,51 @@ def test_format_endpoint_ipv6(load_loomwg):
     assert client._format_endpoint("fd42::1", 51820) == "[fd42::1]:51820"
 
 
+def test_reject_control_chars_allows_plain_values(load_loomwg):
+    render = load_loomwg("render")["render"]
+    assert render._reject_control_chars("1.2.3.4") == "1.2.3.4"
+    for bad in ("a\nb", "a\rb", "a\tb", "a\x00b"):
+        with pytest.raises(ValueError, match="control characters"):
+            render._reject_control_chars(bad)
+
+
+def test_build_client_config_rejects_injected_endpoint(load_loomwg):
+    render = load_loomwg("render")["render"]
+    with pytest.raises(ValueError, match="control characters"):
+        render.build_client_config(
+            "SERVERPUB",
+            51820,
+            ["10.66.66.2/32"],
+            "priv",
+            "psk",
+            "1.2.3.4:51820\nPostUp = touch /tmp/pwned",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["addresses", "private_key", "preshared_key", "server_public_key", "dns"],
+)
+def test_build_client_config_rejects_injected_values(load_loomwg, field):
+    render = load_loomwg("render")["render"]
+    values = {
+        "server_public_key": "SERVERPUB",
+        "listen_port": 51820,
+        "addresses": ["10.66.66.2/32"],
+        "private_key": "priv",
+        "preshared_key": "psk",
+        "endpoint": "1.2.3.4",
+        "dns": ["1.1.1.1"],
+    }
+    values[field] = ["10.66.66.2/32\nPostUp = x"] if field in {
+        "addresses",
+        "dns",
+    } else "value\nPostUp = x"
+
+    with pytest.raises(ValueError, match="control characters"):
+        render.build_client_config(**values)
+
+
 def test_safe_name(load_loomwg):
     clients_store = load_loomwg("clients_store")["clients_store"]
     assert clients_store.validate_name("good-name_1") == "good-name_1"
@@ -974,6 +1019,29 @@ def test_create_client_rejects_existing_name(load_loomwg, monkeypatch, tmp_path)
         client.create_client(
             {"interface": "wg0", "name": "alice", "endpoint": "1.2.3.4"}
         )
+
+
+def test_rebuild_client_rejects_injected_endpoint(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(
+        client,
+        "_server_settings",
+        lambda interface: ("SERVERPUB", 51820, ["10.66.66.0/24"], ["10.66.66.1"]),
+    )
+    conf = tmp_path / "alice.conf"
+    qr = tmp_path / "alice.png"
+    monkeypatch.setattr(client, "client_paths", lambda name: (conf, qr))
+    record = {
+        "private_key": "priv",
+        "preshared_key": "psk",
+        "addresses": ["10.66.66.2/32"],
+        "endpoint": "1.2.3.4:51820\nPostUp = touch /tmp/pwned",
+    }
+
+    with pytest.raises(ValueError, match="control characters"):
+        client.rebuild_client("alice", record, "wg0")
+
+    assert not conf.exists() and not qr.exists()
 
 
 # === clients/qr.py: qrencode failures and file permissions ===

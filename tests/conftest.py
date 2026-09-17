@@ -20,6 +20,7 @@ _MODULE_PATHS = {
     "clients_store": "LoomWG.clients.store",
     "client": "LoomWG.clients.client",
     "qr": "LoomWG.clients.qr",
+    "render": "LoomWG.clients.render",
     "install": "LoomWG.ops.install",
     "dependencies": "LoomWG.ops.dependencies",
     "provision": "LoomWG.ops.provision",
