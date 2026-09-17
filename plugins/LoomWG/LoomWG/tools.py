@@ -23,8 +23,8 @@ from .ops.dependencies import dependency_report, install_wireguard
 from .ops.lifecycle import format_lifecycle, restart, start, stop
 from .ops.provision import setup_server
 from .ops.stats import stats as stats_tool
+from .peers.config import iter_peers, upsert_peer
 from .peers.config import remove_peer as delete_peer
-from .peers.config import upsert_peer
 from .peers.view import show_config
 from .results import text_result
 from .schemas import TOOLS_SCHEMA  # noqa: F401  (re-exported for the server and tests)
@@ -266,28 +266,38 @@ def _allowed_ips(arguments: dict[str, Any]) -> list[str]:
 
 
 def _restore_live_peer(
-    interface: str, public_key: str, existing_peer: dict[str, Any] | None
+    interface: str,
+    public_key: str,
+    existing_peer: dict[str, Any] | None,
+    *,
+    rotate_preshared_key: bool = False,
+    previous_preshared_key: str | None = None,
 ) -> None:
     """Undo a live ``wg set`` when persisting the peer to the config failed.
 
     A peer that did not exist before is removed; a peer that did keeps its
-    previous allowed IPs, so the interface cannot silently diverge from the
-    persisted config.
+    previous allowed IPs and, when this call rotated it, its preshared key, so
+    the interface cannot silently diverge from the persisted config.
     """
     if existing_peer is None:
         run_command(["wg", "set", interface, "peer", public_key, "remove"])
         return
-    run_command(
-        [
-            "wg",
-            "set",
-            interface,
-            "peer",
-            public_key,
-            "allowed-ips",
-            ",".join(existing_peer.get("allowed_ips") or []),
-        ]
-    )
+    command = [
+        "wg",
+        "set",
+        interface,
+        "peer",
+        public_key,
+        "allowed-ips",
+        ",".join(existing_peer.get("allowed_ips") or []),
+    ]
+    input_text = None
+    if rotate_preshared_key:
+        # The persisted key is the source of truth; when it was absent an empty
+        # value tells wg to drop the newly applied one.
+        command.extend(["preshared-key", "/dev/stdin"])
+        input_text = previous_preshared_key or ""
+    run_command(command, input_text=input_text)
 
 
 def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -352,6 +362,18 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
             changed=False,
         )
 
+    previous_preshared_key = None
+    if preshared_key and existing_peer is not None:
+        with contextlib.suppress(FileNotFoundError, OSError, ValueError):
+            previous_preshared_key = next(
+                (
+                    peer["preshared_key"]
+                    for peer in iter_peers(interface)
+                    if peer.get("public_key") == public_key
+                ),
+                None,
+            )
+
     command = ["wg", "set", interface, "peer", public_key, "allowed-ips", ",".join(allowed_ips)]
     if preshared_key:
         command.extend(["preshared-key", "/dev/stdin"])
@@ -360,7 +382,13 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         changed = upsert_peer(interface, public_key, allowed_ips, preshared_key)
     except Exception:
         with contextlib.suppress(CommandError):
-            _restore_live_peer(interface, public_key, existing_peer)
+            _restore_live_peer(
+                interface,
+                public_key,
+                existing_peer,
+                rotate_preshared_key=bool(preshared_key),
+                previous_preshared_key=previous_preshared_key,
+            )
         raise
 
     record: dict[str, Any] = {

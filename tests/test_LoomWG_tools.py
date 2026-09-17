@@ -314,6 +314,53 @@ def test_add_peer_restores_previous_allowed_ips_when_persist_fails(
     assert calls[1][0][5:] == ["allowed-ips", "10.0.0.2/32"]
 
 
+def test_add_peer_restores_previous_preshared_key_when_persist_fails(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    key = _key(9)
+    old_psk = _key(10)
+    new_psk = _key(11)
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(
+        tools,
+        "read_interface",
+        lambda interface: {"peers": [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}]},
+    )
+    monkeypatch.setattr(
+        tools,
+        "iter_peers",
+        lambda interface: [
+            {"public_key": key, "allowed_ips": ["10.0.0.2/32"], "preshared_key": old_psk}
+        ],
+    )
+    calls = []
+    monkeypatch.setattr(
+        tools, "run_command", lambda *args, **kwargs: calls.append((args, kwargs)) or ""
+    )
+
+    def fail(*args, **kwargs):
+        raise OSError("config write failed")
+
+    monkeypatch.setattr(tools, "upsert_peer", fail)
+
+    with pytest.raises(OSError, match="config write failed"):
+        tools.add_peer(
+            {
+                "name": "peer1",
+                "public_key": key,
+                "allowed_ips": ["10.0.0.9/32"],
+                "preshared_key": new_psk,
+            }
+        )
+
+    assert calls[0][0][0][5:] == ["allowed-ips", "10.0.0.9/32", "preshared-key", "/dev/stdin"]
+    assert calls[0][1]["input_text"] == new_psk
+    assert calls[1][0][0][5:] == ["allowed-ips", "10.0.0.2/32", "preshared-key", "/dev/stdin"]
+    assert calls[1][1]["input_text"] == old_psk
+
+
 # === wg_remove_peer ===
 
 def test_remove_peer_by_name(load_loomwg, monkeypatch, tmp_path):
