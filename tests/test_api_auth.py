@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import logging
 import struct
 import time
 
@@ -98,6 +99,43 @@ async def test_login_rejects_bad_credentials(monkeypatch):
         )
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_rejects_malformed_json(monkeypatch, caplog):
+    _valid_credentials(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        async with _client() as client:
+            response = await client.post(
+                "/api/auth/login",
+                content="{",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Forwarded-For": "198.51.100.20",
+                },
+            )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid JSON body"}
+    assert "invalid_json_body" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_login_rejects_non_object_json(monkeypatch, caplog):
+    _valid_credentials(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        async with _client() as client:
+            response = await client.post(
+                "/api/auth/login",
+                json=["admin"],
+                headers={"X-Forwarded-For": "198.51.100.21"},
+            )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid request body"}
+    assert "invalid_body_shape" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,20 @@ async def login(request: Request):
         raise HTTPException(
             status_code=403, detail="Password login is disabled (AUTH_MODE=token)"
         )
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        log_security_event(
+            "login_failure", reason="invalid_json_body", client=client_ip(request)
+        )
+        raise HTTPException(
+            status_code=400, detail="Invalid JSON body"
+        ) from None
+    if not isinstance(data, dict):
+        log_security_event(
+            "login_failure", reason="invalid_body_shape", client=client_ip(request)
+        )
+        raise HTTPException(status_code=400, detail="Invalid request body")
     valid = (
         data.get("username") == settings.admin_username
         and admin_jwt_mode_enabled()
