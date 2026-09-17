@@ -59,6 +59,9 @@ Plugin-owned JSON, keyed by **name**, mode `600`, atomic writes:
 - The WireGuard configs remain the source of truth for live state; `wg_list_peers`
   reconciles the store against live peers and **reports** untracked/stale entries
   without changing anything.
+- Only a missing file means "no clients". A corrupt or unreadable store makes
+  every tool that touches it fail with `ValueError` and leaves the file as it is,
+  so a truncated `clients.json` can never be overwritten by the next write.
 
 ## Prerequisites & installation
 

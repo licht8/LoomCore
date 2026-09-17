@@ -46,17 +46,30 @@ def store_path() -> Path:
 
 
 def load() -> dict[str, dict[str, Any]]:
+    """Read the store, treating only a missing file as an empty store.
+
+    Every mutating helper does load() -> mutate -> save(), so a corrupt or
+    unreadable file must fail loudly: returning {} would persist an almost
+    empty store on the next write and destroy every client record.
+    """
+    path = store_path()
     try:
-        raw = json.loads(store_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Client store {path} is unreadable or corrupt: {exc}") from exc
     if not isinstance(raw, dict):
-        return {}
-    return {
-        str(name): record
-        for name, record in raw.items()
-        if isinstance(record, dict)
-    }
+        raise ValueError(f"Client store {path} is corrupt: expected a JSON object")
+    invalid = sorted(
+        str(name) for name, record in raw.items() if not isinstance(record, dict)
+    )
+    if invalid:
+        raise ValueError(
+            f"Client store {path} is corrupt: non-object records for "
+            f"{', '.join(invalid)}"
+        )
+    return {str(name): record for name, record in raw.items()}
 
 
 def save(data: dict[str, dict[str, Any]]) -> None:

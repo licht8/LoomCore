@@ -81,6 +81,64 @@ def test_store_roundtrip(load_loomwg, monkeypatch, tmp_path):
     assert store.load() == {}
 
 
+def test_load_treats_a_missing_store_as_empty(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+
+    assert store.store_path().is_file() is False
+    assert store.load() == {}
+
+
+def test_load_rejects_a_corrupt_store(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    path = store.store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unreadable or corrupt"):
+        store.load()
+
+
+def test_load_rejects_a_non_object_document(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    path = store.store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="expected a JSON object"):
+        store.load()
+
+
+def test_load_rejects_non_object_records(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    path = store.store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"alice": "oops", "bob": {"public_key": "x"}}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-object records for alice"):
+        store.load()
+    with pytest.raises(ValueError, match="non-object records for alice"):
+        store.upsert("carol", {"public_key": _key(1)})
+
+    assert "alice" in path.read_text(encoding="utf-8")
+
+
+def test_upsert_does_not_overwrite_a_corrupt_store(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    path = store.store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unreadable or corrupt"):
+        store.upsert("alice", {"public_key": _key(1)})
+
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
 def test_resolve_name_matches_variants(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     store = load_loomwg("clients_store")["clients_store"]
