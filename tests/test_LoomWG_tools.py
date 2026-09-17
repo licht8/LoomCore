@@ -579,6 +579,217 @@ def test_export_client_rotate_recreates(load_loomwg, monkeypatch, tmp_path):
     assert result["rotated"] is True
 
 
+def test_export_client_rotate_restores_peer_on_failure(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    client.clients_store.upsert(
+        "ghost",
+        {
+            "public_key": _key(6),
+            "addresses": ["10.0.0.9/32"],
+            "preshared_key": _key(5),
+        },
+    )
+    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: "")
+    restored: list[tuple] = []
+    monkeypatch.setattr(
+        client,
+        "upsert_peer",
+        lambda interface, key, addresses, psk=None: restored.append(
+            (interface, key, addresses, psk)
+        ),
+    )
+
+    def fail_create(args):
+        raise ValueError("address conflict")
+
+    monkeypatch.setattr(client, "create_client", fail_create)
+
+    with pytest.raises(ValueError, match="address conflict"):
+        client.export_client({"name": "ghost", "rotate": True})
+
+    assert restored == [("wg0", _key(6), ["10.0.0.9/32"], _key(5))]
+    record = client.clients_store.get("ghost")
+    assert record is not None
+    assert record["public_key"] == _key(6)
+
+
+def test_export_client_rotate_drops_stale_qr_before_recreate(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    client.clients_store.upsert(
+        "ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]}
+    )
+    qr_dir = tmp_path / "clients" / "qr_code"
+    qr_dir.mkdir(parents=True)
+    (qr_dir / "ghost.png").write_bytes(b"old")
+    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: "")
+    seen: dict = {}
+
+    def fake_create(args):
+        seen["qr_exists"] = client.client_paths(args["name"])[1].exists()
+        return {
+            "name": args["name"],
+            "public_key": _key(7),
+            "private_key": _key(8),
+            "preshared_key": _key(9),
+            "addresses": ["10.0.0.9/32"],
+            "endpoint": "1.2.3.4:51820",
+        }
+
+    monkeypatch.setattr(client, "create_client", fake_create)
+
+    result = client.export_client({"name": "ghost", "rotate": True})
+
+    assert seen["qr_exists"] is False
+    assert result["rotated"] is True
+
+
+def test_export_client_rotate_removes_new_peer_when_store_write_fails(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    client.clients_store.upsert(
+        "ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]}
+    )
+    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(client, "upsert_peer", lambda *args, **kwargs: None)
+    removed: list[str] = []
+    monkeypatch.setattr(
+        client, "remove_peer", lambda interface, key: removed.append(key)
+    )
+    monkeypatch.setattr(
+        client,
+        "create_client",
+        lambda args: {
+            "name": args["name"],
+            "public_key": _key(7),
+            "private_key": _key(8),
+            "preshared_key": _key(9),
+            "addresses": ["10.0.0.9/32"],
+            "endpoint": "1.2.3.4:51820",
+        },
+    )
+    monkeypatch.setattr(
+        client,
+        "store_client_record",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        client.export_client({"name": "ghost", "rotate": True})
+
+    assert _key(7) in removed
+    record = client.clients_store.get("ghost")
+    assert record is not None
+    assert record["public_key"] == _key(6)
+
+
+def test_export_client_rotate_restores_preshared_key_from_config(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    config = client.config_path("wg0")
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "\n".join(
+            [
+                "[Interface]",
+                f"PrivateKey = {_key(1)}",
+                "ListenPort = 51820",
+                "",
+                "[Peer]",
+                f"PublicKey = {_key(6)}",
+                "AllowedIPs = 10.0.0.9/32",
+                f"PresharedKey = {_key(4)}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    # Imported peer: the store record carries no PSK.
+    client.clients_store.upsert(
+        "ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]}
+    )
+    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(client, "remove_peer", lambda interface, key: None)
+    restored: list[tuple] = []
+    monkeypatch.setattr(
+        client,
+        "upsert_peer",
+        lambda interface, key, addresses, psk=None: restored.append(
+            (interface, key, addresses, psk)
+        ),
+    )
+
+    def fail_create(args):
+        raise ValueError("address conflict")
+
+    monkeypatch.setattr(client, "create_client", fail_create)
+
+    with pytest.raises(ValueError, match="address conflict"):
+        client.export_client({"name": "ghost", "rotate": True})
+
+    assert restored == [("wg0", _key(6), ["10.0.0.9/32"], _key(4))]
+
+
+def test_export_client_rotate_rolls_back_when_cleanup_raises(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    client.clients_store.upsert(
+        "ghost", {"public_key": _key(6), "addresses": ["10.0.0.9/32"]}
+    )
+    monkeypatch.setattr(client, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(client, "upsert_peer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        client,
+        "remove_peer",
+        lambda interface, key: (_ for _ in ()).throw(OSError("read-only fs"))
+        if key == _key(7)
+        else None,
+    )
+    monkeypatch.setattr(
+        client,
+        "create_client",
+        lambda args: {
+            "name": args["name"],
+            "public_key": _key(7),
+            "private_key": _key(8),
+            "preshared_key": _key(9),
+            "addresses": ["10.0.0.9/32"],
+            "endpoint": "1.2.3.4:51820",
+        },
+    )
+    monkeypatch.setattr(
+        client,
+        "store_client_record",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    original_drop = client._drop_client_files
+    drops = {"count": 0}
+
+    def flaky_drop(name):
+        drops["count"] += 1
+        if drops["count"] > 1:
+            raise PermissionError("denied")
+        original_drop(name)
+
+    monkeypatch.setattr(client, "_drop_client_files", flaky_drop)
+
+    with pytest.raises(OSError, match="disk full"):
+        client.export_client({"name": "ghost", "rotate": True})
+
+    record = client.clients_store.get("ghost")
+    assert record is not None
+    assert record["public_key"] == _key(6)
+
+
 # === wg_get_client_artifact (internal) ===
 
 def test_get_artifact_tool_wraps_result_in_data(load_loomwg, monkeypatch, tmp_path):

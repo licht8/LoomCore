@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 
-from ..peers.config import add_peer, config_path, iter_peers, remove_peer
+from ..peers.config import add_peer, config_path, iter_peers, remove_peer, upsert_peer
 from ..util.files import atomic_write_text
 from ..wg.config_parser import parse_sections
 from ..wg.device import CommandError, run_command
@@ -345,6 +345,66 @@ def store_client_record(name: str, created: dict, created_at: str | None = None)
     )
 
 
+def _remove_created_client(interface: str, name: str, created: dict) -> None:
+    """Best-effort removal of a client created by a rotation that then failed."""
+    public_key = str(created.get("public_key") or "")
+    if public_key:
+        with contextlib.suppress(CommandError):
+            run_command(["wg", "set", interface, "peer", public_key, "remove"])
+        with contextlib.suppress(OSError, ValueError):
+            remove_peer(interface, public_key)
+    with contextlib.suppress(OSError):
+        _drop_client_files(name)
+
+
+def _restore_rotated_client(
+    interface: str, name: str, record: dict, original_peer: dict | None = None
+) -> None:
+    """Best-effort rollback of a failed rotation.
+
+    Rotation removes the old peer and store record before ``create_client``
+    runs, so a failure there would otherwise lose the client with no key
+    material. Put the config peer block, the live peer and the record back.
+    The record of an imported (backfilled) peer has no private key and may lack
+    the PresharedKey, so the peer block parsed from the config is preferred: it
+    is the only place the original PSK survives the removal.
+    """
+    public_key = str(record.get("public_key") or "")
+    addresses = [
+        str(item)
+        for item in (
+            (original_peer or {}).get("allowed_ips")
+            or record.get("addresses")
+            or []
+        )
+    ]
+    preshared_key = str(
+        (original_peer or {}).get("preshared_key")
+        or record.get("preshared_key")
+        or ""
+    )
+    if public_key and addresses:
+        with contextlib.suppress(CommandError, FileNotFoundError, ValueError, OSError):
+            upsert_peer(interface, public_key, addresses, preshared_key or None)
+        with contextlib.suppress(CommandError):
+            command = [
+                "wg",
+                "set",
+                interface,
+                "peer",
+                public_key,
+                "allowed-ips",
+                ",".join(addresses),
+            ]
+            if preshared_key:
+                command += ["preshared-key", "/dev/stdin"]
+                run_command(command, input_text=preshared_key)
+            else:
+                run_command(command)
+    with contextlib.suppress(OSError, ValueError):
+        clients_store.upsert(name, record)
+
+
 def export_client(arguments: dict) -> dict:
     """Ensure the client config/QR exist and report their paths.
 
@@ -373,7 +433,21 @@ def export_client(arguments: dict) -> dict:
             result = rebuild_client(name, record, interface)
         elif rotate:
             old_key = str(record.get("public_key") or "")
+            # Drop stale artifacts first: create_client refuses a name while a
+            # leftover <name>.png exists, which would abort after the peer and
+            # record below are already gone.
+            _drop_client_files(name)
+            original_peer: dict | None = None
             if old_key:
+                with contextlib.suppress(OSError, ValueError):
+                    original_peer = next(
+                        (
+                            peer
+                            for peer in iter_peers(interface)
+                            if peer.get("public_key") == old_key
+                        ),
+                        None,
+                    )
                 with contextlib.suppress(CommandError):
                     run_command(["wg", "set", interface, "peer", old_key, "remove"])
                 with contextlib.suppress(FileNotFoundError, ValueError):
@@ -390,8 +464,15 @@ def export_client(arguments: dict) -> dict:
             }
             if endpoint:
                 recreate["endpoint"] = endpoint
-            created = create_client(recreate)
-            store_client_record(name, created, record.get("created_at"))
+            created: dict | None = None
+            try:
+                created = create_client(recreate)
+                store_client_record(name, created, record.get("created_at"))
+            except BaseException:
+                if created is not None:
+                    _remove_created_client(interface, name, created)
+                _restore_rotated_client(interface, name, record, original_peer)
+                raise
             result = {
                 key: value
                 for key, value in created.items()
