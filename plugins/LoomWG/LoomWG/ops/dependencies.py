@@ -70,7 +70,7 @@ _INSTALL_COMMANDS = {
 }
 
 # Transient interface used to verify kernel WireGuard support (built-in or
-# module). Created and immediately removed by ensure_kernel_module().
+# module). Created and torn down on every path by _kernel_support_available().
 _PROBE_INTERFACE = "loomwgprobe"
 
 _KERNEL_HINT = (
@@ -165,8 +165,18 @@ def ensure_dependencies() -> dict[str, Any]:
     }
 
 
+def _remove_probe_link() -> None:
+    """Best-effort teardown of the throwaway probe interface."""
+    with contextlib.suppress(CommandError):
+        run_command(["ip", "link", "delete", "dev", _PROBE_INTERFACE], timeout=30)
+
+
 def _kernel_support_available() -> bool:
     """Probe the host kernel for WireGuard support with a throwaway link."""
+    # An earlier probe may have died before tearing its link down: a leftover
+    # link makes the add below fail with "File exists", which would report a
+    # supported kernel as unsupported.
+    _remove_probe_link()
     try:
         run_command(
             ["ip", "link", "add", "dev", _PROBE_INTERFACE, "type", "wireguard"],
@@ -174,8 +184,8 @@ def _kernel_support_available() -> bool:
         )
     except CommandError:
         return False
-    with contextlib.suppress(CommandError):
-        run_command(["ip", "link", "delete", "dev", _PROBE_INTERFACE], timeout=30)
+    finally:
+        _remove_probe_link()
     return True
 
 
