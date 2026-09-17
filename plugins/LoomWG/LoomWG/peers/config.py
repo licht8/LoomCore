@@ -44,6 +44,25 @@ def _write(path: Path, content: str) -> None:
     atomic_write_text(path, text, mode=0o600)
 
 
+def _peer_public_key(block: list[str]) -> str | None:
+    """Return the active PublicKey of a ``[Peer]`` block, or None.
+
+    Only the first non-comment ``PublicKey`` entry is considered, so the same
+    line in another section (or a commented-out one) is never mistaken for a
+    peer, and spacing variants such as ``PublicKey=<key>`` are recognized.
+    """
+    if not block or block[0].strip().lower() != "[peer]":
+        return None
+    for line in block[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, separator, value = stripped.partition("=")
+        if separator and key.strip().lower() == "publickey":
+            return value.strip()
+    return None
+
+
 def _peer_block(public_key: str, allowed_ips: list[str], preshared_key: str | None) -> str:
     lines = ["[Peer]", f"PublicKey = {public_key}", f"AllowedIPs = {', '.join(allowed_ips)}"]
     if preshared_key:
@@ -62,7 +81,7 @@ def add_peer(
         raise FileNotFoundError(f"Configuration {path} not found")
     content = path.read_text(encoding="utf-8")
     validate_public_key(public_key)
-    if f"PublicKey = {public_key}" in content:
+    if any(_peer_public_key(block) == public_key for block in _blocks(content)):
         raise ValueError("A peer with this public key already exists")
     updated = content.rstrip() + "\n\n" + _peer_block(public_key, allowed_ips, preshared_key) + "\n"
     _write(path, updated)
@@ -101,11 +120,7 @@ def upsert_peer(
     found = False
     updated_blocks: list[list[str]] = []
     for block in blocks:
-        is_peer = block and block[0].strip().lower() == "[peer]"
-        is_target = is_peer and any(
-            line.strip() == f"PublicKey = {public_key}" for line in block
-        )
-        if not is_target:
+        if _peer_public_key(block) != public_key:
             updated_blocks.append(block)
             continue
 
@@ -145,8 +160,7 @@ def remove_peer(interface: str, public_key: str) -> None:
     retained = []
     removed = False
     for block in blocks:
-        is_target = any(line.strip() == f"PublicKey = {public_key}" for line in block)
-        if is_target:
+        if _peer_public_key(block) == public_key:
             removed = True
         else:
             retained.extend(block)

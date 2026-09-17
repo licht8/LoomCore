@@ -1073,6 +1073,76 @@ def test_remove_peer_sole_peer_keeps_valid_remainder(load_loomwg, monkeypatch, t
     assert config.iter_peers("wg0") == []
 
 
+def test_remove_peer_ignores_matching_key_in_interface_block(
+    load_loomwg, monkeypatch, tmp_path
+):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key = _fake_key(24)
+    config_file = tmp_path / "wg0.conf"
+    original = f"[Interface]\nPrivateKey = x\nPublicKey = {key}\n"
+    config_file.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        config.remove_peer("wg0", key)
+
+    assert config_file.read_text(encoding="utf-8") == original
+
+
+def test_add_peer_ignores_commented_public_key(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key = _fake_key(25)
+    (tmp_path / "wg0.conf").write_text(
+        f"[Interface]\nPrivateKey = x\n\n"
+        f"[Peer]\n# PublicKey = {key}\nAllowedIPs = 10.0.0.2/32\n",
+        encoding="utf-8",
+    )
+
+    config.add_peer("wg0", key, ["10.0.0.3/32"], None)
+
+    assert config.iter_peers("wg0") == [
+        {"public_key": key, "allowed_ips": ["10.0.0.3/32"], "preshared_key": None}
+    ]
+
+
+def test_remove_peer_accepts_spacing_variant(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key = _fake_key(26)
+    (tmp_path / "wg0.conf").write_text(
+        f"[Interface]\nPrivateKey = x\n\n"
+        f"[Peer]\nPublicKey={key}\nAllowedIPs = 10.0.0.2/32\n",
+        encoding="utf-8",
+    )
+
+    config.remove_peer("wg0", key)
+
+    assert config.iter_peers("wg0") == []
+
+
+def test_upsert_peer_accepts_spacing_variant(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key = _fake_key(27)
+    config_file = tmp_path / "wg0.conf"
+    config_file.write_text(
+        f"[Interface]\nPrivateKey = x\n\n"
+        f"[Peer]\nPublicKey={key}\nAllowedIPs = 10.0.0.2/32\n",
+        encoding="utf-8",
+    )
+
+    assert config.upsert_peer("wg0", key, ["10.0.0.9/32"], None) is True
+
+    text = config_file.read_text(encoding="utf-8")
+    assert text.count("[Peer]") == 1
+    assert config.iter_peers("wg0")[0]["allowed_ips"] == ["10.0.0.9/32"]
+
+
 # === wg/validate.py: config text validation ===
 
 def test_validate_config_text_cleans_temp_and_raises(load_loomwg, monkeypatch):
