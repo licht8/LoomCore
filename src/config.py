@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -34,6 +34,30 @@ class Settings(BaseSettings):
     confirmations_file: str = ""
     timing_enabled: bool = Field(default=False, validation_alias="LOOMCORE_TIMING")
     model_config = {"env_file": ".env"}
+
+    @model_validator(mode="after")
+    def _require_session_secret_for_jwt(self) -> "Settings":
+        """Refuse to start with JWT enabled but an empty signing key.
+
+        Password+TOTP enables JWT verification, which signs and validates with
+        ``SESSION_SECRET``. An empty secret would accept tokens forged with the
+        empty HMAC key, so fail fast instead of silently trusting it. An
+        explicit ``AUTH_MODE=token`` disables JWT verification entirely, so
+        leftover credentials are allowed there without a secret.
+        """
+        jwt_disabled = self.auth_mode.strip().lower() == "token"
+        if (
+            not jwt_disabled
+            and self.admin_password_hash
+            and self.admin_totp_secret
+            and not self.session_secret
+        ):
+            raise ValueError(
+                "SESSION_SECRET must be set when ADMIN_PASSWORD_HASH and "
+                "ADMIN_TOTP_SECRET are configured"
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
