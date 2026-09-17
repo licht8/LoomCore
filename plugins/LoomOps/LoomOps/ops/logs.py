@@ -61,7 +61,7 @@ def journal_dirs() -> list[Path]:
 def _resolved_root(root: Path) -> Path | None:
     try:
         return root.expanduser().resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return None
 
 

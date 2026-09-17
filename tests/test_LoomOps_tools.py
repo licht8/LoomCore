@@ -404,6 +404,55 @@ def test_open_fd_closes_descriptor_when_wrapping_fails(load_loomops, monkeypatch
         os.fstat(fd)
 
 
+def test_allowed_paths_rejects_unresolvable_root(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    good = tmp_path / "good"
+    good.mkdir()
+    bad = tmp_path / "loop"
+    original = Path.resolve
+
+    def fake_resolve(self, *args, **kwargs):
+        if self.name == "loop":
+            raise RuntimeError("Symlink loop from 'loop'")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", f"{good}{os.pathsep}{bad}")
+
+    with pytest.raises(ValueError, match="not resolvable"):
+        files.allowed_paths()
+
+
+def test_resolve_path_reports_unresolvable_path(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    original = Path.resolve
+
+    def fake_resolve(self, *args, **kwargs):
+        if self.name == "loop":
+            raise RuntimeError("Symlink loop from 'loop'")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+
+    with pytest.raises(ValueError, match="Invalid path"):
+        files.resolve_path(str(tmp_path / "loop"))
+
+
+def test_parent_verification_rejects_unresolvable_parent(load_loomops, monkeypatch, tmp_path):
+    confine = load_loomops("files")["files"].confine
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("Symlink loop")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+
+    with pytest.raises(ValueError, match="symlink") as info:
+        confine._verify_parent(tmp_path, tmp_path / "swap" / "file.txt")
+
+    assert isinstance(info.value.__cause__, RuntimeError)
+
+
 # === processes ===
 
 def _fake_proc(root, pid, name, state, cmdline):
@@ -879,6 +928,17 @@ def test_iter_log_files_caps_each_root(load_loomops, monkeypatch, tmp_path):
     found = sorted(path.name for _root, path in logs._iter_log_files(limit=1))
 
     assert found == ["a.log", "c.log"]
+
+
+def test_resolved_root_returns_none_on_symlink_loop(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("Symlink loop")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+
+    assert logs._resolved_root(tmp_path) is None
 
 
 # === diagnostics ===

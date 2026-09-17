@@ -18,7 +18,12 @@ def allowed_paths() -> list[Path]:
     for item in raw.replace(os.pathsep, ",").split(","):
         item = item.strip()
         if item:
-            roots.append(Path(item).expanduser().resolve())
+            try:
+                roots.append(Path(item).expanduser().resolve())
+            except (OSError, RuntimeError) as exc:
+                raise ValueError(
+                    f"Allowed path is not resolvable: {item}: {exc}"
+                ) from exc
     return roots
 
 
@@ -32,7 +37,7 @@ def resolve_path(raw: Any) -> Path:
         )
     try:
         candidate = Path(raw).expanduser().resolve()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise ValueError(f"Invalid path: {exc}") from exc
     if any(candidate == root or root in candidate.parents for root in roots):
         return candidate

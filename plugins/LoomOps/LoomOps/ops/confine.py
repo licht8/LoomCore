@@ -82,7 +82,10 @@ def _require_root(root: Path) -> None:
 
 def _verify_parent(root: Path, target: Path) -> None:
     """Best-effort fallback guard against a parent swapped for a symlink."""
-    resolved = target.parent.resolve()
+    try:
+        resolved = target.parent.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise _forbid_symlink(target.parent) from exc
     if resolved != root and root not in resolved.parents:
         raise _forbid_symlink(target.parent)
 
