@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -973,6 +974,163 @@ def test_create_client_rejects_existing_name(load_loomwg, monkeypatch, tmp_path)
         client.create_client(
             {"interface": "wg0", "name": "alice", "endpoint": "1.2.3.4"}
         )
+
+
+# === clients/qr.py: qrencode failures and file permissions ===
+
+def test_generate_qr_secures_the_file_before_writing(load_loomwg, monkeypatch, tmp_path):
+    qr = load_loomwg("qr")["qr"]
+    qr_path = tmp_path / "alice.png"
+    calls: list = []
+    original_open = qr.os.open
+
+    def spy_open(path, flags, mode=0o777):
+        calls.append(("open", flags, mode))
+        return original_open(path, flags, mode)
+
+    def fake_run(*args, **kwargs):
+        calls.append(("run", qr_path.exists()))
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(qr.os, "open", spy_open)
+    monkeypatch.setattr(qr.subprocess, "run", fake_run)
+
+    qr.generate_qr("PrivateKey = secret\n", qr_path)
+
+    assert calls == [
+        ("open", qr.os.O_CREAT | qr.os.O_WRONLY, 0o600),
+        ("run", True),
+    ]
+
+
+def test_generate_qr_normalizes_timeout(load_loomwg, monkeypatch, tmp_path):
+    qr = load_loomwg("qr")["qr"]
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(qr.subprocess, "run", timeout)
+
+    with pytest.raises(qr.CommandError, match="qrencode failed"):
+        qr.generate_qr("PrivateKey = secret\n", tmp_path / "alice.png")
+
+
+def test_generate_qr_reports_missing_qrencode(load_loomwg, monkeypatch, tmp_path):
+    qr = load_loomwg("qr")["qr"]
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("qrencode")
+
+    monkeypatch.setattr(qr.subprocess, "run", missing)
+
+    with pytest.raises(qr.CommandError, match="not available"):
+        qr.generate_qr("PrivateKey = secret\n", tmp_path / "alice.png")
+
+
+def test_generate_qr_reports_unwritable_target(load_loomwg, monkeypatch, tmp_path):
+    qr = load_loomwg("qr")["qr"]
+
+    def denied(*args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(qr.os, "open", denied)
+
+    with pytest.raises(qr.CommandError, match="Cannot create QR code file"):
+        qr.generate_qr("PrivateKey = secret\n", tmp_path / "alice.png")
+
+
+def test_generate_qr_retightens_the_mode_after_writing(load_loomwg, monkeypatch, tmp_path):
+    qr = load_loomwg("qr")["qr"]
+    qr_path = tmp_path / "alice.png"
+    events: list = []
+    original_chmod = qr.os.chmod
+
+    def spy_chmod(path, mode):
+        events.append(("chmod", mode))
+        return original_chmod(path, mode)
+
+    def fake_run(*args, **kwargs):
+        events.append(("run", qr_path.is_file()))
+        qr_path.write_bytes(b"PNG")
+        return _Completed()
+
+    monkeypatch.setattr(qr.os, "chmod", spy_chmod)
+    monkeypatch.setattr(qr.subprocess, "run", fake_run)
+
+    qr.generate_qr("PrivateKey = secret\n", qr_path)
+
+    assert events == [
+        ("chmod", 0o600),
+        ("run", True),
+        ("chmod", 0o600),
+    ]
+
+
+def test_generate_qr_discards_the_placeholder_on_failure(
+    load_loomwg, monkeypatch, tmp_path
+):
+    qr = load_loomwg("qr")["qr"]
+    qr_path = tmp_path / "alice.png"
+
+    def failing(*args, **kwargs):
+        return _Completed(returncode=1, stderr="boom")
+
+    monkeypatch.setattr(qr.subprocess, "run", failing)
+    with pytest.raises(qr.CommandError, match="boom"):
+        qr.generate_qr("PrivateKey = secret\n", qr_path)
+    assert not qr_path.exists()
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("qrencode")
+
+    monkeypatch.setattr(qr.subprocess, "run", missing)
+    with pytest.raises(qr.CommandError, match="not available"):
+        qr.generate_qr("PrivateKey = secret\n", qr_path)
+    assert not qr_path.exists()
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(qr.subprocess, "run", timeout)
+    with pytest.raises(qr.CommandError, match="qrencode failed"):
+        qr.generate_qr("PrivateKey = secret\n", qr_path)
+    assert not qr_path.exists()
+
+
+def test_generate_qr_keeps_an_existing_artifact_on_early_failure(
+    load_loomwg, monkeypatch, tmp_path
+):
+    qr = load_loomwg("qr")["qr"]
+    qr_path = tmp_path / "alice.png"
+    qr_path.write_bytes(b"OLD-PNG")
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("qrencode")
+
+    monkeypatch.setattr(qr.subprocess, "run", missing)
+
+    with pytest.raises(qr.CommandError, match="not available"):
+        qr.generate_qr("PrivateKey = secret\n", qr_path)
+
+    assert qr_path.read_bytes() == b"OLD-PNG"
+
+
+def test_generate_qr_discards_an_existing_artifact_once_writing_starts(
+    load_loomwg, monkeypatch, tmp_path
+):
+    qr = load_loomwg("qr")["qr"]
+    qr_path = tmp_path / "alice.png"
+    qr_path.write_bytes(b"OLD-PNG")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(qr.subprocess, "run", timeout)
+
+    with pytest.raises(qr.CommandError, match="qrencode failed"):
+        qr.generate_qr("PrivateKey = secret\n", qr_path)
+
+    assert not qr_path.exists()
 
 
 # === protocol.py: transport resilience ===

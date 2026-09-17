@@ -19,6 +19,7 @@ _MODULE_PATHS = {
     "config_view": "LoomWG.peers.view",
     "clients_store": "LoomWG.clients.store",
     "client": "LoomWG.clients.client",
+    "qr": "LoomWG.clients.qr",
     "install": "LoomWG.ops.install",
     "dependencies": "LoomWG.ops.dependencies",
     "provision": "LoomWG.ops.provision",

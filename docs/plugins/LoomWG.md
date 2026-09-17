@@ -6,7 +6,9 @@ talks JSON-RPC over stdio. It manages the host's WireGuard via `wg`/`wg-quick`
 
 - Server configs: `LOOMWG_CONFIG_DIR` (default `/etc/wireguard`)
 - Client configs: `LOOMWG_CONFIG_DIR/clients/conf/<name>.conf`
-- Client QR codes: `LOOMWG_CONFIG_DIR/clients/qr_code/<name>.png`
+- Client QR codes: `LOOMWG_CONFIG_DIR/clients/qr_code/<name>.png` (mode `600`,
+  set before `qrencode` writes the embedded private key and re-applied after it;
+  a failed run removes the file so the next request regenerates it)
 - Client/user store: `LOOMWG_CONFIG_DIR/.loomwg/clients.json`
 - Autostart state: `LOOMWG_CONFIG_DIR/.loomwg/autostart.json`
 - Private keys are never returned in chat; configs/QR are served as durable,
