@@ -250,9 +250,9 @@ sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding
 
 Notes:
 - Adjust the UDP port if you changed `listen_port` in `wg_setup_server`.
-- The generated `wg0.conf` still contains `PostUp`/`PostDown` iptables rules; with
-  firewalld they may be redundant or overlap. If `wg-quick up` fails because of
-  them, open the port via firewalld as above and keep using the firewalld rules.
+- With `LOOMWG_SKIP_FIREWALL=1` the generated `wg0.conf` contains no
+  `PostUp`/`PostDown` hooks (the firewalld rules above provide NAT and
+  forwarding), so `wg-quick up` never touches iptables.
 
 ## 7. Server / client end-to-end
 
@@ -415,7 +415,7 @@ Expect: peer gone, no matching `PublicKey`, client files removed.
 - Screenshots/notes of each step, especially any error.
 
 Watch-outs:
-- `wg-quick up` failing due to `PostUp` iptables vs firewalld (section 6).
+- `wg-quick up` failing because the UDP port/NAT rules are missing (section 6).
 - Peer not connecting: wrong `LOOMWG_ENDPOINT` or UDP 51820 not open/masqueraded.
 - UI labels are Russian; backend tool responses are the source of truth.
 

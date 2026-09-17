@@ -169,7 +169,9 @@ def test_add_peer_rejects_bad_key(load_loomwg, monkeypatch, tmp_path):
 
 # === provision.py: LOOMWG_SKIP_FIREWALL ===
 
-def _patch_setup_server(provision, monkeypatch, tmp_path):
+def _patch_setup_server(
+    provision, monkeypatch, tmp_path, firewall="firewalld", iptables=True
+):
     monkeypatch.setattr(provision, "config_path", lambda interface: tmp_path / f"{interface}.conf")
     monkeypatch.setattr(provision, "run_command", lambda *args, **kwargs: "ok")
     monkeypatch.setattr(
@@ -178,9 +180,18 @@ def _patch_setup_server(provision, monkeypatch, tmp_path):
     monkeypatch.setattr(
         provision,
         "detect_host",
-        lambda: {"os": "rocky 10", "external_interface": "eth0", "firewall": "firewalld"},
+        lambda: {
+            "os": "rocky 10",
+            "external_interface": "eth0",
+            "firewall": firewall,
+        },
     )
     monkeypatch.setattr(provision, "enable_forwarding", lambda: None)
+    monkeypatch.setattr(
+        provision.shutil,
+        "which",
+        lambda tool: f"/usr/sbin/{tool}" if iptables else None,
+    )
 
 
 def test_setup_server_skips_firewall(load_loomwg, monkeypatch, tmp_path):
@@ -200,6 +211,9 @@ def test_setup_server_skips_firewall(load_loomwg, monkeypatch, tmp_path):
     assert result["firewall"] == "skipped"
     assert called["firewall"] is False
     assert (tmp_path / "wgtest.conf").is_file()
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "PostUp" not in content
+    assert "iptables" not in content
 
 
 def test_setup_server_configures_firewall_by_default(load_loomwg, monkeypatch, tmp_path):
@@ -211,6 +225,93 @@ def test_setup_server_configures_firewall_by_default(load_loomwg, monkeypatch, t
     result = provision.setup_server({"interface": "wgtest"})
 
     assert result["firewall"] == "firewalld"
+
+
+def test_setup_server_scopes_masquerade_to_the_vpn_network(
+    load_loomwg, monkeypatch, tmp_path
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path, firewall="iptables")
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *args, **kwargs: "iptables")
+
+    result = provision.setup_server({"interface": "wgtest"})
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "PostUp = " in content
+    assert (
+        "iptables -t nat -A POSTROUTING -s 10.66.66.0/24 -o eth0 -j MASQUERADE"
+        in content
+    )
+    assert (
+        "iptables -t nat -D POSTROUTING -s 10.66.66.0/24 -o eth0 -j MASQUERADE"
+        in content
+    )
+    assert result["firewall"] == "iptables"
+
+
+@pytest.mark.parametrize("firewall", ["firewalld", "ufw", "nftables"])
+def test_setup_server_keeps_nat_and_forward_hooks_for_other_firewalls(
+    load_loomwg, monkeypatch, tmp_path, firewall
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path, firewall=firewall)
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *args, **kwargs: firewall)
+
+    result = provision.setup_server({"interface": "wgtest"})
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "iptables -A FORWARD -i %i -j ACCEPT" in content
+    assert (
+        "iptables -t nat -A POSTROUTING -s 10.66.66.0/24 -o eth0 -j MASQUERADE"
+        in content
+    )
+    assert result["firewall"] == firewall
+
+
+def test_setup_server_omits_iptables_hooks_on_an_nft_only_host(
+    load_loomwg, monkeypatch, tmp_path
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(
+        provision, monkeypatch, tmp_path, firewall="nftables", iptables=False
+    )
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *args, **kwargs: "nftables")
+
+    result = provision.setup_server({"interface": "wgtest"})
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "PostUp" not in content
+    assert "PostDown" not in content
+    assert "iptables" not in content
+    assert result["firewall"] == "nftables"
+
+
+def test_setup_server_rejects_an_unsupported_firewall(load_loomwg, monkeypatch, tmp_path):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path, firewall="none")
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+
+    with pytest.raises(RuntimeError, match="No supported firewall"):
+        provision.setup_server({"interface": "wgtest"})
+
+    assert not (tmp_path / "wgtest.conf").exists()
+
+
+def test_configure_firewall_iptables_leaves_nat_to_the_hooks(load_loomwg, monkeypatch):
+    provision = load_loomwg("provision")["provision"]
+    commands: list[str] = []
+    monkeypatch.setattr(provision, "run_shell", lambda command: commands.append(command))
+
+    provision.configure_firewall(
+        "iptables", "wg0", "eth0", 51820, "10.66.66.0/24"
+    )
+
+    assert len(commands) == 1
+    assert "--dport 51820 -j ACCEPT" in commands[0]
+    assert "MASQUERADE" not in commands[0]
 
 
 # === dependencies.py: dependency installation (in-container) ===
@@ -295,6 +396,60 @@ def test_ensure_kernel_module_available(load_loomwg, monkeypatch):
     result = install.ensure_kernel_module()
 
     assert result["loaded"] is True
+
+
+def test_kernel_probe_removes_the_link_on_every_path(load_loomwg, monkeypatch):
+    dependencies = load_loomwg("dependencies")["dependencies"]
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        dependencies, "run_command", lambda command, **kwargs: calls.append(command)
+    )
+
+    assert dependencies._kernel_support_available() is True
+    interface = dependencies._PROBE_INTERFACE
+    assert calls == [
+        ["ip", "link", "delete", "dev", interface],
+        ["ip", "link", "add", "dev", interface, "type", "wireguard"],
+        ["ip", "link", "delete", "dev", interface],
+    ]
+
+
+def test_kernel_probe_tears_down_after_a_failed_probe(load_loomwg, monkeypatch):
+    dependencies = load_loomwg("dependencies")["dependencies"]
+    deletes: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        if "add" in command:
+            raise dependencies.CommandError("RTNETLINK answers: Operation not supported")
+        deletes.append(command)
+        return ""
+
+    monkeypatch.setattr(dependencies, "run_command", fake_run)
+
+    assert dependencies._kernel_support_available() is False
+    assert len(deletes) == 2
+
+
+def test_kernel_probe_recovers_from_a_leftover_link(load_loomwg, monkeypatch):
+    dependencies = load_loomwg("dependencies")["dependencies"]
+    interface = dependencies._PROBE_INTERFACE
+    links = {interface}
+
+    def fake_run(command, **kwargs):
+        if command[1:3] == ["link", "delete"]:
+            if interface not in links:
+                raise dependencies.CommandError("Cannot find device")
+            links.discard(interface)
+            return ""
+        if interface in links:
+            raise dependencies.CommandError("RTNETLINK answers: File exists")
+        links.add(interface)
+        return ""
+
+    monkeypatch.setattr(dependencies, "run_command", fake_run)
+
+    assert dependencies._kernel_support_available() is True
+    assert links == set()
 
 
 def test_install_wireguard_returns_ready(load_loomwg, monkeypatch):
