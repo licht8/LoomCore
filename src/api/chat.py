@@ -42,5 +42,8 @@ async def chat_endpoint(
         return JSONResponse(status_code=429, content={"error": str(exc)})
     except LlmError as exc:
         return JSONResponse(status_code=504, content={"error": str(exc)})
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+    except Exception:
+        logger.exception("chat request failed (session=%s)", payload.session_id)
+        return JSONResponse(
+            status_code=500, content={"error": "Internal server error"}
+        )

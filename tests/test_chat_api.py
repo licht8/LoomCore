@@ -1,5 +1,7 @@
 """Tests for the REST chat endpoint error handling."""
 
+import logging
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -84,7 +86,7 @@ async def test_chat_maps_budget_exceeded_to_429(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_maps_unexpected_error_to_500(monkeypatch):
+async def test_chat_maps_unexpected_error_to_500(monkeypatch, caplog):
     _auth(monkeypatch)
 
     async def boom(message, session_id):
@@ -92,15 +94,19 @@ async def test_chat_maps_unexpected_error_to_500(monkeypatch):
 
     monkeypatch.setattr(chat_api.airouter, "route", boom)
 
-    async with _client() as client:
-        response = await client.post(
-            "/api/chat",
-            json={"session_id": "s1", "message": "hi"},
-            headers=_AUTH,
-        )
+    with caplog.at_level(logging.ERROR, logger="loomcore.api.chat"):
+        async with _client() as client:
+            response = await client.post(
+                "/api/chat",
+                json={"session_id": "s1", "message": "hi"},
+                headers=_AUTH,
+            )
 
     assert response.status_code == 500
-    assert response.json() == {"error": "kaboom"}
+    assert response.json() == {"error": "Internal server error"}
+    assert "kaboom" not in response.text
+    assert "chat request failed (session=s1)" in caplog.text
+    assert "kaboom" in caplog.text
 
 
 @pytest.mark.asyncio
