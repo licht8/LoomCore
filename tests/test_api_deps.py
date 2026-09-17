@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from src.api.deps import chat_key_func, extract_admin_token
 from src.auth import SESSION_COOKIE
+from src.config import settings
 
 _DEFAULT_CLIENT = SimpleNamespace(host="1.2.3.4")
 
@@ -43,7 +44,9 @@ def test_extract_admin_token_ignores_non_bearer_header():
     assert extract_admin_token(request, None) is None
 
 
-def test_chat_key_func_uses_credential_not_session_id():
+def test_chat_key_func_uses_credential_not_session_id(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "token-a")
     request = _request(
         query={"session_id": "sess-1"},
         headers={"authorization": "Bearer token-a"},
@@ -56,6 +59,17 @@ def test_chat_key_func_uses_credential_not_session_id():
         headers={"authorization": "Bearer token-a"},
     )
     assert chat_key_func(rotated) == expected
+
+
+def test_chat_key_func_ignores_a_forged_credential(monkeypatch):
+    # An unauthenticated caller must not get a fresh bucket by inventing a cookie.
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "real-token")
+    first = _request(cookies={SESSION_COOKIE: "random-1"})
+    assert chat_key_func(first) == "ip:1.2.3.4"
+    # A different bogus value maps to the same (IP) bucket.
+    second = _request(cookies={SESSION_COOKIE: "random-2"})
+    assert chat_key_func(second) == chat_key_func(first)
 
 
 def test_chat_key_func_falls_back_to_client_ip():

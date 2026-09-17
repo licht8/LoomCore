@@ -126,6 +126,21 @@ def require_admin_token(token: str | None, request: Request | None = None) -> No
     raise HTTPException(status_code=401, detail="Admin token required")
 
 
+def is_valid_admin_credential(token: str | None) -> bool:
+    """Return True when ``token`` is a credential the active auth mode accepts.
+
+    Non-raising counterpart of :func:`require_admin_token` for callers that only
+    need to know whether a credential is genuine (e.g. rate-limit keying). TLS
+    enforcement and security-event logging stay in ``require_admin_token``.
+    """
+    if not token:
+        return False
+    mode = auth_mode()
+    return (mode in {"jwt", "both"} and _valid_jwt(token)) or (
+        mode in {"token", "both"} and _valid_static_token(token)
+    )
+
+
 VALID_TOOL_RISKS = frozenset({"safe", "moderate", "dangerous"})
 
 

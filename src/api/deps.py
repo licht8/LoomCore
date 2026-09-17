@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.auth import SESSION_COOKIE
 from src.core.client_ip import client_ip
-from src.core.security import require_admin_token
+from src.core.security import is_valid_admin_credential, require_admin_token
 from src.core.security_log import log_security_event
 
 
@@ -42,10 +42,13 @@ def chat_key_func(request: Request) -> str:
 
     The key is derived server-side from the credential (session cookie or
     Bearer token) as a hash, so rotating a client-supplied ``session_id`` can no
-    longer reset the limit. Falls back to the remote address when unauthenticated.
+    longer reset the limit. The credential is validated first: an unknown or
+    missing one falls back to the remote address, otherwise an unauthenticated
+    caller could send a fresh bogus cookie on every request and get a new bucket
+    each time.
     """
     token = extract_admin_token(request, request.headers.get("authorization"))
-    if token:
+    if token and is_valid_admin_credential(token):
         return "token:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
     return "ip:" + client_ip(request)
 

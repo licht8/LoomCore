@@ -57,12 +57,16 @@ def chat_app():
 
 
 @pytest.mark.asyncio
-async def test_chat_key_func_ignores_rotating_session_id(chat_app):
+async def test_chat_key_func_ignores_rotating_session_id(chat_app, monkeypatch):
     """Rotating the client-supplied session_id must not reset the limit.
 
     The key is derived from the Bearer token server-side, so two requests with
     DIFFERENT session_id values still share one bucket → 429 on the third.
     """
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "token-a")
     auth = {"Authorization": "Bearer token-a"}
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as client:
         r1 = await client.get("/test?session_id=sess1", headers=auth)
@@ -77,13 +81,24 @@ async def test_chat_key_func_ignores_rotating_session_id(chat_app):
 
 
 @pytest.mark.asyncio
-async def test_chat_key_func_separates_credentials(chat_app):
+async def test_chat_key_func_separates_credentials(chat_app, monkeypatch):
     """A different credential is a separate rate-limit bucket."""
-    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as client:
-        await client.get("/test", headers={"Authorization": "Bearer token-a"})
-        await client.get("/test", headers={"Authorization": "Bearer token-a"})
+    from src.auth import create_jwt_token
+    from src.config import settings
 
-        other = await client.get("/test", headers={"Authorization": "Bearer token-b"})
+    secret = "test-secret-" + "0" * 20
+    monkeypatch.setattr(settings, "auth_mode", "jwt")
+    monkeypatch.setattr(settings, "session_secret", secret)
+    monkeypatch.setattr(settings, "admin_password_hash", "configured")
+    monkeypatch.setattr(settings, "admin_totp_secret", "configured")
+    token_a = create_jwt_token({"sub": "a"}, secret)
+    token_b = create_jwt_token({"sub": "b"}, secret)
+
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as client:
+        await client.get("/test", headers={"Authorization": f"Bearer {token_a}"})
+        await client.get("/test", headers={"Authorization": f"Bearer {token_a}"})
+
+        other = await client.get("/test", headers={"Authorization": f"Bearer {token_b}"})
         assert other.status_code == 200
 
 
