@@ -135,12 +135,13 @@ advertised as safe by accident.
   `PostUp`/`PostDown` hooks (forward-accept plus a MASQUERADE scoped to the VPN
   network) whenever `iptables` is available, and those hooks are the single owner
   of the NAT rule (`configure_firewall` only opens the UDP port there), so a
-  teardown removes exactly what startup added. For `firewalld`/`nftables` the
-  backend's own tool (firewalld direct rules / an `nft` forward chain) installs the
-  unscoped NAT **and** the forward-accept rules, and no hooks are emitted. Hooks are
-  also omitted when the firewall is skipped or on nft-only hosts, where `wg-quick`
-  could not run iptables; the host forward policy must then permit traffic out of
-  the WireGuard interface.
+  teardown removes exactly what startup added. For `firewalld` the backend's own
+  tool installs the unscoped NAT and, via `--direct` rules, the forward-accept rules;
+  `nftables` installs the NAT with `nft` but cannot add a forward-accept rule that
+  overrides a drop in another `forward` chain, so its host policy must permit traffic
+  out of the WireGuard interface. No hooks are emitted for either. Hooks are also
+  omitted when the firewall is skipped or on nft-only hosts, where `wg-quick` could
+  not run iptables.
 - **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored
   private key. Peers without a stored key (external/backfilled) are rekeyed when
   `rotate=true` (the default); with `rotate=false` they are reported as failed.

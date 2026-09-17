@@ -357,9 +357,13 @@ def test_configure_firewall_firewalld_adds_forward_accept_rules(load_loomwg, mon
     assert "--direct --add-rule ipv4 filter FORWARD 0 -o wg0 -j ACCEPT" in commands[0]
     assert "--direct --add-rule ipv6 filter FORWARD 0 -i wg0 -j ACCEPT" in commands[0]
     assert "--direct --add-rule ipv6 filter FORWARD 0 -o wg0 -j ACCEPT" in commands[0]
+    assert "|| true" in commands[0]
+    assert commands[0].endswith("firewall-cmd --reload")
 
 
-def test_configure_firewall_nftables_adds_forward_accept_rules(load_loomwg, monkeypatch):
+def test_configure_firewall_nftables_leaves_forwarding_to_host_policy(
+    load_loomwg, monkeypatch
+):
     provision = load_loomwg("provision")["provision"]
     commands: list[str] = []
     monkeypatch.setattr(provision, "run_shell", lambda command: commands.append(command))
@@ -367,9 +371,8 @@ def test_configure_firewall_nftables_adds_forward_accept_rules(load_loomwg, monk
     provision.configure_firewall("nftables", "wg0", "eth0", 51820)
 
     assert len(commands) == 1
-    assert "add chain inet loomwg forward" in commands[0]
-    assert 'add rule inet loomwg forward iifname "wg0" accept' in commands[0]
-    assert 'add rule inet loomwg forward oifname "wg0" accept' in commands[0]
+    assert "postrouting" in commands[0]
+    assert "forward" not in commands[0]
 
 
 # === dependencies.py: dependency installation (in-container) ===

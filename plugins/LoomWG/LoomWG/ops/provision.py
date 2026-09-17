@@ -56,8 +56,8 @@ def _configure_firewalld(
         "firewall-cmd --permanent --add-masquerade && "
         f"firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -i {interface} -j ACCEPT && "
         f"firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -o {interface} -j ACCEPT && "
-        f"firewall-cmd --permanent --direct --add-rule ipv6 filter FORWARD 0 -i {interface} -j ACCEPT && "
-        f"firewall-cmd --permanent --direct --add-rule ipv6 filter FORWARD 0 -o {interface} -j ACCEPT && "
+        f"(firewall-cmd --permanent --direct --add-rule ipv6 filter FORWARD 0 -i {interface} -j ACCEPT || true) && "
+        f"(firewall-cmd --permanent --direct --add-rule ipv6 filter FORWARD 0 -o {interface} -j ACCEPT || true) && "
         "firewall-cmd --reload"
     )
 
@@ -70,17 +70,16 @@ def _configure_ufw(interface: str, external_interface: str, listen_port: int) ->
 def _configure_nftables(
     interface: str, external_interface: str, listen_port: int
 ) -> None:
-    # This backend's own tool installs NAT, so firewall_hooks() does not run for
-    # it. The forward-accept rules therefore have to be added here, otherwise a
-    # host whose FORWARD policy drops stops routing client traffic. The table is
-    # `inet`, so the rules cover IPv4 and IPv6 alike.
+    # Only NAT is installed here; forwarding is left to the host's own policy.
+    # An `accept` in a plugin-owned base chain cannot override a drop in another
+    # chain on the `forward` hook (nftables makes only `drop` final), so the
+    # forward-accept rules the wg-quick hooks add for the hooked backends cannot
+    # be reproduced this way. The host must permit traffic out of the WireGuard
+    # interface.
     run_shell(
         "nft add table inet loomwg 2>/dev/null || true; "
         "nft 'add chain inet loomwg input { type filter hook input priority 0; policy accept; }' 2>/dev/null || true; "
         f"nft add rule inet loomwg input udp dport {listen_port} accept 2>/dev/null || true; "
-        "nft 'add chain inet loomwg forward { type filter hook forward priority 0; policy accept; }' 2>/dev/null || true; "
-        f"nft add rule inet loomwg forward iifname \"{interface}\" accept 2>/dev/null || true; "
-        f"nft add rule inet loomwg forward oifname \"{interface}\" accept 2>/dev/null || true; "
         "nft 'add chain inet loomwg postrouting { type nat hook postrouting priority 100; }' 2>/dev/null || true; "
         f"nft add rule inet loomwg postrouting oifname \"{external_interface}\" masquerade 2>/dev/null || true"
     )
@@ -110,8 +109,8 @@ _FIREWALL_CONFIGURERS = {
 _SUPPORTED_FIREWALLS = tuple(_FIREWALL_CONFIGURERS)
 
 # Backends with no NAT command of their own: the wg-quick hooks supply both NAT
-# and the forward-accept rules there. The other backends' configurers install
-# those rules themselves.
+# and the forward-accept rules there. firewalld's configurer installs both;
+# nftables installs NAT and leaves forwarding to the host policy.
 _HOOKED_FIREWALLS = ("iptables", "ufw")
 
 
@@ -138,10 +137,11 @@ def firewall_hooks(
     with iptables for the backends that have no NAT rule of their own
     (``iptables`` and ``ufw``). They are skipped when the firewall was skipped
     (the operator configures the host firewall manually) and for
-    ``firewalld``/``nftables``, whose configurers install both the NAT and the
-    forward-accept rules. They are also skipped on hosts without iptables
-    (nft-only), where the command would make wg-quick fail and tear the interface
-    down again.
+    ``firewalld``, whose configurer installs both the NAT and the forward-accept
+    rules, and for ``nftables``, whose configurer installs the NAT and leaves
+    forwarding to the host policy. They are also skipped on hosts without
+    iptables (nft-only), where the command would make wg-quick fail and tear the
+    interface down again.
     """
     if firewall not in _HOOKED_FIREWALLS or shutil.which("iptables") is None:
         return "", ""
