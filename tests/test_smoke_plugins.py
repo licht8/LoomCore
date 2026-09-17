@@ -1,5 +1,8 @@
 """Plugin-less smoke: discovery is a no-op and the catalog is core-only."""
 
+import asyncio
+import logging
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -63,6 +66,31 @@ async def test_lifespan_primes_plugin_tool_cache(monkeypatch, tmp_path):
         pass
 
     assert primed == [True]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_logs_and_swallows_a_healthcheck_crash(
+    monkeypatch, tmp_path, caplog
+):
+    """A crashed healthcheck must be logged, not mask the shutdown reason."""
+    from src import app as app_module
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    async def crashing_loop():
+        raise RuntimeError("healthcheck boom")
+
+    monkeypatch.setattr(settings, "plugins_dir", str(plugins_dir))
+    monkeypatch.setattr(app_module.plugin_manager, "discover_plugins", lambda _dir: [])
+    monkeypatch.setattr(app_module, "healthcheck_loop", crashing_loop)
+
+    with caplog.at_level(logging.ERROR, logger="loomcore.app"):
+        async with app_module.lifespan(app):
+            await asyncio.sleep(0.05)
+
+    assert "Background healthcheck stopped unexpectedly" in caplog.text
+    assert "healthcheck boom" in caplog.text
 
 
 @pytest.mark.asyncio

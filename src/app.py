@@ -43,6 +43,19 @@ def _configure_logging() -> None:
     )
 
 
+def _log_healthcheck_failure(task: asyncio.Task[None]) -> None:
+    """Surface a background healthcheck crash that would otherwise be silent.
+
+    Retrieving the exception here also marks it as observed, so a failed task
+    does not emit an "exception was never retrieved" warning.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Background healthcheck stopped unexpectedly", exc_info=exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Discover plugins and run the background healthcheck for the app lifetime."""
@@ -63,11 +76,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Start the background healthcheck every 30 seconds
     healthcheck_task = asyncio.create_task(healthcheck_loop())
+    healthcheck_task.add_done_callback(_log_healthcheck_failure)
     try:
         yield
     finally:
         healthcheck_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        # A task that already failed was logged by its done-callback; awaiting it
+        # would re-raise the stored exception and mask the shutdown reason.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await healthcheck_task
 
 
