@@ -17,6 +17,10 @@ from . import audit_event
 
 SYSTEMD_MARKER = Path("/run/systemd/system")
 
+# A restart runs the unit's ExecStop/ExecStart hooks, so it legitimately takes
+# longer than the inspection calls; give it a budget of its own.
+_RESTART_TIMEOUT = 60
+
 # systemd unit names: letters, digits, and the separators systemd itself uses
 # (``.``, ``-``, ``_``, ``@``). Anything else is rejected, so a value like
 # ``--all`` can never be passed through as a systemctl option.
@@ -99,7 +103,13 @@ def failed_units_handler(arguments: dict[str, Any]) -> dict[str, Any]:
 def systemctl_restart(arguments: dict[str, Any]) -> dict[str, Any]:
     binary = _require_systemd()
     service = _service(arguments)
-    completed = _systemctl(binary, "restart", service)
+    try:
+        completed = _systemctl(binary, "restart", service, timeout=_RESTART_TIMEOUT)
+    except RuntimeError as exc:
+        audit_event(
+            "ops_systemctl_restart", service=service, exit_code=None, error=str(exc)
+        )
+        raise
     audit_error = audit_event(
         "ops_systemctl_restart", service=service, exit_code=completed.returncode
     )

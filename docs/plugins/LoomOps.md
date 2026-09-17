@@ -111,7 +111,9 @@ so no tool can be advertised as safe by accident.
 - **Audit.** Every mutating call (`ops_run_command`, `ops_write_file`,
   `ops_kill_process`, `ops_systemctl_restart`) appends one JSON line (UTC
   timestamp) to the audit log. Audit failures never abort the action; the error is
-  surfaced in the result as `audit_error`.
+  surfaced in the result as `audit_error`. An attempt that never yields an exit
+  code (timeout, `systemctl` not runnable) is still logged, with `exit_code: null`
+  and an `error` field.
 
 ## Parameters
 
@@ -188,6 +190,8 @@ Even with the grants above:
   `/run/systemd/system` missing) or when `systemctl` itself fails with a non-zero
   exit (e.g. D-Bus unavailable); `ops_scan_health` reports that reason under
   `host_access.missing` instead of claiming there are no failed units.
+  `ops_systemctl_restart` uses a dedicated 60 s budget, because the unit's
+  `ExecStop`/`ExecStart` hooks run inside `systemctl restart`.
 - File reads/writes are confined to `LOOMOPS_ALLOWED_PATHS` (which default to
   deny-all), not to the `/host/...` mounts directly. Confinement works on paths:
   a **hard link** created inside an allowed root still refers to the same inode as

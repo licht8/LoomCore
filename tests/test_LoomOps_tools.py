@@ -4,6 +4,7 @@ import io
 import json
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -600,6 +601,57 @@ def test_systemctl_restart_failure_raises(load_loomops, monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="Access denied"):
         services.systemctl_restart({"service": "nginx"})
+
+
+def test_systemctl_restart_uses_a_longer_timeout(load_loomops, monkeypatch, tmp_path):
+    services = load_loomops("services")["services"]
+    timeouts = []
+
+    def fake_run(command, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return _Completed()
+
+    _patch_systemd(services, monkeypatch, tmp_path, fake_run)
+
+    services.systemctl_restart({"service": "nginx"})
+
+    assert timeouts == [services._RESTART_TIMEOUT]
+    assert services._RESTART_TIMEOUT > 15
+
+
+def _restart_failure_audit(services, monkeypatch, tmp_path, failure):
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    _patch_systemd(services, monkeypatch, tmp_path, failure)
+    with pytest.raises(RuntimeError):
+        services.systemctl_restart({"service": "nginx"})
+    line = (tmp_path / "audit.log").read_text(encoding="utf-8").strip()
+    return json.loads(line)
+
+
+def test_systemctl_restart_timeout_is_audited(load_loomops, monkeypatch, tmp_path):
+    services = load_loomops("services")["services"]
+
+    def fake_run(command, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout"))
+
+    record = _restart_failure_audit(services, monkeypatch, tmp_path, fake_run)
+
+    assert record["event"] == "ops_systemctl_restart"
+    assert record["service"] == "nginx"
+    assert record["exit_code"] is None
+    assert "timed out" in record["error"]
+
+
+def test_systemctl_restart_exec_error_is_audited(load_loomops, monkeypatch, tmp_path):
+    services = load_loomops("services")["services"]
+
+    def fake_run(command, **kwargs):
+        raise OSError("systemctl disappeared")
+
+    record = _restart_failure_audit(services, monkeypatch, tmp_path, fake_run)
+
+    assert record["exit_code"] is None
+    assert "Cannot run systemctl" in record["error"]
 
 
 def test_failed_units_reports_systemctl_failure(load_loomops, monkeypatch, tmp_path):
