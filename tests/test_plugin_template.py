@@ -14,11 +14,11 @@ TEMPLATE_DIR = PROJECT_ROOT / "docs" / "architecture" / "plugin-template"
 TEMPLATE_MAIN = TEMPLATE_DIR / "main.py"
 
 
-def _run_requests(*requests: dict) -> list[dict]:
-    """Run the template as a subprocess and collect the JSON responses."""
+def _run_script(script: Path, *requests: object) -> list[dict]:
+    """Run a script as a subprocess and collect the JSON responses."""
     payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests)
     proc = subprocess.run(
-        [sys.executable, str(TEMPLATE_MAIN)],
+        [sys.executable, str(script)],
         input=payload,
         capture_output=True,
         text=True,
@@ -28,6 +28,11 @@ def _run_requests(*requests: dict) -> list[dict]:
     )
     assert proc.returncode == 0, proc.stderr
     return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _run_requests(*requests: object) -> list[dict]:
+    """Run the template itself as a subprocess."""
+    return _run_script(TEMPLATE_MAIN, *requests)
 
 
 @pytest.fixture
@@ -57,14 +62,49 @@ def _drive(module, monkeypatch, *requests: dict) -> list[dict]:
     )
 
 
-def test_unexpected_tool_exception_keeps_process_alive():
+def test_malformed_requests_keep_process_alive():
     responses = _run_requests(
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        [],
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "example_echo", "arguments": "boom"},
+        },
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/list"},
+    )
+
+    assert [r["id"] for r in responses] == [1, None, 3, 4]
+    assert responses[1]["error"]["code"] == -32600
+    assert responses[2]["error"] == {"code": -32602, "message": "Invalid arguments"}
+    assert responses[3]["result"]["tools"][0]["name"] == "example_echo"
+
+
+def test_unexpected_handler_error_survives_subprocess(tmp_path):
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(TEMPLATE_DIR)!r})\n"
+        "import main\n"
+        "\n"
+        "\n"
+        "def boom(arguments):\n"
+        '    raise TypeError("boom")\n'
+        "\n"
+        "\n"
+        'main.HANDLERS["boom"] = boom\n'
+        "main.main()\n",
+        encoding="utf-8",
+    )
+    responses = _run_script(
+        wrapper,
         {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
         {
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": {"name": "example_echo", "arguments": "boom"},
+            "params": {"name": "boom", "arguments": {}},
         },
         {"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
     )
@@ -73,6 +113,29 @@ def test_unexpected_tool_exception_keeps_process_alive():
     assert responses[1]["error"]["code"] == -32603
     assert responses[1]["error"]["message"] == "Internal error"
     assert responses[2]["result"]["tools"][0]["name"] == "example_echo"
+
+
+def test_unexpected_tool_exception_keeps_process_alive(template_main, monkeypatch):
+    def boom(arguments):
+        raise TypeError("boom")
+
+    monkeypatch.setitem(template_main.HANDLERS, "boom", boom)
+    responses = _drive(
+        template_main,
+        monkeypatch,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "boom", "arguments": {}},
+        },
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    )
+
+    assert [r["id"] for r in responses] == [1, 2]
+    assert responses[0]["error"]["code"] == -32603
+    assert responses[0]["error"]["message"] == "Internal error"
+    assert responses[1]["result"]["tools"][0]["name"] == "example_echo"
 
 
 def test_unserializable_result_is_answered(template_main, monkeypatch):
@@ -107,7 +170,7 @@ def test_non_object_payload_is_invalid_request(template_main, monkeypatch):
     )
 
     assert [r["error"]["code"] for r in responses[:4]] == [-32600] * 4
-    assert [r["id"] for r in responses[:4]] == [0] * 4
+    assert [r["id"] for r in responses[:4]] == [None] * 4
     assert responses[4]["id"] == 9
     assert responses[4]["result"]["tools"][0]["name"] == "example_echo"
 
@@ -128,7 +191,7 @@ def test_deeply_nested_line_is_parse_error(template_main, monkeypatch):
     )
 
     assert responses[0]["error"]["code"] == -32700
-    assert responses[0]["id"] == 0
+    assert responses[0]["id"] is None
     assert responses[1]["result"]["tools"][0]["name"] == "example_echo"
 
 
@@ -162,7 +225,7 @@ def test_parse_error_and_unknown_method(template_main, monkeypatch):
     )
 
     assert responses[0]["error"]["code"] == -32700
-    assert responses[0]["id"] == 0
+    assert responses[0]["id"] is None
     assert responses[1]["error"]["code"] == -32601
     assert responses[1]["id"] == 7
 
@@ -193,3 +256,40 @@ def test_non_object_params_is_invalid_params(template_main, monkeypatch):
     assert responses[0]["id"] == 5
     assert responses[0]["error"] == {"code": -32602, "message": "Invalid params"}
     assert responses[1]["result"]["tools"][0]["name"] == "example_echo"
+
+
+def test_non_object_arguments_is_invalid_arguments(template_main, monkeypatch):
+    responses = _drive(
+        template_main,
+        monkeypatch,
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "example_echo", "arguments": "boom"},
+        },
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/list"},
+    )
+
+    assert responses[0]["id"] == 5
+    assert responses[0]["error"] == {"code": -32602, "message": "Invalid arguments"}
+    assert responses[1]["result"]["tools"][0]["name"] == "example_echo"
+
+
+def test_id_less_request_error_uses_null_id(template_main, monkeypatch):
+    def boom(arguments):
+        raise TypeError("boom")
+
+    monkeypatch.setitem(template_main.HANDLERS, "boom", boom)
+    responses = _drive(
+        template_main,
+        monkeypatch,
+        {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": "boom", "arguments": {}},
+        },
+    )
+
+    assert responses[0]["id"] is None
+    assert responses[0]["error"]["code"] == -32603

@@ -29,7 +29,9 @@ prefix, host networking and its environment variables (schema:
 `/run/systemd` under `/host/...` (see
 [Host observability](#host-observability)). A journal directory counts only when
 it actually holds `*.journal` files, so an empty mount is reported as unavailable
-rather than producing a misleading "No journal files were found" error.
+rather than producing a misleading "No journal files were found" error. The walk
+that finds those files never follows symlinks, so a symlinked entry cannot make a
+directory look available.
 Read-only tools work even when those grants are absent; the tools then report
 what is missing. The core reads and
 validates the manifest during discovery and warns on mismatch (never blocks).
@@ -44,7 +46,8 @@ The implementation lives in the `LoomOps` package:
 - `ops/` — `commands.py` (allow-listed exec), `files.py` (confined read/write),
   `processes.py` (`/proc` scan + signals), `services.py` (systemd),
   `system_info.py` (disk/network), `monitoring.py` (metrics/dmesg/connections),
-  `logs.py` (journald + file fallback), `diagnostics.py` (health scan).
+  `logs.py` (journald + file fallback), `diagnostics.py` (health scan),
+  `confine.py` (no-follow open/write primitives shared by `files.py`/`logs.py`).
   `ops/__init__.py` holds the audit helper.
 
 ## Tools
@@ -84,7 +87,19 @@ approval before running. Every other tool is read-only and runs without approval
   `ops_run_command` is refused. Likewise `ops_read_file`/`ops_write_file` refuse
   all paths until `LOOMOPS_ALLOWED_PATHS` is set.
 - **Path confinement.** Paths are resolved (symlink-safe) and rejected if they
-  escape the allowed roots — `..` traversal is not possible.
+  escape the allowed roots — `..` traversal is not possible. The open itself does
+  not trust the resolved string: on POSIX each component is opened relative to the
+  root with `O_NOFOLLOW`/`O_DIRECTORY` (dir-fd walk), elsewhere every component is
+  `lstat`-checked and the handle is re-verified against the path, so swapping a
+  component for a symlink between the check and the read/write (TOCTOU) is
+  refused instead of escaping the sandbox. The configured roots must already
+  exist; a write only creates subdirectories below an existing root. On platforms
+  without `dir_fd` this is best-effort: a parent directory swapped for a symlink in
+  the last instant before the operation cannot be ruled out, so run the plugin on
+  Linux (the container does).
+- **No symlinks in log walks.** `ops_log_search`/`ops_journal_errors` descend the
+  log roots without following symlinks and read only regular files, so a symlink
+  planted inside a root cannot reach outside it.
 - **Bounded output.** Command output is capped at 20 000 characters and file reads
   at 256 KB; commands are killed after the timeout. Log/dmesg output is bounded by
   line count.
@@ -170,7 +185,9 @@ Even with the grants above:
   actionable error when no systemd is reachable (`systemctl` absent or
   `/run/systemd/system` missing).
 - File reads/writes are confined to `LOOMOPS_ALLOWED_PATHS` (which default to
-  deny-all), not to the `/host/...` mounts directly.
+  deny-all), not to the `/host/...` mounts directly. Confinement works on paths:
+  a **hard link** created inside an allowed root still refers to the same inode as
+  the file outside it, so it is not caught by the symlink checks.
 
 These are deliberate: the plugin stays read-only for observability and returns a
 clear error instead of silently doing nothing.

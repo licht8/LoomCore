@@ -60,9 +60,8 @@ def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
-def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
+def _dispatch(request: dict[str, Any], request_id: Any) -> dict[str, Any]:
     method = request.get("method", "")
-    request_id = request.get("id", 0)
     params = request.get("params")
     if params is None:
         params = {}
@@ -88,8 +87,13 @@ def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
         handler = HANDLERS.get(name)
         if handler is None:
             return _error(request_id, -32601, f"Unknown tool: {name}")
+        arguments = params.get("arguments")
+        if arguments is None:
+            arguments = {}
+        elif not isinstance(arguments, dict):
+            return _error(request_id, -32602, "Invalid arguments")
         try:
-            return _response(request_id, handler(params.get("arguments") or {}))
+            return _response(request_id, handler(arguments))
         except (OSError, RuntimeError, ValueError) as exc:
             return _error(request_id, -32000, str(exc))
     return _error(request_id, -32601, f"Unknown method: {method}")
@@ -120,12 +124,12 @@ def _handle_line(line: str) -> dict[str, Any]:
     try:
         request = json.loads(line)
     except (json.JSONDecodeError, RecursionError) as exc:
-        return _error(0, -32700, str(exc))
+        return _error(None, -32700, str(exc))
     if not isinstance(request, dict):
-        return _error(0, -32600, "Invalid Request")
-    request_id = request.get("id", 0)
+        return _error(None, -32600, "Invalid Request")
+    request_id = request.get("id")
     try:
-        return _dispatch(request)
+        return _dispatch(request, request_id)
     except Exception:
         logger.exception("Unhandled error while dispatching request %r", request_id)
         return _internal_error(request_id, "Internal error")

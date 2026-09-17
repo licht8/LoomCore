@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from . import audit_event
+from . import audit_event, confine
 
 MAX_READ_BYTES = 256_000
 
@@ -41,15 +39,26 @@ def resolve_path(raw: Any) -> Path:
     raise ValueError(f"Path '{raw}' is outside the allowed paths")
 
 
+def _confined_root(path: Path, raw: Any) -> Path:
+    root = confine.matching_root(path, allowed_paths())
+    if root is None:
+        raise ValueError(f"Path '{raw}' is outside the allowed paths")
+    return root
+
+
 def read_file(arguments: dict[str, Any]) -> dict[str, Any]:
-    path = resolve_path(arguments.get("path"))
-    if not path.is_file():
-        raise ValueError(f"File not found: {path}")
-    size = path.stat().st_size
-    with path.open("rb") as handle:
-        raw = handle.read(MAX_READ_BYTES)
+    raw = arguments.get("path")
+    path = resolve_path(raw)
+    root = _confined_root(path, raw)
+    try:
+        fd, info = confine.open_read(root, path)
+    except FileNotFoundError:
+        raise ValueError(f"File not found: {path}") from None
+    with confine.open_fd(fd, "rb") as handle:
+        raw_bytes = handle.read(MAX_READ_BYTES)
+    size = info.st_size
     truncated = size > MAX_READ_BYTES
-    content = raw.decode("utf-8", errors="replace")
+    content = raw_bytes.decode("utf-8", errors="replace")
     if truncated:
         content += f"\n... [truncated at {MAX_READ_BYTES} of {size} bytes]"
     return {
@@ -61,23 +70,18 @@ def read_file(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_file(arguments: dict[str, Any]) -> dict[str, Any]:
-    path = resolve_path(arguments.get("path"))
+    raw = arguments.get("path")
+    path = resolve_path(raw)
     content = arguments.get("content")
     if not isinstance(content, str):
         raise ValueError("content must be a string")
-    if path.exists() and path.is_dir():
-        raise ValueError(f"Path is a directory: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    root = _confined_root(path, raw)
+    data = content.encode("utf-8")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-        os.replace(tmp_name, path)
+        confine.write_atomic(root, path, data)
     except OSError as exc:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_name)
         raise RuntimeError(f"Failed to write {path}: {exc}") from exc
-    written = len(content.encode("utf-8"))
+    written = len(data)
     audit_error = audit_event("ops_write_file", path=str(path), bytes=written)
     return {
         "output": f"Wrote {written} bytes to {path}",

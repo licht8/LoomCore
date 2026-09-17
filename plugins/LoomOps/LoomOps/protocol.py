@@ -40,8 +40,8 @@ def dispatch(
     request: dict[str, Any],
     handlers: dict[str, Handler],
     tools_schema: list[dict[str, Any]],
+    request_id: Any,
 ) -> dict[str, Any]:
-    request_id = request.get("id", 0)
     method = request.get("method", "")
     params = request.get("params")
     if params is None:
@@ -65,8 +65,13 @@ def dispatch(
         handler = handlers.get(tool_name)
         if handler is None:
             return error(request_id, -32601, f"Unknown tool: {tool_name}")
+        arguments = params.get("arguments")
+        if arguments is None:
+            arguments = {}
+        elif not isinstance(arguments, dict):
+            return error(request_id, -32602, "Invalid arguments")
         try:
-            return response(request_id, handler(params.get("arguments") or {}))
+            return response(request_id, handler(arguments))
         except (OSError, RuntimeError, ValueError) as exc:
             return error(request_id, -32000, str(exc))
     return error(request_id, -32601, f"Unknown method: {method}")
@@ -118,12 +123,12 @@ def _handle_line(
     try:
         request = json.loads(line)
     except (json.JSONDecodeError, RecursionError) as exc:
-        return error(0, -32700, str(exc))
+        return error(None, -32700, str(exc))
     if not isinstance(request, dict):
-        return error(0, -32600, "Invalid Request")
-    request_id = request.get("id", 0)
+        return error(None, -32600, "Invalid Request")
+    request_id = request.get("id")
     try:
-        return dispatch(request, handlers, tools_schema)
+        return dispatch(request, handlers, tools_schema, request_id)
     except Exception:
         logger.exception("Unhandled error while dispatching request %r", request_id)
         return _internal_error(request_id, "Internal error")

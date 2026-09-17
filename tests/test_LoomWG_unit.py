@@ -1048,7 +1048,7 @@ def test_protocol_non_object_payload_is_invalid_request(load_loomwg, monkeypatch
     )
 
     assert [r["error"]["code"] for r in responses[:4]] == [-32600] * 4
-    assert [r["id"] for r in responses[:4]] == [0] * 4
+    assert [r["id"] for r in responses[:4]] == [None] * 4
     assert responses[4]["id"] == 9
     assert responses[4]["result"] == {"tools": []}
 
@@ -1071,7 +1071,7 @@ def test_protocol_deeply_nested_line_is_parse_error(load_loomwg, monkeypatch):
     )
 
     assert responses[0]["error"]["code"] == -32700
-    assert responses[0]["id"] == 0
+    assert responses[0]["id"] is None
     assert responses[1]["result"] == {"tools": []}
 
 
@@ -1132,7 +1132,7 @@ def test_protocol_parse_error_and_unknown_method(load_loomwg, monkeypatch):
     )
 
     assert responses[0]["error"]["code"] == -32700
-    assert responses[0]["id"] == 0
+    assert responses[0]["id"] is None
     assert responses[1]["error"]["code"] == -32601
     assert responses[1]["id"] == 7
 
@@ -1168,3 +1168,48 @@ def test_protocol_non_object_params_is_invalid_params(load_loomwg, monkeypatch):
     assert responses[0]["id"] == 5
     assert responses[0]["error"] == {"code": -32602, "message": "Invalid params"}
     assert responses[1]["result"] == {"tools": []}
+
+
+def test_protocol_non_object_arguments_is_invalid_arguments(load_loomwg, monkeypatch):
+    protocol = load_loomwg("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": lambda arguments: {}},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": "boom"},
+            }
+        ),
+        json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/list"}),
+    )
+
+    assert responses[0]["id"] == 5
+    assert responses[0]["error"] == {"code": -32602, "message": "Invalid arguments"}
+    assert responses[1]["result"] == {"tools": []}
+
+
+def test_protocol_id_less_request_error_uses_null_id(load_loomwg, monkeypatch):
+    protocol = load_loomwg("protocol")["protocol"]
+
+    def boom(arguments):
+        raise TypeError("boom")
+
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": boom},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": {}},
+            }
+        ),
+    )
+
+    assert responses[0]["id"] is None
+    assert responses[0]["error"]["code"] == -32603

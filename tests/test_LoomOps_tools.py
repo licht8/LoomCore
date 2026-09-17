@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,13 @@ class _Completed:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+
+
+def _symlink_or_skip(target: Path, link: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not permitted on this platform")
 
 
 # === schemas / handlers ===
@@ -283,6 +291,117 @@ def test_write_file_rejects_directory(load_loomops, monkeypatch, tmp_path):
     target.mkdir()
     with pytest.raises(ValueError, match="directory"):
         files.write_file({"path": str(target), "content": "x"})
+
+
+def test_write_file_creates_missing_parents(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    target = tmp_path / "nested" / "deep" / "a.txt"
+
+    result = files.write_file({"path": str(target), "content": "hi"})
+
+    assert target.read_text(encoding="utf-8") == "hi"
+    assert result["bytes"] == 2
+
+
+def test_read_file_follows_symlink_inside_root(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+    real = tmp_path / "real.txt"
+    real.write_text("ok", encoding="utf-8")
+    _symlink_or_skip(real, tmp_path / "link.txt")
+
+    assert files.read_file({"path": str(tmp_path / "link.txt")})["output"] == "ok"
+
+
+def test_read_file_refuses_symlinked_component(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("secret", encoding="utf-8")
+    _symlink_or_skip(outside, root / "swap")
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(root))
+    monkeypatch.setattr(files, "resolve_path", lambda raw: root / "swap" / "secret.txt")
+
+    with pytest.raises(ValueError, match="symlink"):
+        files.read_file({"path": str(root / "swap" / "secret.txt")})
+
+    assert secret.read_text(encoding="utf-8") == "secret"
+
+
+def test_write_file_refuses_symlinked_component(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("secret", encoding="utf-8")
+    _symlink_or_skip(outside, root / "swap")
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(root))
+    monkeypatch.setattr(files, "resolve_path", lambda raw: root / "swap" / "secret.txt")
+
+    with pytest.raises(ValueError, match="symlink"):
+        files.write_file({"path": str(root / "swap" / "secret.txt"), "content": "pwn"})
+
+    assert secret.read_text(encoding="utf-8") == "secret"
+    assert sorted(path.name for path in outside.iterdir()) == ["secret.txt"]
+
+
+def test_read_file_on_allowed_root_reports_not_found(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+
+    with pytest.raises(ValueError, match="File not found"):
+        files.read_file({"path": str(tmp_path)})
+
+
+def test_write_file_on_allowed_root_rejects_directory(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+
+    with pytest.raises(ValueError, match="Path is a directory"):
+        files.write_file({"path": str(tmp_path), "content": "x"})
+
+
+def test_write_file_rejects_missing_allowed_root(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    root = tmp_path / "missing"
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(root))
+
+    with pytest.raises(ValueError, match="Allowed path does not exist"):
+        files.write_file({"path": str(root / "a.txt"), "content": "x"})
+
+
+def test_parent_verification_rejects_symlinked_parent(load_loomops, monkeypatch, tmp_path):
+    confine = load_loomops("files")["files"].confine
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    _symlink_or_skip(outside, root / "swap")
+
+    with pytest.raises(ValueError, match="symlink"):
+        confine._verify_parent(root, root / "swap" / "secret.txt")
+
+
+def test_open_fd_closes_descriptor_when_wrapping_fails(load_loomops, monkeypatch, tmp_path):
+    confine = load_loomops("files")["files"].confine
+    fd = os.open(tmp_path / "data.bin", os.O_CREAT | os.O_RDWR)
+
+    def boom(*args, **kwargs):
+        raise OSError("fdopen failed")
+
+    monkeypatch.setattr(os, "fdopen", boom)
+
+    with pytest.raises(OSError, match="fdopen failed"):
+        confine.open_fd(fd, "wb")
+    with pytest.raises(OSError):
+        os.fstat(fd)
 
 
 # === processes ===
@@ -698,6 +817,70 @@ def test_run_journal_without_journal_files_raises(load_loomops, monkeypatch, tmp
         logs._search_journal(query="", since="", unit="", limit=5)
 
 
+def test_log_search_skips_symlinked_files(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    root = tmp_path / "logs"
+    root.mkdir()
+    (root / "app.log").write_text("ERROR real\n", encoding="utf-8")
+    outside = tmp_path / "secret.log"
+    outside.write_text("ERROR secret-marker\n", encoding="utf-8")
+    _symlink_or_skip(outside, root / "linked.log")
+    monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(root))
+    monkeypatch.setattr(logs, "journal_available", lambda: False)
+
+    result = logs.log_search({"query": "error"})
+
+    assert "real" in result["output"]
+    assert "secret-marker" not in result["output"]
+    assert result["files_scanned"] == 1
+
+
+def test_log_search_ignores_symlinked_directories(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    root = tmp_path / "logs"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (outside / "secret.log").write_text("critical marker\n", encoding="utf-8")
+    _symlink_or_skip(outside, root / "linked")
+    monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(root))
+    monkeypatch.setattr(logs, "journal_available", lambda: False)
+
+    result = logs.journal_errors({})
+
+    assert "marker" not in result["output"]
+    assert result["count"] == 0
+
+
+def test_journal_directory_ignores_symlinked_journal(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
+    outside = tmp_path / "outside.journal"
+    outside.write_text("", encoding="utf-8")
+    root = tmp_path / "journal-dir"
+    root.mkdir()
+    _symlink_or_skip(outside, root / "system.journal")
+    monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(root))
+
+    assert logs.journal_available() is False
+
+
+def test_iter_log_files_caps_each_root(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "a.log").write_text("a\n", encoding="utf-8")
+    (first / "b.log").write_text("b\n", encoding="utf-8")
+    (second / "c.log").write_text("c\n", encoding="utf-8")
+    monkeypatch.setattr(logs, "log_roots", lambda: [first, second])
+
+    found = sorted(path.name for _root, path in logs._iter_log_files(limit=1))
+
+    assert found == ["a.log", "c.log"]
+
+
 # === diagnostics ===
 
 def _patch_quiet_health(diagnostics, monkeypatch, tmp_path):
@@ -846,7 +1029,7 @@ def test_protocol_non_object_payload_is_invalid_request(load_loomops, monkeypatc
     )
 
     assert [r["error"]["code"] for r in responses[:4]] == [-32600] * 4
-    assert [r["id"] for r in responses[:4]] == [0] * 4
+    assert [r["id"] for r in responses[:4]] == [None] * 4
     assert responses[4]["id"] == 9
     assert responses[4]["result"] == {"tools": []}
 
@@ -869,7 +1052,7 @@ def test_protocol_deeply_nested_line_is_parse_error(load_loomops, monkeypatch):
     )
 
     assert responses[0]["error"]["code"] == -32700
-    assert responses[0]["id"] == 0
+    assert responses[0]["id"] is None
     assert responses[1]["result"] == {"tools": []}
 
 
@@ -906,7 +1089,7 @@ def test_protocol_parse_error_and_unknown_method(load_loomops, monkeypatch):
     )
 
     assert responses[0]["error"]["code"] == -32700
-    assert responses[0]["id"] == 0
+    assert responses[0]["id"] is None
     assert responses[1]["error"]["code"] == -32601
     assert responses[1]["id"] == 7
 
@@ -942,3 +1125,48 @@ def test_protocol_non_object_params_is_invalid_params(load_loomops, monkeypatch)
     assert responses[0]["id"] == 5
     assert responses[0]["error"] == {"code": -32602, "message": "Invalid params"}
     assert responses[1]["result"] == {"tools": []}
+
+
+def test_protocol_non_object_arguments_is_invalid_arguments(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": lambda arguments: {}},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": "boom"},
+            }
+        ),
+        json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/list"}),
+    )
+
+    assert responses[0]["id"] == 5
+    assert responses[0]["error"] == {"code": -32602, "message": "Invalid arguments"}
+    assert responses[1]["result"] == {"tools": []}
+
+
+def test_protocol_id_less_request_error_uses_null_id(load_loomops, monkeypatch):
+    protocol = load_loomops("protocol")["protocol"]
+
+    def boom(arguments):
+        raise TypeError("boom")
+
+    responses = _run_protocol(
+        protocol,
+        monkeypatch,
+        {"boom": boom},
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "boom", "arguments": {}},
+            }
+        ),
+    )
+
+    assert responses[0]["id"] is None
+    assert responses[0]["error"]["code"] == -32603

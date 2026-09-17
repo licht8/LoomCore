@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import bounded_int
+from . import bounded_int, confine
 
 DEFAULT_LOG_ROOTS = ("/host/var/log",)
 DEFAULT_MAX_LINES = 200
@@ -57,18 +58,44 @@ def journal_dirs() -> list[Path]:
     return dirs
 
 
+def _resolved_root(root: Path) -> Path | None:
+    try:
+        return root.expanduser().resolve()
+    except OSError:
+        return None
+
+
+def _walk_regular_files(root: Path):
+    """Yield the regular files below ``root`` without following symlinks."""
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames.sort()
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            try:
+                info = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                yield path
+
+
 def _has_journal_files(directory: Path) -> bool:
     """True when the directory actually holds journal files.
 
     Journal files live under a machine-id subdirectory, so the check recurses.
-    A merely-mounted-but-empty directory must not count as available.
+    A merely-mounted-but-empty directory must not count as available, and
+    symlinked entries never count.
     """
+    root = _resolved_root(directory)
+    if root is None or not root.is_dir():
+        return False
     try:
-        if not directory.is_dir():
-            return False
-        return next(directory.rglob("*.journal"), None) is not None
+        for path in _walk_regular_files(root):
+            if path.name.endswith(".journal"):
+                return True
     except OSError:
         return False
+    return False
 
 
 def journal_dir() -> Path | None:
@@ -128,11 +155,14 @@ def _run_journal(args: list[str]) -> str:
     return completed.stdout or ""
 
 
-def _tail_lines(path: Path, count: int) -> list[str]:
+def _tail_lines(root: Path, path: Path, count: int) -> list[str]:
     try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
+        fd, info = confine.open_read(root, path)
+    except (OSError, ValueError):
+        return []
+    try:
+        with confine.open_fd(fd, "rb") as handle:
+            size = info.st_size
             block = min(size, _TAIL_BYTES)
             handle.seek(size - block)
             data = handle.read(block)
@@ -143,15 +173,13 @@ def _tail_lines(path: Path, count: int) -> list[str]:
 
 def _iter_log_files(limit: int = 100):
     for root in log_roots():
-        if not root.is_dir():
+        base = _resolved_root(root)
+        if base is None or not base.is_dir():
             continue
-        count = 0
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                yield path
-                count += 1
-                if count >= limit:
-                    break
+        for count, path in enumerate(sorted(_walk_regular_files(base)), start=1):
+            yield base, path
+            if count >= limit:
+                break
 
 
 def log_search(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -196,9 +224,9 @@ def _search_files(*, query: str, limit: int) -> dict[str, Any]:
     entries: list[str] = []
     scanned = 0
     needle = query.lower()
-    for path in _iter_log_files():
+    for root, path in _iter_log_files():
         scanned += 1
-        for line in _tail_lines(path, 200):
+        for line in _tail_lines(root, path, 200):
             if not needle or needle in line.lower():
                 entries.append(f"{path.name}: {line}")
     selected = entries[-limit:]
@@ -227,8 +255,8 @@ def journal_errors(arguments: dict[str, Any]) -> dict[str, Any]:
             "count": len(lines),
         }
     entries: list[str] = []
-    for path in _iter_log_files():
-        for line in _tail_lines(path, 200):
+    for root, path in _iter_log_files():
+        for line in _tail_lines(root, path, 200):
             lowered = line.lower()
             if any(marker in lowered for marker in _ERROR_MARKERS):
                 entries.append(f"{path.name}: {line}")
