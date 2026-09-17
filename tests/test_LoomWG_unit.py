@@ -1143,6 +1143,27 @@ def test_upsert_peer_accepts_spacing_variant(load_loomwg, monkeypatch, tmp_path)
     assert config.iter_peers("wg0")[0]["allowed_ips"] == ["10.0.0.9/32"]
 
 
+def test_iter_peers_matches_non_canonical_key_case(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key = _fake_key(28)
+    psk = _fake_key(29)
+    (tmp_path / "wg0.conf").write_text(
+        f"[Interface]\nPrivateKey = x\n\n"
+        f"[Peer]\npublickey = {key}\nallowedips = 10.0.0.2/32\npresharedkey = {psk}\n",
+        encoding="utf-8",
+    )
+
+    assert config.iter_peers("wg0") == [
+        {"public_key": key, "allowed_ips": ["10.0.0.2/32"], "preshared_key": psk}
+    ]
+
+    config.remove_peer("wg0", key)
+
+    assert config.iter_peers("wg0") == []
+
+
 # === wg/validate.py: config text validation ===
 
 def test_validate_config_text_cleans_temp_and_raises(load_loomwg, monkeypatch):

@@ -26,13 +26,14 @@ def iter_peers(interface: str) -> list[dict]:
         for key, value in section.entries:
             if value is None:
                 continue
-            if key == "PublicKey":
+            name = key.strip().lower()
+            if name == "publickey":
                 peer["public_key"] = value
-            elif key == "AllowedIPs":
+            elif name == "allowedips":
                 peer["allowed_ips"] = [
                     item.strip() for item in value.split(",") if item.strip()
                 ]
-            elif key == "PresharedKey":
+            elif name == "presharedkey":
                 peer["preshared_key"] = value
         peers.append(peer)
     return [peer for peer in peers if peer["public_key"]]
