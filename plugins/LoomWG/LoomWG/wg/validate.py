@@ -66,7 +66,7 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
         source = str(path)
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             errors.append(f"cannot read {path}: {exc}")
             return text_result(
                 f"Config check: INVALID ({source})\n  ERROR: {errors[-1]}",
@@ -87,7 +87,17 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
                 errors=["configuration not found"],
                 warnings=warnings,
             )
-        text = path.read_text(encoding="utf-8")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            errors.append(f"cannot read {path}: {exc}")
+            return text_result(
+                f"Config check: INVALID ({source})\n  ERROR: {errors[-1]}",
+                valid=False,
+                source=source,
+                errors=errors,
+                warnings=warnings,
+            )
 
     sections = parse_sections(text)
     interface_sections = [s for s in sections if s.name.lower() == "interface"]

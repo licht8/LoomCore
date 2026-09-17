@@ -1200,6 +1200,30 @@ def test_validate_config_text_passes_and_cleans_temp(load_loomwg, monkeypatch):
     assert not Path(seen[0]).exists()
 
 
+def test_check_config_reports_unreadable_interface_file(load_loomwg, monkeypatch, tmp_path):
+    validate = load_loomwg("validate")["validate"]
+    (tmp_path / "wg0.conf").write_bytes(b"\xff\xfe\x00")
+    monkeypatch.setattr(validate, "config_directory", lambda: tmp_path)
+
+    result = validate.check_config({"interface": "wg0"})
+
+    assert result["data"]["valid"] is False
+    assert result["data"]["errors"][0].startswith("cannot read")
+    assert "INVALID" in result["content"][0]["text"]
+
+
+def test_check_config_reports_unreadable_explicit_path(load_loomwg, tmp_path):
+    validate = load_loomwg("validate")["validate"]
+    target = tmp_path / "broken.conf"
+    target.write_bytes(b"\xff\xfe\x00")
+
+    result = validate.check_config({"path": str(target)})
+
+    assert result["data"]["valid"] is False
+    assert result["data"]["errors"][0].startswith("cannot read")
+    assert "INVALID" in result["content"][0]["text"]
+
+
 def test_write_rejects_invalid_config_keeps_destination(load_loomwg, monkeypatch, tmp_path):
     config = load_loomwg("config")["config"]
     monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
