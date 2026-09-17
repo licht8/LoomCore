@@ -363,8 +363,9 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         )
 
     previous_preshared_key = None
+    restore_preshared_key = False
     if preshared_key and existing_peer is not None:
-        with contextlib.suppress(FileNotFoundError, OSError, ValueError):
+        try:
             previous_preshared_key = next(
                 (
                     peer["preshared_key"]
@@ -373,6 +374,12 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
                 ),
                 None,
             )
+            restore_preshared_key = True
+        except (OSError, ValueError):
+            # The persisted key could not be read; leaving the newly applied
+            # key in place is safer than clearing a key that may still be
+            # present in the config.
+            restore_preshared_key = False
 
     command = ["wg", "set", interface, "peer", public_key, "allowed-ips", ",".join(allowed_ips)]
     if preshared_key:
@@ -386,7 +393,7 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
                 interface,
                 public_key,
                 existing_peer,
-                rotate_preshared_key=bool(preshared_key),
+                rotate_preshared_key=restore_preshared_key,
                 previous_preshared_key=previous_preshared_key,
             )
         raise
