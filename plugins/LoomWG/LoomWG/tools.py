@@ -265,6 +265,31 @@ def _allowed_ips(arguments: dict[str, Any]) -> list[str]:
     return normalized
 
 
+def _restore_live_peer(
+    interface: str, public_key: str, existing_peer: dict[str, Any] | None
+) -> None:
+    """Undo a live ``wg set`` when persisting the peer to the config failed.
+
+    A peer that did not exist before is removed; a peer that did keeps its
+    previous allowed IPs, so the interface cannot silently diverge from the
+    persisted config.
+    """
+    if existing_peer is None:
+        run_command(["wg", "set", interface, "peer", public_key, "remove"])
+        return
+    run_command(
+        [
+            "wg",
+            "set",
+            interface,
+            "peer",
+            public_key,
+            "allowed-ips",
+            ",".join(existing_peer.get("allowed_ips") or []),
+        ]
+    )
+
+
 def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
     name = clients_store.validate_name(arguments.get("name"))
@@ -334,8 +359,8 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         changed = upsert_peer(interface, public_key, allowed_ips, preshared_key)
     except Exception:
-        if existing_peer is None:
-            run_command(["wg", "set", interface, "peer", public_key, "remove"])
+        with contextlib.suppress(CommandError):
+            _restore_live_peer(interface, public_key, existing_peer)
         raise
 
     record: dict[str, Any] = {
