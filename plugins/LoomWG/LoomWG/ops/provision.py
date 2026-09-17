@@ -23,8 +23,6 @@ from ..wg.device import run_command
 from ..wg.keys import generate_keypair
 from .shell import run_shell
 
-_SUPPORTED_FIREWALLS = ("firewalld", "ufw", "nftables", "iptables")
-
 
 def detect_host() -> dict[str, str]:
     """Detect the OS, external interface, and firewall inside the container."""
@@ -44,6 +42,59 @@ def detect_host() -> dict[str, str]:
             "else printf none; fi"
         ),
     }
+
+
+def _configure_firewalld(
+    interface: str, external_interface: str, listen_port: int
+) -> None:
+    run_shell(
+        f"firewall-cmd --permanent --add-port={listen_port}/udp && "
+        "firewall-cmd --permanent --add-masquerade && firewall-cmd --reload"
+    )
+
+
+def _configure_ufw(interface: str, external_interface: str, listen_port: int) -> None:
+    run_shell(f"ufw allow {listen_port}/udp")
+    run_shell("ufw route allow in on " + interface + " out on " + external_interface)
+
+
+def _configure_nftables(
+    interface: str, external_interface: str, listen_port: int
+) -> None:
+    run_shell(
+        "nft add table inet loomwg 2>/dev/null || true; "
+        "nft 'add chain inet loomwg input { type filter hook input priority 0; policy accept; }' 2>/dev/null || true; "
+        f"nft add rule inet loomwg input udp dport {listen_port} accept 2>/dev/null || true; "
+        "nft 'add chain inet loomwg postrouting { type nat hook postrouting priority 100; }' 2>/dev/null || true; "
+        f"nft add rule inet loomwg postrouting oifname \"{external_interface}\" masquerade 2>/dev/null || true"
+    )
+
+
+def _configure_iptables(
+    interface: str, external_interface: str, listen_port: int
+) -> None:
+    # NAT is owned by the wg-quick PostUp/PostDown hooks (firewall_hooks);
+    # installing it here as well would add a second identical entry that
+    # PostDown's `-D` (deleting only the first match) leaves behind after teardown.
+    run_shell(
+        f"iptables -C INPUT -p udp --dport {listen_port} -j ACCEPT 2>/dev/null || "
+        f"iptables -I INPUT -p udp --dport {listen_port} -j ACCEPT"
+    )
+
+
+# Single source of truth for the supported backends: resolve_firewall()
+# validates against these keys and configure_firewall() dispatches through them.
+_FIREWALL_CONFIGURERS = {
+    "firewalld": _configure_firewalld,
+    "ufw": _configure_ufw,
+    "nftables": _configure_nftables,
+    "iptables": _configure_iptables,
+}
+
+_SUPPORTED_FIREWALLS = tuple(_FIREWALL_CONFIGURERS)
+
+# Backends with no NAT command of their own: the wg-quick hooks supply NAT there.
+_HOOKED_FIREWALLS = ("iptables", "ufw")
 
 
 def resolve_firewall(host_firewall: str) -> str:
@@ -66,13 +117,14 @@ def firewall_hooks(
     """Build the wg-quick PostUp/PostDown hooks for the resolved firewall.
 
     The hooks install the forward-accept rules and a network-scoped MASQUERADE
-    with iptables; they are emitted whenever iptables is usable, including ufw
-    hosts (ufw has no NAT command of its own). They are skipped when the firewall
-    was skipped (the operator configures the host firewall manually) and on hosts
-    without iptables (nft-only), where the command would make wg-quick fail and
-    tear the interface down again; configure_firewall() installs NAT there.
+    with iptables for the backends that have no NAT rule of their own
+    (``iptables`` and ``ufw``). They are skipped when the firewall was skipped
+    (the operator configures the host firewall manually), for the backends whose
+    own tool installs NAT (``firewalld``/``nftables``), and on hosts without
+    iptables (nft-only), where the command would make wg-quick fail and tear the
+    interface down again.
     """
-    if firewall == "skipped" or shutil.which("iptables") is None:
+    if firewall not in _HOOKED_FIREWALLS or shutil.which("iptables") is None:
         return "", ""
     up = (
         "iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; "
@@ -94,38 +146,15 @@ def configure_firewall(
     interface: str,
     external_interface: str,
     listen_port: int,
-    ipv4_network: str,
 ) -> str:
     """Configure the firewall inside the container (no nsenter/chroot)."""
-    if firewall == "firewalld":
-        run_shell(
-            f"firewall-cmd --permanent --add-port={listen_port}/udp && "
-            "firewall-cmd --permanent --add-masquerade && firewall-cmd --reload"
-        )
-    elif firewall == "ufw":
-        run_shell(f"ufw allow {listen_port}/udp")
-        run_shell("ufw route allow in on " + interface + " out on " + external_interface)
-    elif firewall == "nftables":
-        run_shell(
-            "nft add table inet loomwg 2>/dev/null || true; "
-            "nft 'add chain inet loomwg input { type filter hook input priority 0; policy accept; }' 2>/dev/null || true; "
-            f"nft add rule inet loomwg input udp dport {listen_port} accept 2>/dev/null || true; "
-            "nft 'add chain inet loomwg postrouting { type nat hook postrouting priority 100; }' 2>/dev/null || true; "
-            f"nft add rule inet loomwg postrouting oifname \"{external_interface}\" masquerade 2>/dev/null || true"
-        )
-    elif firewall == "iptables":
-        # NAT is owned by the wg-quick PostUp/PostDown hooks (firewall_hooks),
-        # which are emitted on every iptables-capable host. Installing the rule
-        # here as well would add a second identical entry that PostDown's `-D`
-        # (deleting only the first match) leaves behind after teardown.
-        run_shell(
-            f"iptables -C INPUT -p udp --dport {listen_port} -j ACCEPT 2>/dev/null || "
-            f"iptables -I INPUT -p udp --dport {listen_port} -j ACCEPT"
-        )
-    else:
+    try:
+        configure = _FIREWALL_CONFIGURERS[firewall]
+    except KeyError:
         raise RuntimeError(
             "No supported firewall found. Open the UDP port and configure NAT manually."
-        )
+        ) from None
+    configure(interface, external_interface, listen_port)
     return firewall
 
 
@@ -187,7 +216,7 @@ def setup_server(arguments: dict) -> dict:
 
     enable_forwarding()
     if firewall != "skipped":
-        configure_firewall(firewall, interface, external_interface, listen_port, str(v4))
+        configure_firewall(firewall, interface, external_interface, listen_port)
 
     message = (
         f"Server configuration {interface} created. The interface has not been started yet. "

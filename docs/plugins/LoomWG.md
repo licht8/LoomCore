@@ -130,15 +130,16 @@ advertised as safe by accident.
   directives (e.g. `PostUp`) into a config a user imports.
 - **Firewall/NAT:** `wg_setup_server` resolves the firewall (`firewalld`, `ufw`,
   `nftables`, `iptables`, or `skipped` when `LOOMWG_SKIP_FIREWALL=1`) before it
-  writes the config, and installs the matching rules afterwards. The config gets
+  writes the config, and installs the matching rules afterwards. For the backends
+  with no NAT command of their own (`iptables`, `ufw`) the config gets
   `PostUp`/`PostDown` hooks (forward-accept plus a MASQUERADE scoped to the VPN
-  network) whenever `iptables` is available — including `ufw`, which has no NAT
-  command of its own. For `iptables` itself those hooks are the single owner of
-  the MASQUERADE rule (`configure_firewall` only opens the UDP port), so a
-  teardown removes exactly what startup added. They are omitted when the firewall
-  is skipped and on nft-only hosts, where `wg-quick` could not run iptables; NAT
-  comes from `configure_firewall` there, and the host forward policy must permit
-  traffic out of the WireGuard interface.
+  network) whenever `iptables` is available, and those hooks are the single owner
+  of the NAT rule (`configure_firewall` only opens the UDP port there), so a
+  teardown removes exactly what startup added. For `firewalld`/`nftables` the
+  backend's own tool installs unscoped NAT and no hooks are emitted. Hooks are
+  also omitted when the firewall is skipped or on nft-only hosts, where `wg-quick`
+  could not run iptables; the host forward policy must permit traffic out of the
+  WireGuard interface.
 - **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored
   private key. Peers without a stored key (external/backfilled) are rekeyed when
   `rotate=true` (the default); with `rotate=false` they are reported as failed.

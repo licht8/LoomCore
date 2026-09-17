@@ -250,8 +250,27 @@ def test_setup_server_scopes_masquerade_to_the_vpn_network(
     assert result["firewall"] == "iptables"
 
 
-@pytest.mark.parametrize("firewall", ["firewalld", "ufw", "nftables"])
-def test_setup_server_keeps_nat_and_forward_hooks_for_other_firewalls(
+def test_setup_server_emits_nat_and_forward_hooks_for_ufw(
+    load_loomwg, monkeypatch, tmp_path
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path, firewall="ufw")
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *args, **kwargs: "ufw")
+
+    result = provision.setup_server({"interface": "wgtest"})
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "iptables -A FORWARD -i %i -j ACCEPT" in content
+    assert (
+        "iptables -t nat -A POSTROUTING -s 10.66.66.0/24 -o eth0 -j MASQUERADE"
+        in content
+    )
+    assert result["firewall"] == "ufw"
+
+
+@pytest.mark.parametrize("firewall", ["firewalld", "nftables"])
+def test_setup_server_leaves_nat_to_backends_that_own_it(
     load_loomwg, monkeypatch, tmp_path, firewall
 ):
     provision = load_loomwg("provision")["provision"]
@@ -262,11 +281,8 @@ def test_setup_server_keeps_nat_and_forward_hooks_for_other_firewalls(
     result = provision.setup_server({"interface": "wgtest"})
 
     content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
-    assert "iptables -A FORWARD -i %i -j ACCEPT" in content
-    assert (
-        "iptables -t nat -A POSTROUTING -s 10.66.66.0/24 -o eth0 -j MASQUERADE"
-        in content
-    )
+    assert "PostUp" not in content
+    assert "iptables" not in content
     assert result["firewall"] == firewall
 
 
@@ -289,6 +305,23 @@ def test_setup_server_omits_iptables_hooks_on_an_nft_only_host(
     assert result["firewall"] == "nftables"
 
 
+def test_setup_server_omits_hooks_for_a_hooked_backend_without_iptables(
+    load_loomwg, monkeypatch, tmp_path
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path, firewall="ufw", iptables=False)
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *args, **kwargs: "ufw")
+
+    result = provision.setup_server({"interface": "wgtest"})
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "PostUp" not in content
+    assert "PostDown" not in content
+    assert "iptables" not in content
+    assert result["firewall"] == "ufw"
+
+
 def test_setup_server_rejects_an_unsupported_firewall(load_loomwg, monkeypatch, tmp_path):
     provision = load_loomwg("provision")["provision"]
     _patch_setup_server(provision, monkeypatch, tmp_path, firewall="none")
@@ -305,9 +338,7 @@ def test_configure_firewall_iptables_leaves_nat_to_the_hooks(load_loomwg, monkey
     commands: list[str] = []
     monkeypatch.setattr(provision, "run_shell", lambda command: commands.append(command))
 
-    provision.configure_firewall(
-        "iptables", "wg0", "eth0", 51820, "10.66.66.0/24"
-    )
+    provision.configure_firewall("iptables", "wg0", "eth0", 51820)
 
     assert len(commands) == 1
     assert "--dport 51820 -j ACCEPT" in commands[0]
