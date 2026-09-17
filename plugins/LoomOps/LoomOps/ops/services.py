@@ -79,6 +79,9 @@ def failed_units() -> list[str]:
     """Return the names of failed systemd units (empty when none)."""
     binary = _require_systemd()
     completed = _systemctl(binary, "--failed", "--no-legend", "--plain")
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise RuntimeError(f"Cannot list failed units: {detail}")
     units: list[str] = []
     for line in (completed.stdout or "").splitlines():
         stripped = line.strip()

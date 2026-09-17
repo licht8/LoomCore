@@ -602,6 +602,31 @@ def test_systemctl_restart_failure_raises(load_loomops, monkeypatch, tmp_path):
         services.systemctl_restart({"service": "nginx"})
 
 
+def test_failed_units_reports_systemctl_failure(load_loomops, monkeypatch, tmp_path):
+    services = load_loomops("services")["services"]
+    _patch_systemd(
+        services,
+        monkeypatch,
+        tmp_path,
+        lambda *a, **k: _Completed(
+            returncode=1, stderr="Failed to connect to bus: No such file or directory"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Cannot list failed units.*No such file"):
+        services.failed_units()
+
+
+def test_failed_units_handler_surfaces_failure(load_loomops, monkeypatch, tmp_path):
+    services = load_loomops("services")["services"]
+    _patch_systemd(
+        services, monkeypatch, tmp_path, lambda *a, **k: _Completed(returncode=1)
+    )
+
+    with pytest.raises(RuntimeError, match="Cannot list failed units"):
+        services.failed_units_handler({})
+
+
 def test_service_name_validation(load_loomops):
     services = load_loomops("services")["services"]
     with pytest.raises(ValueError, match="service"):
@@ -1019,6 +1044,22 @@ def test_scan_health_reports_missing_access(load_loomops, monkeypatch, tmp_path)
     assert any("PID namespace" in note for note in missing)
     assert any("journald" in note for note in missing)
     assert any("/proc/mounts" in note for note in missing)
+
+
+def test_scan_health_reports_systemd_failure(load_loomops, monkeypatch, tmp_path):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    _patch_quiet_health(diagnostics, monkeypatch, tmp_path)
+
+    def boom():
+        raise RuntimeError("Cannot list failed units: Access denied")
+
+    monkeypatch.setattr(diagnostics, "failed_units", boom)
+
+    result = diagnostics.scan_health({})
+
+    missing = result["host_access"]["missing"]
+    assert any("systemd: Cannot list failed units" in note for note in missing)
+    assert "systemd: Cannot list failed units" in result["output"]
 
 
 def test_failed_units_handler(load_loomops, monkeypatch, tmp_path):

@@ -185,7 +185,9 @@ Even with the grants above:
   container has the privileges to do so; permission errors are returned verbatim.
 - `ops_systemctl_status` / `ops_systemctl_restart` / `ops_failed_units` return an
   actionable error when no systemd is reachable (`systemctl` absent or
-  `/run/systemd/system` missing).
+  `/run/systemd/system` missing) or when `systemctl` itself fails with a non-zero
+  exit (e.g. D-Bus unavailable); `ops_scan_health` reports that reason under
+  `host_access.missing` instead of claiming there are no failed units.
 - File reads/writes are confined to `LOOMOPS_ALLOWED_PATHS` (which default to
   deny-all), not to the `/host/...` mounts directly. Confinement works on paths:
   a **hard link** created inside an allowed root still refers to the same inode as
