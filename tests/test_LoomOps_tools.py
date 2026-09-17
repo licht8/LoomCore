@@ -52,6 +52,26 @@ def test_schema_and_handlers_match(load_loomops):
     assert all(name.startswith("ops_") for name in names)
 
 
+def test_every_tool_declares_an_explicit_risk(load_loomops):
+    schemas = load_loomops("schemas")["schemas"]
+    assert {tool["name"] for tool in schemas.TOOLS_SCHEMA} == set(schemas._TOOL_RISK)
+    assert {tool["risk"] for tool in schemas.TOOLS_SCHEMA} <= {
+        "safe",
+        "moderate",
+        "dangerous",
+    }
+
+
+def test_risk_declaration_fails_closed(load_loomops):
+    schemas = load_loomops("schemas")["schemas"]
+    with pytest.raises(RuntimeError, match=r"missing=\['ghost'\]"):
+        schemas._declare_risk([{"name": "ghost"}], {})
+    with pytest.raises(RuntimeError, match=r"unknown=\['stale'\]"):
+        schemas._declare_risk(
+            [{"name": "present"}], {"present": "safe", "stale": "safe"}
+        )
+
+
 def test_handler_returns_mcp_shape(load_loomops, tmp_path):
     tools = load_loomops("tools")["tools"]
     result = tools.HANDLERS["ops_disk_usage"]({"path": str(tmp_path)})

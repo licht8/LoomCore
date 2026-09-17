@@ -97,7 +97,9 @@ does not install WireGuard at all.
 
 Risk is enforced by the core (`src/core/security.py:classify_tool_risk`);
 `dangerous` tools require explicit admin approval. `wg_create_client` no longer
-exists — use `wg_create_peer` + `wg_export_existing_clients`.
+exists — use `wg_create_peer` + `wg_export_existing_clients`. The plugin refuses
+to start if any advertised tool lacks an explicit risk entry, so no tool can be
+advertised as safe by accident.
 
 ## Parameters
 

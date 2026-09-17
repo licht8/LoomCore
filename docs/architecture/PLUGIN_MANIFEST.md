@@ -95,7 +95,9 @@ core-facing keys alongside `name`/`description`/`inputSchema`:
   name heuristic. A plugin declaring a tool `safe` bypasses approval by design —
   plugins are trusted local subprocesses, only the LLM is untrusted, and the
   declaration is visible in plan steps and audit records. Omitting `risk` falls
-  back to the heuristic.
+  back to the heuristic. The bundled `LoomWG` and `LoomOps` plugins are stricter:
+  they fail to import unless every advertised tool has an explicit entry (and no
+  entry is stale), so a new tool can never be advertised as safe by accident.
 - `internal` — `true` marks a tool the LLM must never see; it is callable only by
   the core. `internal_tools` in the manifest is the declarative counterpart.
 

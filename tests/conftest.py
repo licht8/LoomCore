@@ -26,6 +26,7 @@ _MODULE_PATHS = {
     "service_mode": "LoomWG.ops.service",
     "stats": "LoomWG.ops.stats",
     "tools": "LoomWG.tools",
+    "schemas": "LoomWG.schemas",
     "protocol": "LoomWG.protocol",
     "server": "LoomWG.server",
     "results": "LoomWG.results",

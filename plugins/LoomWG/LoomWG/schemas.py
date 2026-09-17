@@ -255,6 +255,25 @@ TOOLS_SCHEMA.extend(
     ]
 )
 
+def _declare_risk(tools: list[dict], risk: dict[str, str]) -> None:
+    """Attach the declared risk to every tool, refusing to guess.
+
+    An advertised tool without a risk entry (a newly added tool or a typo)
+    must never be silently treated as safe, and a risk entry without a tool
+    means the declaration went stale.
+    """
+    names = {tool["name"] for tool in tools}
+    missing = sorted(names - set(risk))
+    unknown = sorted(set(risk) - names)
+    if missing or unknown:
+        raise RuntimeError(
+            "Risk declarations do not match the advertised tools: "
+            f"missing={missing}, unknown={unknown}"
+        )
+    for tool in tools:
+        tool["risk"] = risk[tool["name"]]
+
+
 # Per-tool risk declared to the core (Phase 1b). Read-only tools are safe,
 # tracking a new client is moderate, and anything that changes the interface,
 # keys or autostart is dangerous.
@@ -279,5 +298,4 @@ _TOOL_RISK = {
     "wg_export_existing_clients": "dangerous",
 }
 
-for _tool in TOOLS_SCHEMA:
-    _tool["risk"] = _TOOL_RISK.get(_tool["name"], "safe")
+_declare_risk(TOOLS_SCHEMA, _TOOL_RISK)

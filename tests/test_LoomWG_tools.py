@@ -47,6 +47,26 @@ def test_schema_exposes_new_tools(load_loomwg):
     assert internal.get("internal") is True
 
 
+def test_every_tool_declares_an_explicit_risk(load_loomwg):
+    schemas = load_loomwg("schemas")["schemas"]
+    assert {tool["name"] for tool in schemas.TOOLS_SCHEMA} == set(schemas._TOOL_RISK)
+    assert {tool["risk"] for tool in schemas.TOOLS_SCHEMA} <= {
+        "safe",
+        "moderate",
+        "dangerous",
+    }
+
+
+def test_risk_declaration_fails_closed(load_loomwg):
+    schemas = load_loomwg("schemas")["schemas"]
+    with pytest.raises(RuntimeError, match=r"missing=\['ghost'\]"):
+        schemas._declare_risk([{"name": "ghost"}], {})
+    with pytest.raises(RuntimeError, match=r"unknown=\['stale'\]"):
+        schemas._declare_risk(
+            [{"name": "present"}], {"present": "safe", "stale": "safe"}
+        )
+
+
 # === clients_store ===
 
 def test_store_roundtrip(load_loomwg, monkeypatch, tmp_path):

@@ -73,6 +73,8 @@ The implementation lives in the `LoomOps` package:
 Risk is enforced by the core (`src/core/security.py:classify_tool_risk`); the four
 `dangerous` tools (also listed in `explicit_dangerous`) require explicit admin
 approval before running. Every other tool is read-only and runs without approval.
+The plugin refuses to start if any advertised tool lacks an explicit risk entry,
+so no tool can be advertised as safe by accident.
 
 ## Safety model
 
