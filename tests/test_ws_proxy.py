@@ -216,6 +216,27 @@ async def test_watch_auth_closes_on_non_ascii_token(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_watch_auth_fails_closed_when_recheck_raises(monkeypatch, caplog):
+    # An exception in the re-check must not stop the watchdog and leave the
+    # socket alive past its credential: it fails closed and stays visible.
+    _token_mode(monkeypatch)
+    monkeypatch.setattr(ws_api, "_AUTH_RECHECK_SECONDS", 0)
+
+    def boom(_token):
+        raise RuntimeError("recheck exploded")
+
+    monkeypatch.setattr(ws_api, "_static_token_valid", boom)
+    websocket = _FakeWebSocket()
+
+    with caplog.at_level(logging.WARNING, logger="loomcore.api.websocket"):
+        watchdog = asyncio.create_task(ws_api._watch_auth(websocket, None, "secret"))
+        await asyncio.wait_for(watchdog, timeout=1)
+
+    assert websocket.closed == (1008, "Session expired")
+    assert "WebSocket auth re-check failed" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_proxy_logs_ws_auth_failure(monkeypatch, captured, caplog):
     _token_mode(monkeypatch)
     websocket = _FakeWebSocket(headers=_auth_header("wrong"))

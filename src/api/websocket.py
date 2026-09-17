@@ -68,18 +68,22 @@ async def _watch_auth(
     websocket: WebSocket, cookie: str | None, token: str | None
 ) -> None:
     """Close an open socket when its credential expires or is revoked."""
-    try:
-        while True:
-            await asyncio.sleep(_AUTH_RECHECK_SECONDS)
-            if not (_jwt_valid(cookie) or _static_token_valid(token)):
+    while True:
+        await asyncio.sleep(_AUTH_RECHECK_SECONDS)
+        try:
+            valid = _jwt_valid(cookie) or _static_token_valid(token)
+        except Exception as exc:
+            # A failing re-check must not let the watchdog stop and leave the
+            # socket alive past its credential. Log it and fail closed.
+            logger.warning("WebSocket auth re-check failed: %s", exc)
+            valid = False
+        if not valid:
+            with contextlib.suppress(Exception):
                 log_security_event("ws_auth_revoked", client=client_ip(websocket))
-                logger.warning("WebSocket credential is no longer valid; closing")
+            logger.warning("WebSocket credential is no longer valid; closing")
+            with contextlib.suppress(Exception):
                 await websocket.close(code=1008, reason="Session expired")
-                return
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # pragma: no cover - socket already gone
-        logger.debug("WebSocket auth watchdog stopped: %s", exc)
+            return
 
 
 @router.websocket("/ws/{session_id}")
