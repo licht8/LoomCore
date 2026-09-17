@@ -136,10 +136,11 @@ advertised as safe by accident.
   network) whenever `iptables` is available, and those hooks are the single owner
   of the NAT rule (`configure_firewall` only opens the UDP port there), so a
   teardown removes exactly what startup added. For `firewalld`/`nftables` the
-  backend's own tool installs unscoped NAT and no hooks are emitted. Hooks are
+  backend's own tool (firewalld direct rules / an `nft` forward chain) installs the
+  unscoped NAT **and** the forward-accept rules, and no hooks are emitted. Hooks are
   also omitted when the firewall is skipped or on nft-only hosts, where `wg-quick`
-  could not run iptables; the host forward policy must permit traffic out of the
-  WireGuard interface.
+  could not run iptables; the host forward policy must then permit traffic out of
+  the WireGuard interface.
 - **Lost config/QR:** `wg_export_existing_clients` rebuilds files from the stored
   private key. Peers without a stored key (external/backfilled) are rekeyed when
   `rotate=true` (the default); with `rotate=false` they are reported as failed.
