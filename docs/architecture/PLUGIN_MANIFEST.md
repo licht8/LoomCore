@@ -77,7 +77,13 @@ The plugin checks these against its runtime at startup:
 - `pid` — `"host"` or `"container"`; `"host"` warns when `/proc/1` is not
   `systemd`/`init` (i.e. the host PID namespace is not actually mounted).
 
-Mismatches are logged and returned by diagnostics; they never block startup.
+Mismatches are logged and returned by diagnostics; they never block startup. A
+malformed entry is part of that contract: a non-string `cap_add`/
+`cap_add_optional` element, or a `mounts` entry whose `source`/`target` is not a
+non-empty string, is reported as a schema issue and skipped by the runtime check
+instead of raising. The runtime check likewise reports a `cap_add`,
+`cap_add_optional` or `mounts` value that is not a list
+(`permissions.<field> must be a list, got <type>`) rather than failing.
 
 ### `env`
 

@@ -1,6 +1,7 @@
 """Tests for the plugin template's JSON-RPC transport resilience."""
 
 import importlib
+import importlib.util
 import io
 import json
 import subprocess
@@ -12,6 +13,16 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = PROJECT_ROOT / "docs" / "architecture" / "plugin-template"
 TEMPLATE_MAIN = TEMPLATE_DIR / "main.py"
+
+
+def _load_template_manifest():
+    """Import the template's manifest module by path (no sys.modules clash)."""
+    spec = importlib.util.spec_from_file_location(
+        "template_manifest", TEMPLATE_DIR / "manifest.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_script(script: Path, *requests: object) -> list[dict]:
@@ -293,3 +304,27 @@ def test_id_less_request_error_uses_null_id(template_main, monkeypatch):
 
     assert responses[0]["id"] is None
     assert responses[0]["error"]["code"] == -32603
+
+
+def test_template_manifest_flags_malformed_entries():
+    module = _load_template_manifest()
+    issues = module.validate_manifest(
+        {"permissions": {"cap_add": [{"a": 1}], "mounts": [{"target": 5}]}}
+    )
+
+    assert any("cap_add entry" in issue for issue in issues)
+    assert any("source and target" in issue for issue in issues)
+    assert module.check_permissions({"permissions": {"cap_add": [{"a": 1}]}}) == [
+        "capability entry {'a': 1} is not a string"
+    ]
+
+
+def test_template_manifest_reports_non_list_containers():
+    module = _load_template_manifest()
+
+    assert module.check_permissions({"permissions": {"cap_add": 5}}) == [
+        "permissions.cap_add must be a list, got int"
+    ]
+    assert module.check_permissions({"permissions": {"mounts": True}}) == [
+        "permissions.mounts must be a list, got bool"
+    ]

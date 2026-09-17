@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 
 def test_manifest_loads_from_plugin_dir(load_loomwg):
     manifest_module = load_loomwg("manifest")["manifest"]
@@ -153,3 +155,102 @@ def test_check_permissions_warns_on_missing_mount(load_loomwg, monkeypatch):
     warnings = manifest_module.check_permissions(manifest)
 
     assert any("/missing" in warning for warning in warnings)
+
+
+def test_validate_manifest_flags_non_string_capabilities(load_loomwg):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    data = manifest_module.load_manifest()
+    data["permissions"] = {"cap_add": [{"a": 1}], "cap_add_optional": [12]}
+
+    issues = manifest_module.validate_manifest(data)
+
+    assert any("cap_add entry" in issue for issue in issues)
+    assert any("cap_add_optional entry" in issue for issue in issues)
+
+
+def test_validate_manifest_flags_non_string_mount_fields(load_loomwg):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    data = manifest_module.load_manifest()
+    data["permissions"] = {"mounts": [{"source": 5, "target": ["/etc/wireguard"]}]}
+
+    issues = manifest_module.validate_manifest(data)
+
+    assert any("needs source and target" in issue for issue in issues)
+
+
+def test_check_permissions_skips_malformed_entries(load_loomwg, monkeypatch):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: None)
+    manifest = {
+        "permissions": {
+            "cap_add": [{"a": 1}, 12],
+            "mounts": [{"source": "/src", "target": 5}, "not-a-mount"],
+        }
+    }
+
+    warnings = manifest_module.check_permissions(manifest)
+
+    assert warnings == [
+        "capability entry {'a': 1} is not a string",
+        "capability entry 12 is not a string",
+    ]
+
+
+def test_check_permissions_reports_non_list_capabilities(load_loomwg, monkeypatch):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: None)
+
+    warnings = manifest_module.check_permissions(
+        {"permissions": {"cap_add": "NET_ADMIN"}}
+    )
+
+    assert warnings == ["permissions.cap_add must be a list, got str"]
+
+
+def test_check_permissions_reports_non_list_mounts(load_loomwg, monkeypatch):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: None)
+
+    warnings = manifest_module.check_permissions({"permissions": {"mounts": 5}})
+
+    assert warnings == ["permissions.mounts must be a list, got int"]
+
+
+def test_check_optional_permissions_names_the_field(load_loomwg, monkeypatch):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: None)
+
+    notes = manifest_module.check_optional_permissions(
+        {"permissions": {"cap_add_optional": 5}}
+    )
+
+    assert notes == ["permissions.cap_add_optional must be a list, got int"]
+
+
+def test_runtime_report_survives_malformed_entries(load_loomwg, monkeypatch, tmp_path):
+    manifest_module = load_loomwg("manifest")["manifest"]
+    path = tmp_path / "manifest.json"
+    path.write_text(
+        json.dumps(
+            {
+                "id": "LoomWG",
+                "name": "WireGuard",
+                "version": "1.0.0",
+                "description": "test",
+                "entry": "main.py",
+                "protocol": "2024-11-05",
+                "permissions": {"cap_add": [{"a": 1}], "mounts": [{"target": 5}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(manifest_module, "MANIFEST_PATH", path)
+    monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: None)
+
+    report = manifest_module.runtime_report()
+
+    assert report["manifest"]["id"] == "LoomWG"
+    assert any("cap_add entry" in issue for issue in report["issues"])
+    assert report["permission_warnings"] == [
+        "capability entry {'a': 1} is not a string"
+    ]

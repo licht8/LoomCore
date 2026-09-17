@@ -192,12 +192,16 @@ def _validate_permissions(permissions: Any) -> list[str]:
     if not isinstance(permissions, dict):
         return ["permissions must be an object"]
     issues: list[str] = []
-    cap_add = permissions.get("cap_add", [])
-    if not isinstance(cap_add, list):
-        issues.append("permissions.cap_add must be a list")
-    cap_add_optional = permissions.get("cap_add_optional", [])
-    if not isinstance(cap_add_optional, list):
-        issues.append("permissions.cap_add_optional must be a list")
+    for field_name in ("cap_add", "cap_add_optional"):
+        entries = permissions.get(field_name, [])
+        if not isinstance(entries, list):
+            issues.append(f"permissions.{field_name} must be a list")
+            continue
+        for entry in entries:
+            if not isinstance(entry, str):
+                issues.append(
+                    f"permissions.{field_name} entry {entry!r} is not a string"
+                )
     pid = permissions.get("pid")
     if pid is not None and pid not in ("host", "container"):
         issues.append("permissions.pid must be 'host' or 'container'")
@@ -206,10 +210,13 @@ def _validate_permissions(permissions: Any) -> list[str]:
         issues.append("permissions.mounts must be a list")
     else:
         for mount in mounts:
-            if (
-                not isinstance(mount, dict)
-                or not mount.get("source")
-                or not mount.get("target")
+            source = mount.get("source") if isinstance(mount, dict) else None
+            target = mount.get("target") if isinstance(mount, dict) else None
+            if not (
+                isinstance(source, str)
+                and source
+                and isinstance(target, str)
+                and target
             ):
                 issues.append("each permissions.mounts entry needs source and target")
     return issues
@@ -236,11 +243,20 @@ def _permissions(manifest: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _capability_issues(
-    names: Any, caps: int | None, *, optional: bool = False
+    names: Any,
+    caps: int | None,
+    *,
+    optional: bool = False,
+    field: str = "cap_add",
 ) -> list[str]:
     issues: list[str] = []
     label = "optional capability" if optional else "capability"
+    if names is not None and not isinstance(names, list):
+        return [f"permissions.{field} must be a list, got {type(names).__name__}"]
     for name in names or []:
+        if not isinstance(name, str):
+            issues.append(f"capability entry {name!r} is not a string")
+            continue
         bit = CAPABILITIES.get(name)
         if bit is None:
             issues.append(f"unknown capability '{name}'")
@@ -251,12 +267,14 @@ def _capability_issues(
 
 def _mount_issues(mounts: Any) -> list[str]:
     issues: list[str] = []
+    if mounts is not None and not isinstance(mounts, list):
+        return [f"permissions.mounts must be a list, got {type(mounts).__name__}"]
     for mount in mounts or []:
         if not isinstance(mount, dict):
             continue
         target = mount.get("target")
         mode = mount.get("mode", "rw")
-        if not target:
+        if not isinstance(target, str) or not target:
             continue
         path = Path(target)
         if not path.exists():

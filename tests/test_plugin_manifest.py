@@ -94,6 +94,19 @@ def test_validate_manifest_bad_permissions_shape():
     assert any("source and target" in issue for issue in issues)
 
 
+def test_validate_manifest_bad_permission_entries():
+    data = _valid()
+    data["permissions"] = {
+        "cap_add": [{"a": 1}],
+        "cap_add_optional": [12],
+        "mounts": [{"source": 5, "target": ["/x"]}, "nope"],
+    }
+    issues = manifest_module.validate_manifest(data)
+    assert any("cap_add entry" in issue for issue in issues)
+    assert any("cap_add_optional entry" in issue for issue in issues)
+    assert any("source and target" in issue for issue in issues)
+
+
 def test_validate_manifest_bad_default_enabled_and_env():
     data = _valid()
     data["default_enabled"] = "yes"
@@ -128,6 +141,42 @@ def test_check_permissions_missing_mount(tmp_path):
     }
     warnings = manifest_module.check_permissions(data)
     assert any("is missing" in warning for warning in warnings)
+
+
+def test_check_permissions_ignores_malformed_entries(monkeypatch):
+    monkeypatch.setattr(manifest_module, "effective_capabilities", lambda: None)
+    data = _valid()
+    data["permissions"] = {
+        "cap_add": [{"a": 1}, 12],
+        "mounts": [{"source": "/x", "target": 5}, "nope"],
+    }
+
+    warnings = manifest_module.check_permissions(data)
+
+    assert warnings == [
+        "capability entry {'a': 1} is not a string",
+        "capability entry 12 is not a string",
+    ]
+
+
+def test_check_permissions_reports_non_list_capabilities(monkeypatch):
+    monkeypatch.setattr(manifest_module, "effective_capabilities", lambda: None)
+    data = _valid()
+    data["permissions"] = {"cap_add": "NET_ADMIN"}
+
+    assert manifest_module.check_permissions(data) == [
+        "permissions.cap_add must be a list, got str"
+    ]
+
+
+def test_check_permissions_reports_non_list_mounts(monkeypatch):
+    monkeypatch.setattr(manifest_module, "effective_capabilities", lambda: None)
+    data = _valid()
+    data["permissions"] = {"mounts": 5}
+
+    assert manifest_module.check_permissions(data) == [
+        "permissions.mounts must be a list, got int"
+    ]
 
 
 def test_check_permissions_host_network_heuristic(monkeypatch):
