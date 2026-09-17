@@ -39,22 +39,24 @@ class Settings(BaseSettings):
     def _require_session_secret_for_jwt(self) -> "Settings":
         """Refuse to start with JWT enabled but an empty signing key.
 
-        Password+TOTP enables JWT verification, which signs and validates with
-        ``SESSION_SECRET``. An empty secret would accept tokens forged with the
-        empty HMAC key, so fail fast instead of silently trusting it. An
-        explicit ``AUTH_MODE=token`` disables JWT verification entirely, so
-        leftover credentials are allowed there without a secret.
+        JWT verification signs and validates with ``SESSION_SECRET`` whenever
+        JWT is active: an explicit ``AUTH_MODE`` of ``jwt``/``both``, or the
+        inferred mode when password+TOTP is configured. An empty secret would
+        accept tokens forged with the empty HMAC key, so fail fast instead of
+        silently trusting it. An explicit ``AUTH_MODE=token`` disables JWT
+        verification entirely, so leftover credentials are allowed there
+        without a secret.
         """
-        jwt_disabled = self.auth_mode.strip().lower() == "token"
-        if (
-            not jwt_disabled
-            and self.admin_password_hash
-            and self.admin_totp_secret
-            and not self.session_secret
-        ):
+        configured_mode = self.auth_mode.strip().lower()
+        if configured_mode in {"jwt", "both"}:
+            jwt_enabled = True
+        elif configured_mode == "token":
+            jwt_enabled = False
+        else:
+            jwt_enabled = bool(self.admin_password_hash and self.admin_totp_secret)
+        if jwt_enabled and not self.session_secret.strip():
             raise ValueError(
-                "SESSION_SECRET must be set when ADMIN_PASSWORD_HASH and "
-                "ADMIN_TOTP_SECRET are configured"
+                "SESSION_SECRET must be set when JWT authentication is enabled"
             )
         return self
 
