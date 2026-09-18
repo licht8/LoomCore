@@ -17,6 +17,32 @@ import {
 } from "@/lib/plugins-api"
 import { cn } from "@/lib/utils"
 
+function ErrorBanner({
+  message,
+  actionLabel,
+  onAction,
+}: {
+  message: string
+  actionLabel: string
+  onAction: () => void
+}) {
+  return (
+    <div
+      role="alert"
+      className="mt-4 flex items-center gap-2 text-xs text-destructive"
+    >
+      <span className="truncate">{message}</span>
+      <button
+        type="button"
+        onClick={onAction}
+        className="shrink-0 font-medium underline underline-offset-4 hover:opacity-80"
+      >
+        {actionLabel}
+      </button>
+    </div>
+  )
+}
+
 export function PluginsView() {
   const queryClient = useQueryClient()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -83,33 +109,23 @@ export function PluginsView() {
         </div>
 
         {error && (
-          <div className="mt-4 flex items-center gap-2 text-xs text-destructive">
-            <span className="truncate">
-              {error instanceof Error ? error.message : "Failed to load plugins"}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                queryClient.invalidateQueries({ queryKey: ["plugins"] })
-              }}
-              className="shrink-0 font-medium underline underline-offset-4 hover:opacity-80"
-            >
-              Retry
-            </button>
-          </div>
+          <ErrorBanner
+            message={
+              error instanceof Error ? error.message : "Failed to load plugins"
+            }
+            actionLabel="Retry"
+            onAction={() => {
+              queryClient.invalidateQueries({ queryKey: ["plugins"] })
+            }}
+          />
         )}
 
         {actionError && (
-          <div className="mt-4 flex items-center gap-2 text-xs text-destructive">
-            <span className="truncate">{actionError}</span>
-            <button
-              type="button"
-              onClick={() => setActionError(null)}
-              className="shrink-0 font-medium underline underline-offset-4 hover:opacity-80"
-            >
-              Dismiss
-            </button>
-          </div>
+          <ErrorBanner
+            message={actionError}
+            actionLabel="Dismiss"
+            onAction={() => setActionError(null)}
+          />
         )}
 
         {isLoading ? (
