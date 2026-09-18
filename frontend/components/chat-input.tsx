@@ -92,7 +92,19 @@ export function ChatInput({
         setEditError("Steps must be a JSON array.")
         return
       }
-      onPlanResponse?.("edit", parsed as PlanStep[])
+      const steps = parsed as PlanStep[]
+      const invalid = steps.some(
+        (s) =>
+          !s ||
+          typeof s.id !== "string" ||
+          typeof s.tool !== "string" ||
+          !["safe", "moderate", "dangerous"].includes(s.risk),
+      )
+      if (invalid) {
+        setEditError("Each step needs a string id, a tool, and a risk of safe/moderate/dangerous.")
+        return
+      }
+      onPlanResponse?.("edit", steps)
       setEditOpen(false)
     } catch {
       setEditError("Invalid JSON. Fix the steps and try again.")
