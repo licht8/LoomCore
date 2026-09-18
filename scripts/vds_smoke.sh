@@ -17,27 +17,38 @@ if [[ ! -f .env ]]; then
 fi
 
 env_value() {
-  local line
+  local line trimmed q rest content after after_l
   line="$(grep -m1 -E "^${1}=" .env || true)"
   [[ -z "$line" ]] && return 0
   line="${line#*=}"
   line="${line%$'\r'}"          # strip CR
-  line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-  line="${line%"${line##*[![:space:]]}"}"   # rtrim
-  if [[ "$line" == \"*\"* ]]; then
-    line="${line:1}"; line="${line%%\"*}"   # unquote a matching "..." pair
-  elif [[ "$line" == \'*\'* ]]; then
-    line="${line:1}"; line="${line%%\'*}"   # unquote a matching '...' pair
+  trimmed="${line#"${line%%[![:space:]]*}"}"   # ltrim
+  if [[ "$trimmed" == \"* || "$trimmed" == \'* ]]; then
+    q="${trimmed:0:1}"
+    rest="${trimmed:1}"
+    if [[ "$rest" == *"$q"* ]]; then
+      content="${rest%%"$q"*}"
+      after="${rest#*"$q"}"                       # text following the closing quote
+      after_l="${after#"${after%%[![:space:]]*}"}" # ltrim
+      if [[ -z "${after//[[:space:]]/}" || "$after_l" == \#* ]]; then
+        line="$content"                           # unquote a matching "..." / '...' pair
+      else
+        line="${trimmed%"${trimmed##*[![:space:]]}"}"   # malformed: keep verbatim
+      fi
+    else
+      line="${trimmed%"${trimmed##*[![:space:]]}"}"     # unbalanced: keep verbatim
+    fi
   else
-    line="${line%%[[:space:]]#*}"           # strip inline comment (only when preceded by whitespace)
-    line="${line%"${line##*[![:space:]]}"}" # rtrim leftover space
+    line="${line%%[[:space:]]#*}"                 # strip inline comment (whitespace + #)
+    line="${line#"${line%%[![:space:]]*}"}"       # ltrim
+    line="${line%"${line##*[![:space:]]}"}"       # rtrim
   fi
   printf '%s\n' "$line"
 }
 
 TOKEN="$(env_value ADMIN_TOKEN)"
-if [[ "$TOKEN" == *\"* || "$TOKEN" == *$'\n'* ]]; then
-  echo "ERROR: ADMIN_TOKEN contains an unsafe character (quote or newline)" >&2
+if [[ "$TOKEN" == *\"* || "$TOKEN" == *\\* ]]; then
+  echo "ERROR: ADMIN_TOKEN contains an unsafe character (double quote or backslash)" >&2
   exit 1
 fi
 PG_USER="$(env_value POSTGRES_USER)"; PG_USER="${PG_USER:-loomuser}"
