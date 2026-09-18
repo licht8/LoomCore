@@ -62,15 +62,12 @@ def command_timeout() -> int:
     return max(1, min(value, MAX_TIMEOUT_SECONDS))
 
 
-def _truncate(text: str) -> tuple[str, bool]:
-    if len(text) <= MAX_OUTPUT_CHARS:
-        return text, False
-    dropped = len(text) - MAX_OUTPUT_CHARS
-    return f"{text[:MAX_OUTPUT_CHARS]}\n... [truncated {dropped} chars]", True
+def _read_limited(stream: Any, sink: list[str], dropped: list[int]) -> None:
+    """Read a pipe in bounded chunks, keeping at most MAX_OUTPUT_CHARS chars.
 
-
-def _read_limited(stream: Any, sink: list[str]) -> None:
-    """Read a pipe in bounded chunks, keeping at most MAX_OUTPUT_CHARS chars."""
+    Every char past the cap is counted in ``dropped`` so the caller can report
+    truncation even when the kept prefix lands exactly on the cap.
+    """
     kept = 0
     try:
         while True:
@@ -80,6 +77,8 @@ def _read_limited(stream: Any, sink: list[str]) -> None:
             if kept < MAX_OUTPUT_CHARS:
                 sink.append(chunk)
                 kept += len(chunk)
+            else:
+                dropped[0] += len(chunk)
     except (OSError, ValueError):
         # The stream can be closed out from under us when a timed-out process
         # group is killed; whatever was read so far is still reported.
@@ -87,6 +86,19 @@ def _read_limited(stream: Any, sink: list[str]) -> None:
     finally:
         with suppress(OSError):
             stream.close()
+
+
+def _truncate_limited(chunks: list[str], dropped: int) -> tuple[str, bool]:
+    """Join capped chunks and report truncation from the drained dropped count."""
+    text = "".join(chunks)
+    if len(text) > MAX_OUTPUT_CHARS:
+        # The final read may have overshot the cap; drop the excess and fold it
+        # into the count so the marker reflects everything that was discarded.
+        dropped += len(text) - MAX_OUTPUT_CHARS
+        text = text[:MAX_OUTPUT_CHARS]
+    if dropped <= 0:
+        return text, False
+    return f"{text}\n... [truncated {dropped} chars]", True
 
 
 def _kill_process_group(proc: subprocess.Popen[Any]) -> None:
@@ -171,9 +183,19 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
     # deadlock of reading one pipe while the other fills up.
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
+    stdout_dropped = [0]
+    stderr_dropped = [0]
     readers = [
-        threading.Thread(target=_read_limited, args=(proc.stdout, stdout_chunks), daemon=True),
-        threading.Thread(target=_read_limited, args=(proc.stderr, stderr_chunks), daemon=True),
+        threading.Thread(
+            target=_read_limited,
+            args=(proc.stdout, stdout_chunks, stdout_dropped),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_read_limited,
+            args=(proc.stderr, stderr_chunks, stderr_dropped),
+            daemon=True,
+        ),
     ]
     for reader in readers:
         reader.start()
@@ -189,9 +211,13 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
     deadline = time.monotonic() + _REAP_GRACE_SECONDS
     for reader in readers:
         reader.join(max(0.0, deadline - time.monotonic()))
+    # A reader still alive here means a descendant is holding the pipe open, so
+    # the output below is incomplete rather than a clean, complete result.
+    output_incomplete = any(reader.is_alive() for reader in readers)
 
-    stdout, stdout_truncated = _truncate("".join(stdout_chunks))
-    stderr, stderr_truncated = _truncate("".join(stderr_chunks))
+    stdout, stdout_truncated = _truncate_limited(stdout_chunks, stdout_dropped[0])
+    stderr, stderr_truncated = _truncate_limited(stderr_chunks, stderr_dropped[0])
+    truncated = stdout_truncated or stderr_truncated
 
     if timed_out:
         audit_error = audit_event(
@@ -203,7 +229,7 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
             "exit_code": None,
             "stdout": stdout,
             "stderr": stderr,
-            "truncated": stdout_truncated or stderr_truncated,
+            "truncated": truncated,
             "timed_out": True,
             "audit_error": audit_error,
         }
@@ -216,13 +242,19 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
         lines.append(stdout)
     if stderr:
         lines.append(f"stderr:\n{stderr}")
+    if output_incomplete:
+        lines.append(
+            "note: a descendant process kept the output pipes open; "
+            "captured output may be incomplete"
+        )
     return {
         "output": "\n".join(lines),
         "argv": run_argv,
         "exit_code": return_code,
         "stdout": stdout,
         "stderr": stderr,
-        "truncated": stdout_truncated or stderr_truncated,
+        "truncated": truncated,
         "timed_out": False,
+        "incomplete": output_incomplete,
         "audit_error": audit_error,
     }

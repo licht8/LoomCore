@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -47,11 +48,13 @@ class _FakePopen:
         stdout: str = "",
         stderr: str = "",
         timeout: bool = False,
+        stdout_stream=None,
+        stderr_stream=None,
     ):
         self.argv = argv
         self.returncode = returncode
-        self.stdout = io.StringIO(stdout)
-        self.stderr = io.StringIO(stderr)
+        self.stdout = stdout_stream if stdout_stream is not None else io.StringIO(stdout)
+        self.stderr = stderr_stream if stderr_stream is not None else io.StringIO(stderr)
         self.pid = 999999
         self.killed = False
         self._timeout = timeout
@@ -295,6 +298,78 @@ def test_run_command_truncates_large_output(load_loomops, monkeypatch, tmp_path)
     assert result["truncated"] is True
     assert "truncated" in result["stdout"]
     assert len(result["stdout"]) < commands.MAX_OUTPUT_CHARS * 2
+
+
+class _BlockingStream:
+    """Stream whose ``read`` never returns, like a pipe held open by a descendant."""
+
+    def __init__(self, gate):
+        self._gate = gate
+
+    def read(self, _size):
+        self._gate.wait()
+        return ""
+
+    def close(self):
+        pass
+
+
+def test_run_command_reports_incomplete_when_a_reader_stalls(load_loomops, monkeypatch, tmp_path):
+    commands = load_loomops("commands")["commands"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(commands, "_REAP_GRACE_SECONDS", 0.05)
+    gate = threading.Event()
+    monkeypatch.setattr(
+        commands.subprocess,
+        "Popen",
+        lambda *a, **k: _FakePopen(a[0], stdout_stream=_BlockingStream(gate)),
+    )
+
+    try:
+        result = commands.run_command({"command": "uptime"})
+
+        assert result["timed_out"] is False
+        assert result["incomplete"] is True
+        assert "incomplete" in result["output"]
+    finally:
+        gate.set()
+
+
+def test_truncate_limited_reports_exact_dropped_count(load_loomops):
+    commands = load_loomops("commands")["commands"]
+    chunks = ["a" * commands.MAX_OUTPUT_CHARS]
+
+    text, truncated = commands._truncate_limited(chunks, dropped=5000)
+
+    assert truncated is True
+    assert text.endswith("[truncated 5000 chars]")
+
+
+def test_truncate_limited_flags_truncation_when_the_cap_was_hit_exactly(load_loomops):
+    commands = load_loomops("commands")["commands"]
+
+    text, truncated = commands._truncate_limited([], dropped=10)
+
+    assert truncated is True
+    assert text.endswith("[truncated 10 chars]")
+
+
+def test_read_limited_counts_chars_dropped_past_the_cap(load_loomops):
+    commands = load_loomops("commands")["commands"]
+    sink: list[str] = []
+    dropped = [0]
+
+    commands._read_limited(
+        io.StringIO("y" * (commands.MAX_OUTPUT_CHARS + commands._READ_CHUNK_CHARS * 3)),
+        sink,
+        dropped,
+    )
+
+    assert dropped[0] > 0
+    text, truncated = commands._truncate_limited(sink, dropped[0])
+    assert truncated is True
 
 
 # === files ===
