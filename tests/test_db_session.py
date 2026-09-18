@@ -143,3 +143,20 @@ async def test_ensure_session_recovers_from_insert_race():
 
     assert session_id == "sess-3"
     assert db.rolled_back == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_reraises_when_recovery_finds_no_row():
+    db = _FakeSession(
+        results=[
+            _FakeResult(scalar=SimpleNamespace(id="u1")),
+            _FakeResult(scalar=None),
+            _FakeResult(scalar=None),
+        ],
+        fail_commit_on=1,
+    )
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await db_session.ensure_session(db, "sess-4")
+
+    assert db.rolled_back == 1

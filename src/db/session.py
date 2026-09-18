@@ -115,11 +115,14 @@ async def ensure_session(
             await session_db.commit()
         except Exception:
             await session_db.rollback()
-            # The session already exists — return it
+            # The session may have been created concurrently — re-read it.
             session_result = await session_db.execute(
                 select(Session).where(Session.id == session_id)
             )
             session = session_result.scalar_one_or_none()
+            if session is None:
+                # Not a duplicate-key race: surface the original failure.
+                raise
 
     return session.id
 
