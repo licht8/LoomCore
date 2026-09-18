@@ -1,6 +1,7 @@
 """Unit tests for the background plugin healthcheck loop."""
 
 import asyncio
+import logging
 
 import pytest
 
@@ -102,3 +103,96 @@ async def test_healthcheck_loop_skips_disabled(monkeypatch):
         await health_module.healthcheck_loop()
 
     assert restarted == []
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_loop_survives_health_query_error(monkeypatch, caplog):
+    class _FakeManager:
+        def plugin_names(self):
+            return ["demo"]
+
+        def is_enabled(self, name):
+            return True
+
+        def is_healthy(self, name):
+            raise RuntimeError("corrupted record")
+
+    monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
+    iterations = {"count": 0}
+
+    async def fake_sleep(_seconds):
+        iterations["count"] += 1
+        if iterations["count"] > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(health_module.asyncio, "sleep", fake_sleep)
+
+    with (
+        caplog.at_level(logging.ERROR, logger="loomcore.plugins.health"),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await health_module.healthcheck_loop()
+
+    assert iterations["count"] == 2
+    assert "corrupted record" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_loop_checks_remaining_plugins_after_an_error(monkeypatch):
+    restarted: list[str] = []
+
+    class _FakeManager:
+        def plugin_names(self):
+            return ["bad", "good"]
+
+        def is_enabled(self, name):
+            return True
+
+        def is_healthy(self, name):
+            if name == "bad":
+                raise RuntimeError("corrupted record")
+            return False
+
+        async def restart_plugin(self, name):
+            restarted.append(name)
+
+    monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
+    iterations = {"count": 0}
+
+    async def fake_sleep(_seconds):
+        iterations["count"] += 1
+        if iterations["count"] > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(health_module.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await health_module.healthcheck_loop()
+
+    assert restarted == ["good"]
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_loop_survives_enumeration_error(monkeypatch, caplog):
+    class _FakeManager:
+        def plugin_names(self):
+            raise RuntimeError("registry corrupted")
+
+    monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
+    iterations = {"count": 0}
+
+    async def fake_sleep(_seconds):
+        iterations["count"] += 1
+        if iterations["count"] > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(health_module.asyncio, "sleep", fake_sleep)
+
+    with (
+        caplog.at_level(logging.ERROR, logger="loomcore.plugins.health"),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await health_module.healthcheck_loop()
+
+    assert iterations["count"] == 2
+    assert "Failed to enumerate plugins" in caplog.text
