@@ -12,6 +12,9 @@ export type ToolRisk = "safe" | "moderate" | "dangerous"
 /** Lifecycle of a single plan step. */
 export type PlanStepStatus = "pending" | "running" | "done" | "failed" | "blocked"
 
+/** Lifecycle of a tool card in the UI feed. */
+export type ToolStatus = "pending" | "success" | "error" | "cancelled"
+
 /** Lifecycle of a whole plan. */
 export type PlanStatus =
   | "proposed"
@@ -67,7 +70,9 @@ export type WsMessage =
     }
   | {
       type: "tool_response"
-      status?: "success" | "running" | "error" | "cancelled"
+      // In-flight tool responses may carry "running"; chat-ws coerces it to
+      // "success" when building the tool card.
+      status?: ToolStatus | "running"
       content?: string
       text?: string
       error?: string
@@ -115,7 +120,7 @@ export interface ChatMessage {
   timestamp: string
   // For tool messages:
   tool?: string
-  toolStatus?: "pending" | "success" | "error" | "cancelled"
+  toolStatus?: ToolStatus
   toolSummary?: string
   toolCode?: string
   artifacts?: ArtifactLink[]
@@ -137,7 +142,7 @@ export interface UseChatState {
 export interface StoredToolCall {
   name: string
   arguments?: Record<string, unknown> | null
-  status?: "success" | "error" | "cancelled"
+  status?: Exclude<ToolStatus, "pending">
   summary?: string
   risk?: string
   artifacts?: ArtifactLink[]
@@ -146,7 +151,8 @@ export interface StoredToolCall {
 /** A stored message row returned by GET /api/sessions/{id}/messages. */
 export interface SessionMessage {
   id: string
-  role: "user" | "assistant" | "tool" | "plan" | "system"
+  // "system" rows are persisted but intentionally skipped during hydration.
+  role: ChatMessageRole | "system"
   content: string
   created_at: string
   tool_calls?: StoredToolCall[] | null
