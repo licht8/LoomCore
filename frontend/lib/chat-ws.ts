@@ -150,6 +150,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
     case "busy":
       return {
         ...state,
+        isSending: false,
         error: "A request is already running. Pause it before sending another.",
       }
 
