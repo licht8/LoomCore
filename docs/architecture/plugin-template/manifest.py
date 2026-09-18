@@ -140,7 +140,9 @@ def _effective_capabilities() -> int | None:
 
 
 def _permissions(manifest: dict[str, Any]) -> dict[str, Any] | None:
-    permissions = manifest.get("permissions") or {}
+    permissions = manifest.get("permissions")
+    if permissions is None:
+        return {}
     return permissions if isinstance(permissions, dict) else None
 
 
