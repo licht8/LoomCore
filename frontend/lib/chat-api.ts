@@ -5,7 +5,9 @@ const SESSION_STORAGE_KEY = "loomcore_session_id"
 
 /** Generate a random session ID. */
 function generateSessionId(): string {
-  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+  return `sess_${hex}`
 }
 
 /** Get or create the session ID (from localStorage). */
