@@ -166,10 +166,18 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* The canvas background lives on <html> so body stays transparent and the
+     fixed glow layer below can paint above it instead of behind it. */
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image: var(--bg-glow);
-    background-attachment: fixed;
   }
 }
 
