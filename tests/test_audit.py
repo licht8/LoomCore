@@ -11,6 +11,7 @@ from src.core.audit import (
     record_mutation,
     verify_chain,
 )
+from src.db.models import AuditEntry
 
 
 def _payload(**overrides):
@@ -71,6 +72,10 @@ def test_verify_chain_detects_broken_link():
     second = _entry("f" * 64, tool="wg_interface_restart")
 
     assert verify_chain([first, second]) is False
+
+
+def test_audit_log_prev_hash_is_unique():
+    assert AuditEntry.__table__.c.prev_hash.unique is True
 
 
 class _FakeResult:

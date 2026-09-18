@@ -86,5 +86,8 @@ class AuditEntry(Base):
     arguments: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)  # 'success' | 'failed'
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Unique so a predecessor has at most one successor: even if the
+    # application-level append lock were bypassed, a second writer cannot
+    # silently fork the chain (it fails instead and the append is dropped).
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
