@@ -429,12 +429,15 @@ async def test_write_request_unknown_plugin_raises():
 
 
 @pytest.mark.asyncio
-async def test_write_request_busy_raises():
+async def test_write_request_does_not_reject_busy_state():
+    # The BUSY flag is advisory; mutual exclusion now comes from the per-plugin
+    # lock, so a stale BUSY state must not make the write fail.
     manager = PluginManager()
     _add_plugin(manager, state=PluginState.BUSY)
 
-    with pytest.raises(RuntimeError, match="busy"):
-        await manager._write_request("demo", {"method": "x"})
+    request_id = await manager._write_request("demo", {"method": "x"})
+
+    assert request_id
 
 
 @pytest.mark.asyncio
@@ -490,6 +493,101 @@ async def test_write_request_raises_when_retry_fails(monkeypatch):
         await manager._write_request("demo", {"method": "x"})
 
 
+def test_read_response_skips_mismatched_ids():
+    manager = PluginManager()
+    proc = _FakeProc()
+    proc.stdout = io.StringIO(
+        json.dumps({"id": "stale", "result": {"wrong": True}})
+        + "\n"
+        + json.dumps({"method": "MCP notification"})
+        + "\n"
+        + json.dumps({"id": "want", "result": {"ok": True}})
+        + "\n"
+    )
+    _add_plugin(manager, proc=proc)
+
+    response = manager._read_response("demo", "want")
+
+    assert response == {"id": "want", "result": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_exchange_serializes_overlapping_requests(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager)
+    events: list[str] = []
+
+    async def slow_write(plugin_name, request):
+        events.append(f"write:{request['id']}")
+        await asyncio.sleep(0.02)
+
+    def fake_read(plugin_name, request_id):
+        events.append(f"read:{request_id}")
+        return {"id": request_id, "result": {}}
+
+    monkeypatch.setattr(manager, "_write_request", slow_write)
+    monkeypatch.setattr(manager, "_read_response", fake_read)
+
+    await asyncio.gather(
+        manager._exchange("demo", {"method": "a"}, call_timeout=5),
+        manager._exchange("demo", {"method": "b"}, call_timeout=5),
+    )
+
+    # Every write is immediately followed by its own read; the second request
+    # cannot start writing until the first has read its response.
+    assert events[0].startswith("write:")
+    assert events[1] == "read:" + events[0].split(":", 1)[1]
+    assert events[2].startswith("write:")
+    assert events[3] == "read:" + events[2].split(":", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_exchange_lock_is_reentrant_for_restart(monkeypatch):
+    # A broken write restarts the plugin (initialize + get_tools) while the
+    # caller still holds the lock; the lock must be reentrant or this deadlocks.
+    manager = PluginManager()
+    _add_plugin(manager)
+    calls: list[str] = []
+
+    async def writing_that_restarts(plugin_name, request):
+        if request.get("method") == "initialize":
+            calls.append("initialize")
+            return
+        calls.append("outer")
+        await manager._initialize_plugin(plugin_name)
+
+    monkeypatch.setattr(manager, "_write_request", writing_that_restarts)
+    monkeypatch.setattr(
+        manager, "_read_response", lambda plugin_name, request_id: {"result": {}}
+    )
+
+    await asyncio.wait_for(
+        manager._exchange("demo", {"method": "tools/call"}, call_timeout=5),
+        timeout=2,
+    )
+
+    assert calls == ["outer", "initialize"]
+
+
+@pytest.mark.asyncio
+async def test_initialize_plugin_routes_through_exchange(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager)
+    captured: dict = {}
+
+    async def fake_exchange(plugin_name, request, call_timeout):
+        captured.update(plugin=plugin_name, request=request, timeout=call_timeout)
+        return {"result": {}}
+
+    monkeypatch.setattr(manager, "_exchange", fake_exchange)
+
+    await manager._initialize_plugin("demo")
+
+    assert captured["plugin"] == "demo"
+    assert captured["request"]["method"] == "initialize"
+    assert captured["timeout"] == 10
+
+
 # === execute_tool ===
 
 @pytest.mark.asyncio
@@ -497,7 +595,7 @@ async def test_execute_tool_success(monkeypatch):
     manager = PluginManager()
     _add_plugin(manager)
     monkeypatch.setattr(manager, "_write_request", _true)
-    monkeypatch.setattr(manager, "_read_response", lambda name: {"result": {"ok": True}})
+    monkeypatch.setattr(manager, "_read_response", lambda *a, **k: {"result": {"ok": True}})
 
     result = await manager.execute_tool("demo", "wg_interface_status")
 
@@ -511,7 +609,7 @@ async def test_execute_tool_error_response(monkeypatch):
     _add_plugin(manager)
     monkeypatch.setattr(manager, "_write_request", _true)
     monkeypatch.setattr(
-        manager, "_read_response", lambda name: {"error": {"message": "boom"}}
+        manager, "_read_response", lambda *a, **k: {"error": {"message": "boom"}}
     )
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -523,7 +621,7 @@ async def test_execute_tool_missing_result(monkeypatch):
     manager = PluginManager()
     _add_plugin(manager)
     monkeypatch.setattr(manager, "_write_request", _true)
-    monkeypatch.setattr(manager, "_read_response", lambda name: {"result": None})
+    monkeypatch.setattr(manager, "_read_response", lambda *a, **k: {"result": None})
 
     with pytest.raises(RuntimeError, match="no result"):
         await manager.execute_tool("demo", "wg_interface_status")
@@ -567,7 +665,7 @@ async def test_execute_internal_tool_skips_rate_limit(monkeypatch):
     manager._internal_tools["wg_get_client_artifact"] = "demo"
     manager._tool_calls["wg_get_client_artifact"] = [time.time()] * 50
     monkeypatch.setattr(manager, "_write_request", _true)
-    monkeypatch.setattr(manager, "_read_response", lambda name: {"result": {"ok": True}})
+    monkeypatch.setattr(manager, "_read_response", lambda *a, **k: {"result": {"ok": True}})
 
     result = await manager.execute_tool("demo", "wg_get_client_artifact")
 

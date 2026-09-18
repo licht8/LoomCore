@@ -76,6 +76,37 @@ class PluginState(StrEnum):
     STOPPED = "stopped"
 
 
+class _PluginLock:
+    """A per-plugin reentrant async lock.
+
+    ``asyncio.Lock`` is not reentrant, but a broken write triggers an in-place
+    restart that re-initializes the plugin through the same transport while the
+    caller still holds the lock; tracking the owning task lets those nested
+    calls proceed instead of deadlocking.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task | None = None
+        self._depth = 0
+
+    async def __aenter__(self) -> None:
+        task = asyncio.current_task()
+        if task is not None and self._owner is task:
+            self._depth += 1
+            return
+        await self._lock.acquire()
+        self._owner = task
+        self._depth = 1
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        self._depth -= 1
+        if self._depth <= 0:
+            self._owner = None
+            self._depth = 0
+            self._lock.release()
+
+
 @dataclass
 class ManagedPlugin:
     """Runtime record for a single launched plugin subprocess."""
@@ -85,6 +116,8 @@ class ManagedPlugin:
     working_dir: str | None = None
     proc: subprocess.Popen | None = None
     state: PluginState = PluginState.IDLE
+    # Serializes the whole write+read exchange on this plugin's stdio stream.
+    lock: _PluginLock = field(default_factory=_PluginLock)
     restart_attempt: int = 0
     max_restarts: int = 3
     restart_delay_base: float = 1.0
@@ -544,24 +577,20 @@ class PluginManager:
         logger.info(f"Plugin '{name}' subprocess restarted (PID: {proc.pid})")
 
     async def _initialize_plugin(self, plugin_name: str) -> None:
-        """Send {"method": "initialize"} and wait for the response (10s timeout)."""
+        """Send {"method": "initialize"} and wait for the response (10s timeout).
+
+        Routed through the guarded write/read path so a dead process or a
+        broken pipe is handled (and the process replaced) like any other call;
+        a timeout kills the process, since the abandoned reader thread could
+        otherwise consume a later response.
+        """
         request = {"jsonrpc": "2.0", "method": "initialize"}
-        line = json.dumps(request, ensure_ascii=False) + "\n"
-
-        plugin = self._plugins[plugin_name]
-        plugin.proc.stdin.write(line)
-        plugin.proc.stdin.flush()
-
-        # Wait for the response for up to 10 seconds
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(self._read_response, plugin_name),
-                timeout=10,
-            )
-            logger.info(f"Plugin '{plugin_name}' initialized")
+            await self._exchange(plugin_name, request, call_timeout=10)
         except TimeoutError:
             logger.warning(f"Plugin '{plugin_name}' initialization timed out (10s)")
             raise
+        logger.info(f"Plugin '{plugin_name}' initialized")
 
     def _index_tools(self, plugin_name: str, tools: list[dict]) -> list[dict]:
         """Cache a plugin's tools; return the LLM-facing (non-internal) tools."""
@@ -668,8 +697,49 @@ class PluginManager:
     # Task 5: Handle BrokenPipeError / OSError in _write_request
     # ------------------------------------------------------------------
 
+    async def _exchange(self, plugin_name: str, request: dict, call_timeout: float) -> dict:
+        """Write a request and read its matching response, serialized per plugin.
+
+        A per-plugin lock guards the whole write+read sequence. The BUSY state
+        flag is only advisory: two tasks could both observe IDLE before either
+        wrote, so without the lock overlapping callers could write two requests
+        and then race on the single response stream, pairing a response with the
+        wrong request. On timeout the process is killed and marked STOPPED — the
+        reader thread may still be blocked in ``readline()`` and would otherwise
+        consume a later response.
+        """
+        plugin = self._plugins.get(plugin_name)
+        if not plugin:
+            raise ValueError(f"Plugin '{plugin_name}' is not registered")
+
+        async with plugin.lock:
+            request_id = request.get("id") or str(uuid.uuid4())
+            request["id"] = request_id
+            plugin.state = PluginState.BUSY
+            try:
+                await self._write_request(plugin_name, request)
+                # A broken write can restart the process (which resets the
+                # state); re-assert BUSY before reading.
+                plugin.state = PluginState.BUSY
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self._read_response, plugin_name, request_id),
+                    timeout=call_timeout,
+                )
+            except TimeoutError:
+                logger.warning(
+                    f"{call_timeout:.0f}s timeout for plugin '{plugin_name}' — killing process"
+                )
+                self._kill_and_stop(plugin_name)
+                raise
+            finally:
+                if plugin.state == PluginState.BUSY:
+                    plugin.state = PluginState.IDLE
+
     async def _write_request(self, plugin_name: str, request: dict) -> str:
         """Write a JSON-RPC request to the plugin's stdin. Return the request_id.
+
+        Callers must hold the plugin's lock (see ``_exchange``); the BUSY state
+        is not checked here because the lock now provides mutual exclusion.
 
         If the process is dead or the input stream is broken (BrokenPipeError/OSError):
         1. Mark STOPPED and call _restart_plugin().
@@ -679,9 +749,6 @@ class PluginManager:
         plugin = self._plugins.get(plugin_name)
         if not plugin:
             raise ValueError(f"Plugin '{plugin_name}' is not registered")
-
-        if plugin.state == PluginState.BUSY:
-            raise RuntimeError(f"Plugin '{plugin_name}' is busy (30s timeout)")
 
         # Check whether the process is dead
         if self._mark_stopped_if_dead(plugin):
@@ -715,8 +782,14 @@ class PluginManager:
 
         return request["id"]
 
-    def _read_response(self, plugin_name: str) -> dict:
-        """Read the next JSON-RPC response, skipping MCP notifications."""
+    def _read_response(self, plugin_name: str, request_id: str) -> dict:
+        """Read the response matching ``request_id``, skipping notifications.
+
+        Notifications (no ``id``) and responses for a different request are
+        discarded: a stale response can only be a late reply to an earlier
+        request that already timed out (whose process was killed), so returning
+        it would pair the caller with the wrong result.
+        """
         plugin = self._plugins.get(plugin_name)
         if not plugin:
             raise ValueError(f"Plugin '{plugin_name}' is not registered")
@@ -729,8 +802,15 @@ class PluginManager:
                 raise RuntimeError(f"Plugin '{plugin_name}' terminated")
 
             response = json.loads(line.strip())
-            if "id" in response:
-                return response
+            if "id" not in response:
+                continue
+            if response["id"] != request_id:
+                logger.warning(
+                    f"Plugin '{plugin_name}' returned a response for an "
+                    f"unexpected request id; discarding"
+                )
+                continue
+            return response
 
     async def get_tools(self, plugin_name: str) -> list[dict]:
         """Fetch a plugin's tools (tools/list → JSON Schema).
@@ -756,17 +836,10 @@ class PluginManager:
         started = monotonic()
         try:
             request = {"jsonrpc": "2.0", "method": "tools/list"}
-            await self._write_request(plugin_name, request)
-            plugin.state = PluginState.BUSY
-            response = await asyncio.wait_for(
-                asyncio.to_thread(self._read_response, plugin_name),
-                timeout=30,
-            )
+            response = await self._exchange(plugin_name, request, call_timeout=30)
             result = response.get("result", {})
             return result.get("tools", [])
         finally:
-            if plugin.state == PluginState.BUSY:
-                plugin.state = PluginState.IDLE
             log_stage("plugin_get_tools", monotonic() - started, plugin=plugin_name)
 
     async def get_all_tools(self) -> list[dict]:
@@ -895,12 +968,7 @@ class PluginManager:
 
         started = monotonic()
         try:
-            await self._write_request(plugin_name, request)
-            plugin.state = PluginState.BUSY
-            response = await asyncio.wait_for(
-                asyncio.to_thread(self._read_response, plugin_name),
-                timeout=30,
-            )
+            response = await self._exchange(plugin_name, request, call_timeout=30)
             if response.get("error"):
                 raise RuntimeError(response["error"].get("message", "MCP plugin error"))
             result = response.get("result")
@@ -916,16 +984,10 @@ class PluginManager:
             self._kill_and_stop(plugin_name)
             raise
         except TimeoutError:
-            logger.warning(f"30s timeout for plugin '{plugin_name}' — killing process")
-            plugin.proc.kill()
-            plugin.state = PluginState.STOPPED
             raise TimeoutError(
                 f"Call to '{tool_name}' in '{plugin_name}' timed out (30s)"
             ) from None
-
         finally:
-            if plugin.state == PluginState.BUSY:
-                plugin.state = PluginState.IDLE
             log_stage(
                 "plugin_execute_tool", monotonic() - started, tool=tool_name
             )
