@@ -7,6 +7,8 @@ exactly as it is behind the bundled nginx.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -16,7 +18,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.requests import Request as StarletteRequest
 
 from src.config import settings
-from src.core.client_ip import _trusted_networks, client_ip
+from src.core.client_ip import _is_trusted, _trusted_networks, client_ip
 
 LOOPBACK = "127.0.0.1,::1"
 
@@ -80,6 +82,27 @@ def test_invalid_trusted_proxies_entry_is_ignored(monkeypatch):
     _trusted_networks.cache_clear()
     request = make_request("10.1.2.3", {"X-Forwarded-For": "203.0.113.10"})
     assert client_ip(request) == "203.0.113.10"
+
+
+def test_ipv4_mapped_loopback_is_trusted(monkeypatch):
+    # A dual-stack listener can present the loopback proxy as ::ffff:127.0.0.1.
+    assert _is_trusted("::ffff:127.0.0.1") is True
+    request = make_request("::ffff:127.0.0.1", {"X-Forwarded-For": "203.0.113.11"})
+    assert client_ip(request) == "203.0.113.11"
+
+
+def test_malformed_forwarded_entries_are_skipped(caplog):
+    request = make_request("127.0.0.1", {"X-Forwarded-For": "203.0.113.12, garbage"})
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        assert client_ip(request) == "203.0.113.12"
+    assert "Ignoring non-IP X-Forwarded-For entry 'garbage'" in caplog.text
+
+
+def test_malformed_x_real_ip_falls_back_to_peer(caplog):
+    request = make_request("127.0.0.1", {"X-Real-IP": "evil.example.com"})
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        assert client_ip(request) == "127.0.0.1"
+    assert "Ignoring non-IP X-Real-IP value 'evil.example.com'" in caplog.text
 
 
 # === rate limiting by real client IP ===
