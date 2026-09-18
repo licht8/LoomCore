@@ -49,8 +49,8 @@ def test_wg_interface_lifecycle(load_loomwg, monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
-    subprocess.run(["wg-quick", "up", str(config)], check=True, timeout=60)
     try:
+        subprocess.run(["wg-quick", "up", str(config)], check=True, timeout=60)
         assert INTERFACE in wg.active_interfaces()
         details = wg.read_interface(INTERFACE)
         assert details["listen_port"] == PORT
