@@ -22,15 +22,24 @@ env_value() {
   [[ -z "$line" ]] && return 0
   line="${line#*=}"
   line="${line%$'\r'}"          # strip CR
-  line="${line%%#*}"            # strip inline comment
   line="${line#"${line%%[![:space:]]*}"}"   # ltrim
   line="${line%"${line##*[![:space:]]}"}"   # rtrim
-  line="${line%\"}"; line="${line#\"}"      # strip surrounding double quotes
-  line="${line%\'}"; line="${line#\'}"      # strip surrounding single quotes
+  if [[ "$line" == \"*\"* ]]; then
+    line="${line:1}"; line="${line%%\"*}"   # unquote a matching "..." pair
+  elif [[ "$line" == \'*\'* ]]; then
+    line="${line:1}"; line="${line%%\'*}"   # unquote a matching '...' pair
+  else
+    line="${line%%[[:space:]]#*}"           # strip inline comment (only when preceded by whitespace)
+    line="${line%"${line##*[![:space:]]}"}" # rtrim leftover space
+  fi
   printf '%s\n' "$line"
 }
 
 TOKEN="$(env_value ADMIN_TOKEN)"
+if [[ "$TOKEN" == *\"* || "$TOKEN" == *$'\n'* ]]; then
+  echo "ERROR: ADMIN_TOKEN contains an unsafe character (quote or newline)" >&2
+  exit 1
+fi
 PG_USER="$(env_value POSTGRES_USER)"; PG_USER="${PG_USER:-loomuser}"
 PG_DB="$(env_value POSTGRES_DB)"; PG_DB="${PG_DB:-loomcore}"
 
