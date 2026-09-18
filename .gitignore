@@ -8,7 +8,13 @@ venv/
 # Env
 .env
 .env.*
+*.env
 !.env.example
+
+# Credentials
+*.pem
+*.key
+*.p12
 
 # IDE
 .vscode/
