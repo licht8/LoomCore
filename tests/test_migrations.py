@@ -118,3 +118,50 @@ def test_audit_prev_hash_migration_refuses_a_forked_chain():
         module.upgrade()
 
     assert recorder.constraints == []
+
+
+class _ColumnRecorder:
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+        self.alters: list[tuple[str, str, bool]] = []
+        self.indexes: list[tuple[str, str, list[str]]] = []
+
+    def execute(self, statement: Any) -> None:
+        self.executed.append(str(statement))
+
+    def alter_column(
+        self,
+        table_name: str,
+        column_name: str,
+        *,
+        nullable: bool,
+        existing_type: Any = None,
+    ) -> None:
+        self.alters.append((table_name, column_name, nullable))
+
+    def create_index(
+        self, name: str, table_name: str, columns: list[str], **kwargs: Any
+    ) -> None:
+        self.indexes.append((name, table_name, list(columns)))
+
+
+def test_not_null_defaults_migration_backfills_then_tightens_and_indexes_fks():
+    module = _load_migration("004_not_null_defaults_and_fk_indexes.py")
+    recorder = _ColumnRecorder()
+    module.op = recorder
+
+    module.upgrade()
+
+    assert len(recorder.executed) == 5
+    assert all("WHERE" in statement for statement in recorder.executed)
+    assert recorder.alters == [
+        ("users", "provider", False),
+        ("users", "role", False),
+        ("sessions", "status", False),
+        ("messages", "content", False),
+        ("audit_log", "actor", False),
+    ]
+    assert recorder.indexes == [
+        ("ix_sessions_user_id", "sessions", ["user_id"]),
+        ("ix_messages_session_id", "messages", ["session_id"]),
+    ]
