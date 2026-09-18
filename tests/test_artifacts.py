@@ -91,6 +91,8 @@ async def test_download_artifact_requires_admin_token(monkeypatch):
     # reject an unauthenticated request before any plugin is consulted.
     monkeypatch.setattr(settings, "auth_mode", "token")
     monkeypatch.setattr(settings, "admin_token", "secret")
+    # Pin TLS off so the credential check (not the TLS gate) is exercised.
+    monkeypatch.setattr(settings, "require_tls", False)
 
     async def _boom(*args, **kwargs):
         raise AssertionError("plugin_manager must not be touched without auth")
@@ -104,7 +106,7 @@ async def test_download_artifact_requires_admin_token(monkeypatch):
             "alice", "config", _make_admin_request(token=None)
         )
 
-    assert exc.value.status_code in {401, 403}
+    assert exc.value.status_code == 401
 
 
 @pytest.mark.asyncio
