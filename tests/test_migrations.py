@@ -165,3 +165,30 @@ def test_not_null_defaults_migration_backfills_then_tightens_and_indexes_fks():
         ("ix_sessions_user_id", "sessions", ["user_id"]),
         ("ix_messages_session_id", "messages", ["session_id"]),
     ]
+
+
+def test_audit_entry_hash_migration_creates_the_named_constraint():
+    module = _load_migration("005_audit_entry_hash_unique.py")
+    recorder = _ConstraintRecorder()
+    module.op = recorder
+
+    module.upgrade()
+
+    assert recorder.constraints == [
+        ("uq_audit_log_entry_hash", "audit_log", ["entry_hash"])
+    ]
+    statements = recorder.get_bind().statements
+    assert len(statements) == 2
+    assert "pg_advisory_xact_lock" in statements[0]
+    assert "GROUP BY entry_hash" in statements[1]
+
+
+def test_audit_entry_hash_migration_refuses_duplicates():
+    module = _load_migration("005_audit_entry_hash_unique.py")
+    recorder = _ConstraintRecorder(duplicates=[("b" * 64,)])
+    module.op = recorder
+
+    with pytest.raises(RuntimeError, match="duplicate entry_hash"):
+        module.upgrade()
+
+    assert recorder.constraints == []

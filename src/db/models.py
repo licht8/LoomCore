@@ -99,5 +99,8 @@ class AuditEntry(Base):
     prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    # Named to match migration 003 so autogenerate does not see drift.
-    __table_args__ = (UniqueConstraint("prev_hash", name="uq_audit_log_prev_hash"),)
+    # Named to match migrations 003/005 so autogenerate does not see drift.
+    __table_args__ = (
+        UniqueConstraint("prev_hash", name="uq_audit_log_prev_hash"),
+        UniqueConstraint("entry_hash", name="uq_audit_log_entry_hash"),
+    )

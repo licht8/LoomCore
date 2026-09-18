@@ -82,10 +82,13 @@ def test_audit_log_prev_hash_is_unique():
         if isinstance(constraint, UniqueConstraint)
     ]
 
-    assert [
+    assert sorted(
         (constraint.name, [column.name for column in constraint.columns])
         for constraint in unique
-    ] == [("uq_audit_log_prev_hash", ["prev_hash"])]
+    ) == [
+        ("uq_audit_log_entry_hash", ["entry_hash"]),
+        ("uq_audit_log_prev_hash", ["prev_hash"]),
+    ]
 
 
 class _FakeResult:
