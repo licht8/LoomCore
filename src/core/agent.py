@@ -103,8 +103,10 @@ PLANNER_TOOLS: list[dict] = [AGENT_PLAN_SCHEMA, REPLY_SCHEMA]
 
 
 def _normalize_step(
-    index: int, raw: dict, risk_of: _RiskResolver | None = None
+    index: int, raw: object, risk_of: _RiskResolver | None = None
 ) -> dict:
+    if not isinstance(raw, dict):
+        raw = {}
     tool = str(raw.get("tool") or "").strip()
     args = raw.get("args")
     resolve_risk = risk_of or classify_tool_risk

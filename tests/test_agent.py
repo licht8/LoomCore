@@ -35,6 +35,14 @@ def test_build_plan_handles_bad_shapes():
     assert plan["steps"][0]["args"] == {}
 
 
+def test_build_plan_handles_non_mapping_steps():
+    plan = agent.build_plan({"goal": "x", "steps": ["core_health", 7, None]})
+
+    assert [step["tool"] for step in plan["steps"]] == ["", "", ""]
+    errors = agent.validate_plan(plan, {"core_health"})
+    assert any("missing a tool name" in error for error in errors)
+
+
 def test_validate_plan_reports_problems():
     known = {"core_health", "wg_add_peer"}
 
