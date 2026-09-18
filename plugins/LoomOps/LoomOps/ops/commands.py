@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import signal
 import subprocess
+import threading
+import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +18,15 @@ from . import audit_event
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 600
 MAX_OUTPUT_CHARS = 20_000
+
+# Read the pipes in bounded chunks so a chatty command cannot exhaust memory,
+# and give a killed process group a moment to release its pipes before we stop
+# waiting for the reader threads.
+_READ_CHUNK_CHARS = 8192
+_REAP_GRACE_SECONDS = 5.0
+
+# SIGKILL does not exist on Windows; fall back to SIGTERM there.
+_KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 # Basenames that can execute arbitrary code or otherwise escape the allowlist
 # even with ``shell=False``: interpreters, wrappers and process/session
@@ -54,6 +67,42 @@ def _truncate(text: str) -> tuple[str, bool]:
         return text, False
     dropped = len(text) - MAX_OUTPUT_CHARS
     return f"{text[:MAX_OUTPUT_CHARS]}\n... [truncated {dropped} chars]", True
+
+
+def _read_limited(stream: Any, sink: list[str]) -> None:
+    """Read a pipe in bounded chunks, keeping at most MAX_OUTPUT_CHARS chars."""
+    kept = 0
+    try:
+        while True:
+            chunk = stream.read(_READ_CHUNK_CHARS)
+            if not chunk:
+                break
+            if kept < MAX_OUTPUT_CHARS:
+                sink.append(chunk)
+                kept += len(chunk)
+    except (OSError, ValueError):
+        # The stream can be closed out from under us when a timed-out process
+        # group is killed; whatever was read so far is still reported.
+        pass
+    finally:
+        with suppress(OSError):
+            stream.close()
+
+
+def _kill_process_group(proc: subprocess.Popen[Any]) -> None:
+    """Kill the child and every process in its group, then reap it."""
+    killpg = getattr(os, "killpg", None)
+    getpgid = getattr(os, "getpgid", None)
+    if killpg is not None and getpgid is not None:
+        try:
+            killpg(getpgid(proc.pid), _KILL_SIGNAL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+    else:
+        # Windows has no process groups in this sense.
+        proc.kill()
+    with suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=_REAP_GRACE_SECONDS)
 
 
 def _split_command(command: Any) -> list[str]:
@@ -102,33 +151,67 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
 
     timeout = command_timeout()
     try:
-        completed = subprocess.run(
+        # start_new_session puts the child in its own process group so a
+        # timeout can kill the whole tree: killing only the direct child
+        # leaves grandchildren holding the pipes open, which makes the
+        # parent block while reaping past the deadline.
+        proc = subprocess.Popen(
             run_argv,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
-            check=False,
             shell=False,
+            start_new_session=True,
         )
+    except OSError as exc:
+        raise RuntimeError(f"Failed to run '{executable}': {exc}") from exc
+
+    # Drain both pipes in bounded chunks on background threads: this keeps
+    # memory flat (we stop appending at MAX_OUTPUT_CHARS) and avoids the
+    # deadlock of reading one pipe while the other fills up.
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    readers = [
+        threading.Thread(target=_read_limited, args=(proc.stdout, stdout_chunks), daemon=True),
+        threading.Thread(target=_read_limited, args=(proc.stderr, stderr_chunks), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    timed_out = False
+    try:
+        return_code: int | None = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
+        timed_out = True
+        _kill_process_group(proc)
+        return_code = None
+
+    deadline = time.monotonic() + _REAP_GRACE_SECONDS
+    for reader in readers:
+        reader.join(max(0.0, deadline - time.monotonic()))
+
+    stdout, stdout_truncated = _truncate("".join(stdout_chunks))
+    stderr, stderr_truncated = _truncate("".join(stderr_chunks))
+
+    if timed_out:
         audit_error = audit_event(
             "ops_run_command", argv=run_argv, timeout=timeout, timed_out=True
         )
         return {
             "output": f"Command timed out after {timeout}s: {' '.join(run_argv)}",
             "argv": run_argv,
+            "exit_code": None,
+            "stdout": stdout,
+            "stderr": stderr,
+            "truncated": stdout_truncated or stderr_truncated,
             "timed_out": True,
             "audit_error": audit_error,
         }
-    except OSError as exc:
-        raise RuntimeError(f"Failed to run '{executable}': {exc}") from exc
 
-    stdout, stdout_truncated = _truncate(completed.stdout or "")
-    stderr, stderr_truncated = _truncate(completed.stderr or "")
     audit_error = audit_event(
-        "ops_run_command", argv=run_argv, exit_code=completed.returncode
+        "ops_run_command", argv=run_argv, exit_code=return_code
     )
-    lines = [f"$ {' '.join(run_argv)}", f"exit code: {completed.returncode}"]
+    lines = [f"$ {' '.join(run_argv)}", f"exit code: {return_code}"]
     if stdout:
         lines.append(stdout)
     if stderr:
@@ -136,9 +219,10 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
     return {
         "output": "\n".join(lines),
         "argv": run_argv,
-        "exit_code": completed.returncode,
+        "exit_code": return_code,
         "stdout": stdout,
         "stderr": stderr,
         "truncated": stdout_truncated or stderr_truncated,
+        "timed_out": False,
         "audit_error": audit_error,
     }

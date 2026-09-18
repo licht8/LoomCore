@@ -36,6 +36,35 @@ class _Completed:
         self.stderr = stderr
 
 
+class _FakePopen:
+    """Minimal stand-in for the Popen used by ``commands.run_command``."""
+
+    def __init__(
+        self,
+        argv,
+        *,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+        timeout: bool = False,
+    ):
+        self.argv = argv
+        self.returncode = returncode
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
+        self.pid = 999999
+        self.killed = False
+        self._timeout = timeout
+
+    def wait(self, timeout=None):
+        if self._timeout:
+            raise subprocess.TimeoutExpired(cmd=self.argv, timeout=timeout)
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+
+
 def _symlink_or_skip(target: Path, link: Path) -> None:
     try:
         link.symlink_to(target)
@@ -129,7 +158,7 @@ def test_run_command_rejects_path_qualified_name(load_loomops, monkeypatch):
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/bin/{name}")
     calls = []
     monkeypatch.setattr(
-        commands.subprocess, "run", lambda *a, **k: calls.append(a) or _Completed()
+        commands.subprocess, "Popen", lambda *a, **k: calls.append(a) or _FakePopen(a[0])
     )
 
     for command in ("./ls", "/bin/ls", "../bin/ls"):
@@ -146,11 +175,11 @@ def test_run_command_executes_resolved_absolute_path(load_loomops, monkeypatch, 
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
     seen = {}
 
-    def fake_run(argv, **kwargs):
+    def fake_popen(argv, **kwargs):
         seen["argv"] = argv
-        return _Completed(stdout="up 3 days\n")
+        return _FakePopen(argv, stdout="up 3 days\n")
 
-    monkeypatch.setattr(commands.subprocess, "run", fake_run)
+    monkeypatch.setattr(commands.subprocess, "Popen", fake_popen)
 
     result = commands.run_command({"command": "uptime -p"})
 
@@ -188,7 +217,9 @@ def test_run_command_runs_allowed_and_audits(load_loomops, monkeypatch, tmp_path
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(
-        commands.subprocess, "run", lambda *a, **k: _Completed(stdout="up 3 days\n")
+        commands.subprocess,
+        "Popen",
+        lambda *a, **k: _FakePopen(a[0], stdout="up 3 days\n"),
     )
 
     result = commands.run_command({"command": "uptime -p"})
@@ -211,11 +242,11 @@ def test_run_command_accepts_list_form(load_loomops, monkeypatch, tmp_path):
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/sbin/{name}")
     seen = {}
 
-    def fake_run(argv, **kwargs):
+    def fake_popen(argv, **kwargs):
         seen["argv"] = argv
-        return _Completed(stdout="ok")
+        return _FakePopen(argv, stdout="ok")
 
-    monkeypatch.setattr(commands.subprocess, "run", fake_run)
+    monkeypatch.setattr(commands.subprocess, "Popen", fake_popen)
 
     commands.run_command({"command": ["ip", "-j", "addr"]})
 
@@ -227,16 +258,43 @@ def test_run_command_timeout_is_reported(load_loomops, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
-
-    def fake_run(*args, **kwargs):
-        raise commands.subprocess.TimeoutExpired(cmd="uptime", timeout=1)
-
-    monkeypatch.setattr(commands.subprocess, "run", fake_run)
+    killed_groups = []
+    monkeypatch.setattr(
+        commands.os, "killpg", lambda pgid, sig: killed_groups.append((pgid, sig)), raising=False
+    )
+    monkeypatch.setattr(commands.os, "getpgid", lambda pid: pid, raising=False)
+    monkeypatch.setattr(
+        commands.subprocess, "Popen", lambda *a, **k: _FakePopen(a[0], timeout=True)
+    )
 
     result = commands.run_command({"command": "uptime"})
 
     assert result["timed_out"] is True
     assert "timed out" in result["output"]
+    # The timeout path must expose the same keys as the success path.
+    assert result["exit_code"] is None
+    assert result["stdout"] == ""
+    assert result["stderr"] == ""
+    assert result["truncated"] is False
+    assert killed_groups and killed_groups[0][1] == commands._KILL_SIGNAL
+
+
+def test_run_command_truncates_large_output(load_loomops, monkeypatch, tmp_path):
+    commands = load_loomops("commands")["commands"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        commands.subprocess,
+        "Popen",
+        lambda *a, **k: _FakePopen(a[0], stdout="x" * (commands.MAX_OUTPUT_CHARS * 2)),
+    )
+
+    result = commands.run_command({"command": "uptime"})
+
+    assert result["truncated"] is True
+    assert "truncated" in result["stdout"]
+    assert len(result["stdout"]) < commands.MAX_OUTPUT_CHARS * 2
 
 
 # === files ===
