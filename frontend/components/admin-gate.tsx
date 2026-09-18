@@ -101,18 +101,26 @@ export function AdminGate({ children }: { children: ReactNode }) {
 
   async function login(event: FormEvent) {
     event.preventDefault()
-    const response = await fetch(`${getApiBase()}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ username, password, totp }),
-    })
-    if (!response.ok) {
-      setError("Invalid username, password, or TOTP code")
-      return
+    try {
+      const response = await fetch(`${getApiBase()}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username, password, totp }),
+      })
+      if (response.ok) {
+        lastVerifiedAt = Date.now()
+        setAuthenticated(true)
+        return
+      }
+      if (response.status === 401 || response.status === 403) {
+        setError("Invalid username, password, or TOTP code")
+        return
+      }
+      setError("Sign-in is temporarily unavailable, please try again")
+    } catch {
+      setError("Network error, please check your connection and try again")
     }
-    lastVerifiedAt = Date.now()
-    setAuthenticated(true)
   }
 
   async function loginWithToken(event: FormEvent) {
@@ -122,8 +130,13 @@ export function AdminGate({ children }: { children: ReactNode }) {
       setError("Enter the admin token")
       return
     }
-    if ((await checkToken(value)) !== "ok") {
+    const result = await checkToken(value)
+    if (result === "invalid") {
       setError("Invalid admin token")
+      return
+    }
+    if (result !== "ok") {
+      setError("Sign-in is temporarily unavailable, please try again")
       return
     }
     setAdminToken(value)
