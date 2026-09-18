@@ -40,6 +40,9 @@ def load_disabled(path: Path) -> set[str]:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return set()
+    except UnicodeDecodeError as exc:
+        logger.warning(f"Plugin state '{path}' is not valid UTF-8: {exc}")
+        return set()
     except OSError as exc:
         logger.warning(f"Cannot read plugin state '{path}': {exc}")
         return set()

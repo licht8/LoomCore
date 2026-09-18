@@ -1,6 +1,7 @@
 """Unit tests for the persisted plugin enable/disable state."""
 
 import json
+import logging
 from pathlib import Path
 
 from src.plugins import state as state_module
@@ -32,6 +33,14 @@ def test_load_disabled_corrupt(tmp_path):
     path = tmp_path / "plugins.json"
     path.write_text("{broken", encoding="utf-8")
     assert state_module.load_disabled(path) == set()
+
+
+def test_load_disabled_rejects_invalid_utf8(tmp_path, caplog):
+    path = tmp_path / "plugins.json"
+    path.write_bytes(b"\xff\xfe\x00")
+    with caplog.at_level(logging.WARNING, logger="loomcore.plugins.state"):
+        assert state_module.load_disabled(path) == set()
+    assert "is not valid UTF-8" in caplog.text
 
 
 def test_load_disabled_wrong_shape(tmp_path):
