@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from logging.config import fileConfig
 
@@ -18,15 +19,25 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Created after fileConfig(), which disables pre-existing loggers.
+logger = logging.getLogger(__name__)
+
 # Take DATABASE_URL from settings (.env via pydantic-settings) or the environment.
+# configparser applies '%' interpolation when options are read back, so escape
+# literal '%' (e.g. percent-encoded credentials) before storing the URL.
 try:
     from src.config import Settings
 
-    config.set_main_option("sqlalchemy.url", Settings().database_url)
-except Exception:
+    config.set_main_option("sqlalchemy.url", Settings().database_url.replace("%", "%%"))
+except Exception as exc:
+    logger.warning("Could not load settings, falling back to DATABASE_URL: %s", exc)
     _database_url = os.environ.get("DATABASE_URL")
-    if _database_url:
-        config.set_main_option("sqlalchemy.url", _database_url)
+    if not _database_url:
+        raise RuntimeError(
+            "Could not determine the database URL: importing src.config.Settings "
+            "failed and DATABASE_URL is not set"
+        ) from exc
+    config.set_main_option("sqlalchemy.url", _database_url.replace("%", "%%"))
 
 # Set target_metadata to SQLAlchemy's Base.metadata
 # so Alembic can see all tables and autogenerate migrations.
@@ -62,10 +73,11 @@ async def _run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(_do_run_migrations)
-
-    await connectable.dispose()
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(_do_run_migrations)
+    finally:
+        await connectable.dispose()
 
 
 def run_migrations_online() -> None:
