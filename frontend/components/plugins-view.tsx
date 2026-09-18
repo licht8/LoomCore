@@ -1,5 +1,7 @@
 "use client"
 
+import { useState } from "react"
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { RotateCw } from "lucide-react"
 
@@ -17,6 +19,7 @@ import { cn } from "@/lib/utils"
 
 export function PluginsView() {
   const queryClient = useQueryClient()
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const {
     data: plugins = [],
@@ -37,7 +40,11 @@ export function PluginsView() {
       return reloadPlugin(name)
     },
     onSuccess: () => {
+      setActionError(null)
       queryClient.invalidateQueries({ queryKey: ["plugins"] })
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : "Action failed")
     },
   })
 
@@ -92,6 +99,19 @@ export function PluginsView() {
           </div>
         )}
 
+        {actionError && (
+          <div className="mt-4 flex items-center gap-2 text-xs text-destructive">
+            <span className="truncate">{actionError}</span>
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              className="shrink-0 font-medium underline underline-offset-4 hover:opacity-80"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="mt-6 space-y-3">
             {Array.from({ length: 3 }).map((_, index) => (
@@ -112,9 +132,10 @@ export function PluginsView() {
                 pendingAction={
                   pending?.name === plugin.name ? pending.action : null
                 }
-                onAction={(action) =>
+                onAction={(action) => {
+                  setActionError(null)
                   mutation.mutate({ name: plugin.name, action })
-                }
+                }}
               />
             ))}
           </div>
