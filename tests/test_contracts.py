@@ -2,6 +2,7 @@
 
 import pytest
 
+from src.core import contracts
 from src.core.contracts import (
     ToolContractError,
     validate_tool_args,
@@ -55,6 +56,30 @@ def test_validate_tool_args_type_error_names_path():
     with pytest.raises(ToolContractError) as excinfo:
         validate_tool_args("demo_tool", {"plugin": "x", "force": "yes"}, _PLUGIN_SCHEMA)
     assert "demo_tool: force:" in str(excinfo.value)
+
+
+def test_validate_tool_args_sorts_mixed_path_types(monkeypatch):
+    class _FakeError:
+        validator = "type"
+        message = "boom"
+
+        def __init__(self, path):
+            self.path = path
+
+    class _FakeValidator:
+        @staticmethod
+        def check_schema(schema):
+            return None
+
+        def __init__(self, schema):
+            pass
+
+        def iter_errors(self, args):
+            return iter([_FakeError([0]), _FakeError(["name"])])
+
+    monkeypatch.setattr(contracts, "Draft202012Validator", _FakeValidator)
+    with pytest.raises(ToolContractError):
+        validate_tool_args("demo_tool", {"x": 1}, {"type": "object"})
 
 
 def test_validate_tool_args_rejects_additional_property():

@@ -54,7 +54,10 @@ def validate_tool_args(tool_name: str, args: Any, schema: Any) -> None:
     if validator is None:
         return
 
-    errors = sorted(validator.iter_errors(args), key=lambda error: list(error.path))
+    errors = sorted(
+        validator.iter_errors(args),
+        key=lambda error: [str(part) for part in error.path],
+    )
     if not errors:
         return
 
