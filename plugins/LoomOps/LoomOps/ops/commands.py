@@ -63,10 +63,12 @@ def command_timeout() -> int:
 
 
 def _read_limited(stream: Any, sink: list[str], dropped: list[int]) -> None:
-    """Read a pipe in bounded chunks, keeping at most MAX_OUTPUT_CHARS chars.
+    """Read a pipe in bounded chunks, keeping roughly MAX_OUTPUT_CHARS chars.
 
-    Every char past the cap is counted in ``dropped`` so the caller can report
-    truncation even when the kept prefix lands exactly on the cap.
+    ``sink`` is bounded to ``MAX_OUTPUT_CHARS`` plus at most one read chunk
+    (the whole chunk that crosses the cap is appended); the overshoot past the
+    cap is not counted here. ``_truncate_limited`` folds that overshoot, plus
+    every char counted in ``dropped``, into the final truncation report.
     """
     kept = 0
     try:
@@ -231,6 +233,7 @@ def run_command(arguments: dict[str, Any]) -> dict[str, Any]:
             "stderr": stderr,
             "truncated": truncated,
             "timed_out": True,
+            "incomplete": output_incomplete,
             "audit_error": audit_error,
         }
 

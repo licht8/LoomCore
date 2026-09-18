@@ -279,6 +279,7 @@ def test_run_command_timeout_is_reported(load_loomops, monkeypatch, tmp_path):
     assert result["stdout"] == ""
     assert result["stderr"] == ""
     assert result["truncated"] is False
+    assert result["incomplete"] is False
     assert killed_groups and killed_groups[0][1] == commands._KILL_SIGNAL
 
 
