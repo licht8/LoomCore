@@ -716,8 +716,10 @@ class PluginManager:
             request_id = request.get("id") or str(uuid.uuid4())
             request["id"] = request_id
             plugin.state = PluginState.BUSY
+            written = False
             try:
                 await self._write_request(plugin_name, request)
+                written = True
                 # A broken write can restart the process (which resets the
                 # state); re-assert BUSY before reading.
                 plugin.state = PluginState.BUSY
@@ -730,6 +732,18 @@ class PluginManager:
                     f"{call_timeout:.0f}s timeout for plugin '{plugin_name}' — killing process"
                 )
                 self._kill_and_stop(plugin_name)
+                raise
+            except asyncio.CancelledError:
+                # Only a request that actually reached the stream can desync it.
+                # A caller cancelled while still queued on the lock (written is
+                # False) never touched the stream, so it must not kill the
+                # process the current lock holder is reading from.
+                if written:
+                    logger.warning(
+                        f"Exchange with plugin '{plugin_name}' cancelled mid-call "
+                        "— killing process"
+                    )
+                    self._kill_and_stop(plugin_name)
                 raise
             finally:
                 if plugin.state == PluginState.BUSY:
@@ -794,8 +808,17 @@ class PluginManager:
         if not plugin:
             raise ValueError(f"Plugin '{plugin_name}' is not registered")
 
+        # Pin the process for the whole read loop. After a timeout the caller
+        # kills this process and may restart the plugin; a reader that already
+        # skipped a non-matching line would otherwise re-bind to the successor's
+        # stdout, steal its responses (never matching its stale id) and cause a
+        # kill loop.
+        proc = plugin.proc
+        if proc is None or proc.stdout is None:
+            raise RuntimeError(f"Plugin '{plugin_name}' has no stdout stream")
+
         while True:
-            line = plugin.proc.stdout.readline()
+            line = proc.stdout.readline()
             if not line:
                 logger.error(f"Plugin '{plugin_name}' terminated")
                 plugin.state = PluginState.STOPPED
@@ -976,12 +999,12 @@ class PluginManager:
                 raise RuntimeError(f"Plugin '{plugin_name}' returned no result")
             return result
         except asyncio.CancelledError:
-            # The caller cancelled mid-call; the stdio stream can no longer be
-            # trusted to pair requests with responses, so restart the plugin.
+            # _exchange already kills the process when the request had reached
+            # the stream. A cancellation while merely queued on the lock must
+            # not abort the unrelated in-flight call holding the lock.
             logger.warning(
-                f"Call to '{tool_name}' in '{plugin_name}' cancelled — restarting plugin"
+                f"Call to '{tool_name}' in '{plugin_name}' cancelled"
             )
-            self._kill_and_stop(plugin_name)
             raise
         except TimeoutError:
             raise TimeoutError(

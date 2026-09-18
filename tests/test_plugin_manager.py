@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import threading
 import time
 
 import pytest
@@ -213,34 +214,25 @@ async def test_execute_internal_tool_unknown_raises():
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_cancelled_restarts_plugin(monkeypatch):
+async def test_execute_tool_cancelled_mid_call_restarts_plugin(monkeypatch):
     manager = PluginManager()
+    proc = _FakeProc()
+    _add_plugin(manager, proc=proc, state=PluginState.IDLE)
 
-    class FakeProc:
-        def __init__(self):
-            self.killed = False
+    async def fast_write(plugin_name, request):
+        return request["id"]
 
-        def poll(self):
-            return None
+    release = threading.Event()
 
-        def kill(self):
-            self.killed = True
+    def blocking_read(plugin_name, request_id):
+        release.wait(timeout=5)
+        return {"id": request_id, "result": {}}
 
-        def wait(self, timeout=None):
-            return 0
-
-    proc = FakeProc()
-    manager._plugins["demo"] = ManagedPlugin(
-        name="demo", proc=proc, state=PluginState.IDLE
-    )
-
-    async def blocking_write(plugin_name, request):
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(manager, "_write_request", blocking_write)
+    monkeypatch.setattr(manager, "_write_request", fast_write)
+    monkeypatch.setattr(manager, "_read_response", blocking_read)
 
     task = asyncio.create_task(manager.execute_tool("demo", "wg_interface_status"))
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
@@ -248,6 +240,44 @@ async def test_execute_tool_cancelled_restarts_plugin(monkeypatch):
 
     assert proc.killed is True
     assert manager._plugins["demo"].state == PluginState.STOPPED
+    release.set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queued_caller_does_not_kill_plugin(monkeypatch):
+    # A caller parked on the lock must not kill the process the lock holder is
+    # currently reading from when it is cancelled.
+    manager = PluginManager()
+    proc = _FakeProc()
+    _add_plugin(manager, proc=proc, state=PluginState.IDLE)
+
+    async def fast_write(plugin_name, request):
+        return request["id"]
+
+    release = threading.Event()
+
+    def blocking_read(plugin_name, request_id):
+        release.wait(timeout=5)
+        return {"id": request_id, "result": {}}
+
+    monkeypatch.setattr(manager, "_write_request", fast_write)
+    monkeypatch.setattr(manager, "_read_response", blocking_read)
+
+    holder = asyncio.create_task(manager.execute_tool("demo", "wg_interface_status"))
+    await asyncio.sleep(0.05)  # holder reaches the read and holds the lock
+
+    waiter = asyncio.create_task(manager.execute_tool("demo", "wg_interface_status"))
+    await asyncio.sleep(0.05)  # waiter queues on the lock
+    waiter.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert proc.killed is False
+
+    release.set()
+    await asyncio.wait_for(holder, timeout=5)
+    assert proc.killed is False
 
 
 # === discovery ===
