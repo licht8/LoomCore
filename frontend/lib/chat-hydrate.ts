@@ -37,9 +37,11 @@ function isPlannerCallShape(obj: Record<string, unknown>): boolean {
 /**
  * True when a stored assistant message is a leaked planner tool call written as
  * text instead of being executed, e.g. `agent_plan { "steps": [...] }`. Such rows
- * must never render as an assistant bubble. Detection is deliberately strict:
- * the whole message must parse as one JSON object (optionally after a tool-name
- * prefix) so prose that merely quotes a plan still renders.
+ * must never render as an assistant bubble. Detection prefers the whole message
+ * parsing as one JSON object (optionally after a tool-name prefix) so prose that
+ * merely quotes a plan still renders, but also catches wrapped leaks the backend
+ * itself recovers (`_recover_textual_plan_args`: `[tool name] {...}`, fenced
+ * ```json blocks, trailing prose).
  */
 function isLeakedToolCall(content: string): boolean {
   if (isBareToolName(content)) return true
@@ -47,7 +49,13 @@ function isLeakedToolCall(content: string): boolean {
   const prefixed = trimmed.match(PREFIXED_TOOL_CALL)
   if (prefixed) return parseJsonObject(prefixed[1]) !== null
   const parsed = parseJsonObject(trimmed)
-  return parsed !== null && isPlannerCallShape(parsed)
+  if (parsed !== null && isPlannerCallShape(parsed)) return true
+  // Leaked calls may be fenced, tagged (`[tool name] {...}`) or followed by
+  // prose, so the whole-message parse above misses them. Only fall back when
+  // such a wrapper is present, so plain prose that merely quotes a plan renders.
+  return (
+    /^\s*(?:\[tool\s+\w+\]|```)/.test(trimmed) && /"steps"\s*:\s*\[/.test(trimmed)
+  )
 }
 
 /** Runtime guard for a persisted plan row (`tool_calls` JSONB is untyped). */
@@ -57,6 +65,8 @@ function isPlan(value: unknown): value is Plan {
   return (
     typeof plan.plan_id === "string" &&
     typeof plan.goal === "string" &&
+    typeof plan.revision === "number" &&
+    typeof plan.status === "string" &&
     Array.isArray(plan.steps)
   )
 }
