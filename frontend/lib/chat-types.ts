@@ -6,8 +6,11 @@ export interface ArtifactLink {
   url: string
 }
 
+/** Valid plan-step risks, exported as the single source of truth for the union. */
+export const TOOL_RISKS = ["safe", "moderate", "dangerous"] as const
+
 /** Risk class assigned to a plan step by the backend. */
-export type ToolRisk = "safe" | "moderate" | "dangerous"
+export type ToolRisk = (typeof TOOL_RISKS)[number]
 
 /** Lifecycle of a single plan step. */
 export type PlanStepStatus = "pending" | "running" | "done" | "failed" | "blocked"

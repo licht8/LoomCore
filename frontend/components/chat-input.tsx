@@ -13,10 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { PlanRequest, PlanStep, ToolRisk } from "@/lib/chat-types"
-
-/** Valid plan-step risks, kept in sync with the `ToolRisk` union. */
-const TOOL_RISKS: readonly ToolRisk[] = ["safe", "moderate", "dangerous"]
+import { TOOL_RISKS, type PlanRequest, type PlanStep } from "@/lib/chat-types"
 
 interface ChatInputProps {
   onSend: (text: string) => void
@@ -96,6 +93,10 @@ export function ChatInput({
         return
       }
       const steps = parsed as PlanStep[]
+      if (steps.length === 0) {
+        setEditError("The plan needs at least one step.")
+        return
+      }
       const seen = new Set<string>()
       for (const s of steps) {
         if (
@@ -104,7 +105,9 @@ export function ChatInput({
           typeof s.tool !== "string" ||
           !TOOL_RISKS.includes(s.risk)
         ) {
-          setEditError("Each step needs a string id, a tool, and a risk of safe/moderate/dangerous.")
+          setEditError(
+            `Each step needs a string id, a tool, and a risk of ${TOOL_RISKS.join("/")}.`,
+          )
           return
         }
         s.id = s.id.trim()
