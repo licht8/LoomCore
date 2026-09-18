@@ -33,9 +33,11 @@ env_value() {
       if [[ -z "${after//[[:space:]]/}" || "$after_l" == \#* ]]; then
         line="$content"                           # unquote a matching "..." / '...' pair
       else
+        echo "WARN: malformed quoted value for $1 in .env; using it verbatim" >&2
         line="${trimmed%"${trimmed##*[![:space:]]}"}"   # malformed: keep verbatim
       fi
     else
+      echo "WARN: malformed quoted value for $1 in .env; using it verbatim" >&2
       line="${trimmed%"${trimmed##*[![:space:]]}"}"     # unbalanced: keep verbatim
     fi
   else
@@ -47,7 +49,7 @@ env_value() {
 }
 
 TOKEN="$(env_value ADMIN_TOKEN)"
-if [[ "$TOKEN" == *\"* || "$TOKEN" == *\\* ]]; then
+if [[ "$TOKEN" == *\"* || "$TOKEN" == *\\* || "$TOKEN" == *$'\n'* ]]; then
   echo "ERROR: ADMIN_TOKEN contains an unsafe character (double quote or backslash)" >&2
   exit 1
 fi
