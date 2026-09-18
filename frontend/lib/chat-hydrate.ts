@@ -1,7 +1,10 @@
 import type { ChatMessage, Plan, PlanStatus, PlanStep, SessionMessage } from "@/lib/chat-types"
 
-/** Format the current timestamp as a local HH:MM label. */
+/** Planner tool names that, leaked as text, must never render as a reply. */
 const PLANNER_TOOL_NAMES = new Set(["reply", "agent_plan"])
+
+/** A planner tool call written as text: `<tool> { ...json... }`. */
+const PREFIXED_TOOL_CALL = /^(?:reply|agent_plan|core_[a-z_]+)\s*(\{[\s\S]*\})$/
 
 /** True when a stored assistant message is just a leaked planner tool name. */
 function isBareToolName(content: string): boolean {
@@ -13,16 +16,49 @@ function isBareToolName(content: string): boolean {
   return PLANNER_TOOL_NAMES.has(cleaned)
 }
 
+/** Parse `value` as a single JSON object, rejecting arrays and primitives. */
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // Not JSON — treat it as prose.
+  }
+  return null
+}
+
+/** True when an object has the minimum keys of a planner call. */
+function isPlannerCallShape(obj: Record<string, unknown>): boolean {
+  return Array.isArray(obj.steps) || typeof obj.goal === "string"
+}
+
 /**
  * True when a stored assistant message is a leaked planner tool call written as
  * text instead of being executed, e.g. `agent_plan { "steps": [...] }`. Such rows
- * must never render as an assistant bubble.
+ * must never render as an assistant bubble. Detection is deliberately strict:
+ * the whole message must parse as one JSON object (optionally after a tool-name
+ * prefix) so prose that merely quotes a plan still renders.
  */
 function isLeakedToolCall(content: string): boolean {
   if (isBareToolName(content)) return true
-  const match = content.match(/^\s*(?:reply|agent_plan|core_[a-z_]+)\s*\{/)
-  if (match && /[{}]/.test(content)) return true
-  return /"steps"\s*:\s*\[/.test(content)
+  const trimmed = content.trim()
+  const prefixed = trimmed.match(PREFIXED_TOOL_CALL)
+  if (prefixed) return parseJsonObject(prefixed[1]) !== null
+  const parsed = parseJsonObject(trimmed)
+  return parsed !== null && isPlannerCallShape(parsed)
+}
+
+/** Runtime guard for a persisted plan row (`tool_calls` JSONB is untyped). */
+function isPlan(value: unknown): value is Plan {
+  if (!value || typeof value !== "object") return false
+  const plan = value as Record<string, unknown>
+  return (
+    typeof plan.plan_id === "string" &&
+    typeof plan.goal === "string" &&
+    Array.isArray(plan.steps)
+  )
 }
 
 export function formatTimestamp(): string {
@@ -89,9 +125,13 @@ export function applyPlanStep(
   return messages.map((message) => {
     if (message.role !== "plan" || message.plan?.plan_id !== planId) return message
     const plan = message.plan
+    const known = plan.steps.some((existing) => existing.id === step.id)
     const steps = plan.steps.map((existing) =>
       existing.id === step.id ? { ...existing, ...step } : existing,
     )
+    // Unknown ids (e.g. a revised plan whose steps were renumbered) are appended
+    // rather than silently dropped, so progress is never lost.
+    if (!known) steps.push(step)
     return { ...message, plan: { ...plan, steps, ...(status ? { status } : {}) } }
   })
 }
@@ -146,8 +186,8 @@ export function hydrateMessages(rows: SessionMessage[]): ChatMessage[] {
     if (row.role === "plan") {
       flushDecision()
       const stored = Array.isArray(row.tool_calls) ? row.tool_calls[0] : null
-      const plan = stored as unknown as Plan | null
-      if (plan && plan.plan_id) {
+      const plan = stored as unknown
+      if (isPlan(plan)) {
         const message: ChatMessage = {
           id: row.id,
           role: "plan",
