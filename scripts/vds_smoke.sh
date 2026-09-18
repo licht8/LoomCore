@@ -50,7 +50,7 @@ env_value() {
 
 TOKEN="$(env_value ADMIN_TOKEN)"
 if [[ "$TOKEN" == *\"* || "$TOKEN" == *\\* || "$TOKEN" == *$'\n'* ]]; then
-  echo "ERROR: ADMIN_TOKEN contains an unsafe character (double quote or backslash)" >&2
+  echo "ERROR: ADMIN_TOKEN contains an unsafe character (double quote, backslash, or newline)" >&2
   exit 1
 fi
 PG_USER="$(env_value POSTGRES_USER)"; PG_USER="${PG_USER:-loomuser}"
