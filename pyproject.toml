@@ -31,6 +31,13 @@ dev = [
     "ruff",
 ]
 
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+"src.core" = ["*.json"]
+"src.llm" = ["*.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Ensure the repo root is importable when pytest runs as a console script
