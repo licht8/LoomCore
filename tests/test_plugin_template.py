@@ -306,6 +306,21 @@ def test_id_less_request_error_uses_null_id(template_main, monkeypatch):
     assert responses[0]["error"]["code"] == -32603
 
 
+def test_unusable_manifest_does_not_block_startup(template_main, monkeypatch):
+    def boom(*args, **kwargs):
+        raise template_main.ManifestError("missing manifest")
+
+    monkeypatch.setattr(template_main, "load_manifest", boom)
+    responses = _drive(
+        template_main,
+        monkeypatch,
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+    )
+
+    assert responses[0]["id"] == 1
+    assert responses[0]["result"]["tools"][0]["name"] == "example_echo"
+
+
 def test_template_manifest_flags_malformed_entries():
     module = _load_template_manifest()
     issues = module.validate_manifest(

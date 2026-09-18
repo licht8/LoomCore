@@ -18,6 +18,7 @@ from typing import Any
 
 from manifest import (
     PLUGIN_ID,
+    ManifestError,
     check_optional_permissions,
     check_permissions,
     load_manifest,
@@ -136,7 +137,11 @@ def _handle_line(line: str) -> dict[str, Any]:
 
 
 def _self_check() -> None:
-    manifest = load_manifest()
+    try:
+        manifest = load_manifest()
+    except ManifestError as exc:
+        logger.error("manifest unusable: %s", exc)
+        return
     for issue in validate_manifest(manifest):
         logger.warning("manifest issue: %s", issue)
     for warning in check_permissions(manifest):
