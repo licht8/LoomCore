@@ -549,7 +549,10 @@ class AIRouter:
         llm_response: dict,
     ) -> tuple[str, str | None, dict | None, list | None]:
         """Extract (content, tool_name, tool_args, raw_tool_calls) from a response."""
-        message = llm_response.get("choices", [{}])[0].get("message", {})
+        choices = llm_response.get("choices") or []
+        if not choices:
+            return "", None, None, None
+        message = choices[0].get("message", {})
         content = message.get("content") or ""
         raw_tool_calls = message.get("tool_calls")
 

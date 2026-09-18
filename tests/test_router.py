@@ -386,6 +386,20 @@ async def test_summarize_plan_uses_soul(patched_router):
     assert state["tools"] is None
 
 
+@pytest.mark.asyncio
+async def test_summarize_plan_handles_empty_choices(patched_router):
+    router, state = patched_router
+    state["queue"] = [{"choices": []}]
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert summary == ""
+
+
 class _HistoryMessage:
     """Stub ORM message with the attributes the router reads."""
 
