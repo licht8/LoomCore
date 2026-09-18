@@ -20,13 +20,14 @@ def audit_log_path() -> Path:
 
 def audit_event(event: str, **fields: Any) -> str | None:
     """Append one JSON line to the audit log; return an error string on failure."""
-    record = {"timestamp": datetime.now(tz=UTC).isoformat(), "event": event, **fields}
+    # Caller fields go first so the canonical identity fields always win.
+    record = {**fields, "timestamp": datetime.now(tz=UTC).isoformat(), "event": event}
     path = audit_log_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         return str(exc)
     return None
 
@@ -37,6 +38,6 @@ def bounded_int(value: Any, default: int, maximum: int, minimum: int = 1) -> int
         return default
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return max(minimum, min(number, maximum))
