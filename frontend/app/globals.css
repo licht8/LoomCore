@@ -5,7 +5,7 @@
 /* Dark mode follows the OS preference; put `.light` on <html> to opt out. */
 @custom-variant dark {
   @media (prefers-color-scheme: dark) {
-    &:where(:not(.light *)) {
+    &:where(:not(.light, .light *)) {
       @slot;
     }
   }
@@ -169,6 +169,7 @@
   body {
     @apply bg-background text-foreground;
     background-image: var(--bg-glow);
+    background-attachment: fixed;
   }
 }
 
