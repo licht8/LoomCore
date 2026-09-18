@@ -72,7 +72,7 @@ export type WsMessage =
       type: "tool_response"
       // In-flight tool responses may carry "running"; chat-ws coerces it to
       // "success" when building the tool card.
-      status?: ToolStatus | "running"
+      status?: Exclude<ToolStatus, "pending"> | "running"
       content?: string
       text?: string
       error?: string
