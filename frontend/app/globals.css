@@ -2,7 +2,14 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
-@custom-variant dark (&:is(.dark *));
+/* Dark mode follows the OS preference; put `.light` on <html> to opt out. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:not(.light *)) {
+      @slot;
+    }
+  }
+}
 
 @theme inline {
   --font-sans: var(--font-jakarta);
@@ -75,7 +82,7 @@
   /* Liquid glass surface (popover only) */
   --glass-edge: oklch(0 0 0 / 8%);
   --glass-ring: oklch(1 0 0 / 60%);
-  --sidebar-surface: oklch(from var(--card) calc(l * 0.97) c h);
+  --sidebar-surface: var(--card);
   --chart-1: oklch(0.5 0.24 305);
   --chart-2: oklch(0.72 0.13 305);
   --chart-3: oklch(0.62 0.18 300);
@@ -92,47 +99,11 @@
   --sidebar-accent-foreground: oklch(0.35 0.16 295);
   --sidebar-border: oklch(0.42 0.14 293);
   --sidebar-ring: oklch(0.72 0.13 305);
-}
-
-.dark {
-  color-scheme: dark;
-  /* Deep indigo-lavender base */
-  --background: oklch(0.13 0.016 295);
-  --foreground: oklch(0.96 0.01 315);
-  /* Translucent frosted card */
-  --card: oklch(0.2 0.022 295 / 62%);
-  --card-foreground: oklch(0.96 0.01 315);
-  --popover: oklch(0.24 0.025 295);
-  --popover-foreground: oklch(0.96 0.01 315);
-  --primary: oklch(0.72 0.045 305);
-  --primary-foreground: oklch(0.16 0.02 295);
-  --secondary: oklch(0.34 0.02 300 / 60%);
-  --secondary-foreground: oklch(0.92 0.02 315);
-  --muted: oklch(0.32 0.015 298 / 50%);
-  --muted-foreground: oklch(0.74 0.018 305);
-  --accent: oklch(0.4 0.028 302 / 60%);
-  --accent-foreground: oklch(0.95 0.015 315);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.85 0.04 310 / 18%);
-  --input: oklch(0.85 0.04 310 / 20%);
-  --ring: oklch(0.72 0.04 305);
-  --glass-edge: oklch(1 0 0 / 15%);
-  --glass-ring: oklch(1 0 0 / 8%);
-  --sidebar-surface: oklch(from var(--card) calc(l * 0.9) c h);
-  --chart-1: oklch(0.72 0.045 305);
-  --chart-2: oklch(0.62 0.04 300);
-  --chart-3: oklch(0.55 0.045 298);
-  --chart-4: oklch(0.82 0.045 315);
-  --chart-5: oklch(0.45 0.045 295);
-  /* Frosted translucent sidebar */
-  --sidebar: oklch(0.16 0.022 293 / 72%);
-  --sidebar-foreground: oklch(0.94 0.015 315);
-  --sidebar-primary: oklch(0.72 0.045 305);
-  --sidebar-primary-foreground: oklch(0.16 0.02 295);
-  --sidebar-accent: oklch(0.72 0.08 305);
-  --sidebar-accent-foreground: oklch(0.18 0.02 295);
-  --sidebar-border: oklch(0.85 0.04 310 / 16%);
-  --sidebar-ring: oklch(0.72 0.04 305);
+  /* Ambient page glow, layered over --background */
+  --bg-glow:
+    radial-gradient(60% 55% at 12% 8%, oklch(0.75 0.04 305 / 32%) 0%, transparent 60%),
+    radial-gradient(55% 55% at 92% 18%, oklch(0.7 0.038 285 / 28%) 0%, transparent 60%),
+    radial-gradient(70% 65% at 78% 100%, oklch(0.78 0.032 320 / 26%) 0%, transparent 62%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -158,7 +129,7 @@
     --ring: oklch(0.72 0.04 305);
     --glass-edge: oklch(1 0 0 / 15%);
     --glass-ring: oklch(1 0 0 / 8%);
-    --sidebar-surface: oklch(from var(--card) calc(l * 0.9) c h);
+    --sidebar-surface: var(--card);
     --chart-1: oklch(0.72 0.045 305);
     --chart-2: oklch(0.62 0.04 300);
     --chart-3: oklch(0.55 0.045 298);
@@ -172,6 +143,22 @@
     --sidebar-accent-foreground: oklch(0.18 0.02 295);
     --sidebar-border: oklch(0.85 0.04 310 / 16%);
     --sidebar-ring: oklch(0.72 0.04 305);
+    /* Dimmer glow so dark surfaces aren't washed out */
+    --bg-glow:
+      radial-gradient(60% 55% at 12% 8%, oklch(0.45 0.08 305 / 14%) 0%, transparent 60%),
+      radial-gradient(55% 55% at 92% 18%, oklch(0.4 0.07 285 / 12%) 0%, transparent 60%),
+      radial-gradient(70% 65% at 78% 100%, oklch(0.5 0.06 320 / 12%) 0%, transparent 62%);
+  }
+}
+
+@supports (color: oklch(from red l c h)) {
+  :root {
+    --sidebar-surface: oklch(from var(--card) calc(l * 0.97) c h);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not(.light) {
+      --sidebar-surface: oklch(from var(--card) calc(l * 0.9) c h);
+    }
   }
 }
 
@@ -181,35 +168,34 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-image:
-      radial-gradient(60% 55% at 12% 8%, oklch(0.75 0.04 305 / 32%) 0%, transparent 60%),
-      radial-gradient(55% 55% at 92% 18%, oklch(0.7 0.038 285 / 28%) 0%, transparent 60%),
-      radial-gradient(70% 65% at 78% 100%, oklch(0.78 0.032 320 / 26%) 0%, transparent 62%);
-    background-attachment: fixed;
+    background-image: var(--bg-glow);
   }
 }
 
 @utility glass {
-  background-color: color-mix(in oklab, var(--card) 100%, transparent);
+  background-color: color-mix(in oklab, var(--card) 80%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   backdrop-filter: blur(20px) saturate(1.4);
-  border: 1px solid oklch(1 0 0 / 12%);
+  border: 1px solid var(--glass-edge);
   box-shadow:
-    inset 0 1px 0 0 oklch(1 0 0 / 14%),
+    inset 0 1px 0 0 var(--glass-ring),
     0 12px 40px -12px oklch(0.2 0.06 295 / 45%);
 }
 
 @utility glass-sidebar {
   background-color: var(--sidebar-surface);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   backdrop-filter: blur(20px) saturate(1.4);
-  border: 1px solid oklch(1 0 0 / 12%);
+  border: 1px solid var(--glass-edge);
   box-shadow:
-    inset 0 1px 0 0 oklch(1 0 0 / 14%),
+    inset 0 1px 0 0 var(--glass-ring),
     0 12px 40px -12px oklch(0.2 0.06 295 / 45%);
 }
 
 @utility liquid-glass {
   position: relative;
   background-color: color-mix(in oklab, var(--popover) 70%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid var(--glass-edge);
   box-shadow:
