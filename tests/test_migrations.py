@@ -63,8 +63,10 @@ class _FakeResult:
 class _FakeBind:
     def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self._rows = rows
+        self.statements: list[str] = []
 
     def execute(self, statement: Any) -> _FakeResult:
+        self.statements.append(str(statement))
         return _FakeResult(self._rows)
 
 
@@ -101,6 +103,10 @@ def test_audit_prev_hash_migration_creates_the_named_constraint():
     assert recorder.constraints == [
         ("uq_audit_log_prev_hash", "audit_log", ["prev_hash"])
     ]
+    statements = recorder.get_bind().statements
+    assert len(statements) == 2
+    assert "pg_advisory_xact_lock" in statements[0]
+    assert "GROUP BY prev_hash" in statements[1]
 
 
 def test_audit_prev_hash_migration_refuses_a_forked_chain():

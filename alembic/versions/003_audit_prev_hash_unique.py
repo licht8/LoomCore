@@ -7,11 +7,13 @@ Create Date: 2026-09-18
 A predecessor must have at most one successor. A forked chain (two rows
 sharing a prev_hash) is the very state this constraint forbids and could
 exist in data written before the append lock (pg_advisory_xact_lock) landed,
-so upgrade() checks for duplicates first and aborts with an actionable
-message instead of an opaque unique violation. Building the constraint takes
-an ACCESS EXCLUSIVE lock, so audit writes are blocked for its duration;
-resolve any reported fork offline (keeping the append-only history intact)
-before re-running.
+so upgrade() takes that same lock, checks for duplicates and aborts with an
+actionable message instead of an opaque unique violation. Holding the append
+lock makes the check and the DDL atomic with respect to the append path, so a
+fork cannot commit in between; the lock is released when the migration
+transaction ends. Building the constraint takes an ACCESS EXCLUSIVE lock, so
+audit writes are blocked for its duration; resolve any reported fork offline
+(keeping the append-only history intact) before re-running.
 """
 
 import sqlalchemy as sa
@@ -27,6 +29,10 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # Serialize against the append path (src/core/audit.py): the lock is held
+    # until this transaction commits, so no appender can commit a fork between
+    # the check below and the constraint being built.
+    bind.execute(sa.text("SELECT pg_advisory_xact_lock(hashtext('loomcore.audit'))"))
     duplicates = bind.execute(
         sa.text(
             "SELECT prev_hash FROM audit_log "
