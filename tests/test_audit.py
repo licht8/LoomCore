@@ -87,8 +87,10 @@ class _FakeSession:
         self.added = []
         self.committed = False
         self.rolled_back = False
+        self.statements = []
 
     async def execute(self, statement):
+        self.statements.append(statement)
         return _FakeResult(self._last)
 
     def add(self, entry):
@@ -146,6 +148,18 @@ async def test_record_mutation_uses_genesis_as_first_entry():
 
     assert entry is not None
     assert entry.prev_hash == GENESIS_HASH
+
+
+@pytest.mark.asyncio
+async def test_record_mutation_serializes_appends_with_a_chain_lock():
+    session = _FakeSession(last=None)
+
+    entry = await record_mutation(session, tool="ops_write_file", status="success")
+
+    assert entry is not None
+    assert len(session.statements) == 2
+    assert "pg_advisory_xact_lock" in str(session.statements[0])
+    assert "audit_log" in str(session.statements[1])
 
 
 @pytest.mark.asyncio

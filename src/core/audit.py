@@ -17,7 +17,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from src.db.database import async_session_factory
 from src.db.models import AuditEntry
@@ -25,6 +25,10 @@ from src.db.models import AuditEntry
 logger = logging.getLogger("loomcore.audit")
 
 GENESIS_HASH = "0" * 64
+
+# Transaction-scoped advisory lock that serializes appends to the chain (see
+# record_mutation). It is released automatically at commit/rollback.
+_AUDIT_LOCK_STATEMENT = text("SELECT pg_advisory_xact_lock(hashtext('loomcore.audit'))")
 
 
 def _canonical(payload: dict[str, Any]) -> str:
@@ -80,6 +84,13 @@ async def record_mutation(
 ) -> AuditEntry | None:
     """Append one hash-chained audit row. Best-effort: never raises."""
     try:
+        # Serialize the read+insert so two concurrent writers cannot both chain
+        # to the same predecessor and fork the chain. SELECT ... FOR UPDATE is
+        # not enough: a row inserted by a concurrent transaction is invisible to
+        # it, so the second writer would still read the stale predecessor. The
+        # lock is held until this transaction's commit/rollback, so the select
+        # below sees the predecessor committed by a writer that held it before.
+        await session_db.execute(_AUDIT_LOCK_STATEMENT)
         result = await session_db.execute(
             select(AuditEntry)
             .order_by(AuditEntry.created_at.desc(), AuditEntry.id.desc())
