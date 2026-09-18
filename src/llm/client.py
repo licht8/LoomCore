@@ -97,7 +97,10 @@ class HetznerClient:
                         f"✅ LLM response: status={response.status_code}, "
                         f"size={len(response.content)}, elapsed={elapsed:.1f}s"
                     )
-                    data = response.json()
+                    try:
+                        data = response.json()
+                    except ValueError as exc:
+                        raise LlmError(f"LLM returned invalid JSON: {exc}") from exc
                     usage = data.get("usage") or {}
                     completion_tokens = usage.get("completion_tokens")
                     log_stage(

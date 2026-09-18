@@ -1,5 +1,7 @@
 """Unit tests for the LLM client retry/timeout behavior."""
 
+import json
+
 import httpx
 import pytest
 
@@ -36,6 +38,18 @@ class _ErrorResponse:
 
     def json(self):
         return {}
+
+
+class _BadJsonResponse:
+    status_code = 200
+    content = b"<html>not json</html>"
+    text = "<html>not json</html>"
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        raise json.JSONDecodeError("Expecting value", "<html>", 0)
 
 
 class _FakeClient:
@@ -98,6 +112,19 @@ async def test_http_status_error_is_not_retried(monkeypatch):
     fake = _install(monkeypatch, [_ErrorResponse()])
 
     with pytest.raises(LlmError):
+        await HetznerClient(api_key="k").chat_completion(
+            [{"role": "user", "content": "hi"}]
+        )
+
+    assert fake.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_body_raises_llm_error(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 3)
+    fake = _install(monkeypatch, [_BadJsonResponse()])
+
+    with pytest.raises(LlmError, match="invalid JSON"):
         await HetznerClient(api_key="k").chat_completion(
             [{"role": "user", "content": "hi"}]
         )
