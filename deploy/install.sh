@@ -37,7 +37,7 @@ fi
 # === Build and start containers ===
 
 echo "=== Building and starting LoomCore ==="
-docker compose up -d --build
+docker compose up -d --build --wait
 docker compose ps
 
 echo "=== Applying database migrations ==="
