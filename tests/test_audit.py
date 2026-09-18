@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import UniqueConstraint
 
 from src.core.audit import (
     GENESIS_HASH,
@@ -75,7 +76,16 @@ def test_verify_chain_detects_broken_link():
 
 
 def test_audit_log_prev_hash_is_unique():
-    assert AuditEntry.__table__.c.prev_hash.unique is True
+    unique = [
+        constraint
+        for constraint in AuditEntry.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+
+    assert [
+        (constraint.name, [column.name for column in constraint.columns])
+        for constraint in unique
+    ] == [("uq_audit_log_prev_hash", ["prev_hash"])]
 
 
 class _FakeResult:

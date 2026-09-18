@@ -5,6 +5,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -89,5 +90,8 @@ class AuditEntry(Base):
     # Unique so a predecessor has at most one successor: even if the
     # application-level append lock were bypassed, a second writer cannot
     # silently fork the chain (it fails instead and the append is dropped).
-    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Named to match migration 003 so autogenerate does not see drift.
+    __table_args__ = (UniqueConstraint("prev_hash", name="uq_audit_log_prev_hash"),)
