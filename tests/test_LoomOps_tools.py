@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -426,6 +427,20 @@ def test_write_then_read_roundtrip(load_loomops, monkeypatch, tmp_path):
     assert read["size"] == 5
     assert read["truncated"] is False
     assert "ops_write_file" in (tmp_path / "audit.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
+def test_write_file_preserves_existing_mode(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("files")["files"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    target = tmp_path / "a.txt"
+    target.write_text("old", encoding="utf-8")
+    os.chmod(target, 0o640)
+
+    files.write_file({"path": str(target), "content": "new"})
+
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o640
 
 
 def test_read_file_truncates_large_files(load_loomops, monkeypatch, tmp_path):

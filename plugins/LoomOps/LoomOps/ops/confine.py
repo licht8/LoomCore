@@ -169,6 +169,28 @@ def _reject_symlinked_leaf(parent_fd: int, target: Path) -> None:
         raise _forbid_symlink(target)
 
 
+def _existing_mode(parent_fd: int, target: Path) -> int | None:
+    """The current mode of an existing regular ``target``, if any."""
+    try:
+        info = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        return None
+    if stat.S_ISREG(info.st_mode):
+        return stat.S_IMODE(info.st_mode)
+    return None
+
+
+def _copy_mode(fd: int, mode: int) -> None:
+    """Apply ``mode`` to an open temp fd, where the platform supports it.
+
+    ``os.replace`` keeps the temp inode, so without this an existing file's
+    mode (e.g. 0644) would silently drop to the temp file's 0600.
+    """
+    fchmod = getattr(os, "fchmod", None)
+    if fchmod is not None:
+        fchmod(fd, mode)
+
+
 def open_read(root: Path, target: Path) -> tuple[int, os.stat_result]:
     """Open ``target`` for reading, never following a symlink.
 
@@ -241,9 +263,12 @@ def _write_atomic_dir_fd(root: Path, target: Path, data: bytes) -> None:
     parent_fd = _open_dir_chain(root, target.parent, create=True)
     try:
         _reject_symlinked_leaf(parent_fd, target)
+        existing_mode = _existing_mode(parent_fd, target)
         tmp_name = f".{target.name}.{os.urandom(8).hex()}"
         fd = os.open(tmp_name, _CREATE_FLAGS, 0o600, dir_fd=parent_fd)
         try:
+            if existing_mode is not None:
+                _copy_mode(fd, existing_mode)
             with open_fd(fd, "wb") as handle:
                 handle.write(data)
             os.rename(
@@ -269,6 +294,8 @@ def _write_atomic_fallback(root: Path, target: Path, data: bytes) -> None:
     _verify_parent(root, target)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
+        if info is not None and stat.S_ISREG(info.st_mode):
+            _copy_mode(fd, stat.S_IMODE(info.st_mode))
         with open_fd(fd, "wb") as handle:
             handle.write(data)
         _verify_parent(root, target)
