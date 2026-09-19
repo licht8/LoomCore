@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..results import text_result
-from .config_parser import entries_map, parse_sections
+from .config_parser import Section, entries_values, parse_sections
 from .device import CommandError, config_directory, run_command, validate_interface
 from .keys import validate_public_key
 
@@ -102,6 +102,15 @@ def _check_key(value: str, label: str, errors: list[str]) -> None:
         validate_public_key(value)
     except ValueError:
         errors.append(f"{label}: invalid WireGuard key")
+
+
+def _present_values(section: Section, key: str) -> list[str]:
+    """Return the non-blank values recorded for ``key``, in order.
+
+    A key present with a blank value (``Key =``) counts as absent, so repeated
+    and single-valued keys share the same presence semantics.
+    """
+    return [value for value in entries_values(section, key) if value.strip()]
 
 
 def _check_cidrs(values: list[str], label: str, errors: list[str]) -> list:
@@ -190,61 +199,70 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
         warnings.append("[Interface] is not the first section")
 
     for section in interface_sections:
-        keys = entries_map(section)
-        if "privatekey" not in keys:
+        private_keys = _present_values(section, "privatekey")
+        if not private_keys:
             errors.append("[Interface] PrivateKey missing")
         else:
-            _check_key(keys["privatekey"], "[Interface] PrivateKey", errors)
-        if "address" not in keys:
+            for private_key in private_keys:
+                _check_key(private_key, "[Interface] PrivateKey", errors)
+        addresses = _present_values(section, "address")
+        if not addresses:
             errors.append("[Interface] Address missing")
         else:
-            _check_cidrs([a.strip() for a in keys["address"].split(",")], "[Interface] Address", errors)
-        if "listenport" in keys:
+            _check_cidrs(
+                [a.strip() for value in addresses for a in value.split(",")],
+                "[Interface] Address",
+                errors,
+            )
+        for listen_port in _present_values(section, "listenport"):
             try:
-                if not 1 <= int(keys["listenport"]) <= 65535:
+                if not 1 <= int(listen_port) <= 65535:
                     errors.append("[Interface] ListenPort out of range")
             except ValueError:
                 errors.append("[Interface] ListenPort is not an integer")
-        if "dns" in keys:
-            for dns in keys["dns"].split(","):
+        for dns_value in _present_values(section, "dns"):
+            for dns in dns_value.split(","):
                 try:
                     ip_address(dns.strip())
                 except ValueError:
                     warnings.append(f"[Interface] DNS '{dns.strip()}' is not an IP address")
-        if "postup" not in keys and "postdown" not in keys:
+        if not _present_values(section, "postup") and not _present_values(section, "postdown"):
             warnings.append("no PostUp/PostDown (NAT/forwarding may be missing)")
 
     seen_peers: set[str] = set()
     peer_allowed: list[tuple[str, Any]] = []
     for index, section in enumerate(peer_sections, start=1):
-        keys = entries_map(section)
-        public = keys.get("publickey")
-        if not public:
+        public_keys = _present_values(section, "publickey")
+        public = public_keys[-1] if public_keys else None
+        if not public_keys:
             errors.append(f"[Peer #{index}] PublicKey missing")
         else:
-            _check_key(public, f"[Peer #{index}] PublicKey", errors)
-            if public in seen_peers:
-                errors.append(f"[Peer #{index}] duplicate PublicKey")
-            seen_peers.add(public)
-        if "presharedkey" in keys:
-            _check_key(keys["presharedkey"], f"[Peer #{index}] PresharedKey", errors)
-        allowed = keys.get("allowedips")
-        if not allowed:
+            for candidate in public_keys:
+                _check_key(candidate, f"[Peer #{index}] PublicKey", errors)
+                if candidate in seen_peers:
+                    errors.append(f"[Peer #{index}] duplicate PublicKey")
+            seen_peers.update(public_keys)
+        for preshared_key in _present_values(section, "presharedkey"):
+            _check_key(preshared_key, f"[Peer #{index}] PresharedKey", errors)
+        allowed_values = _present_values(section, "allowedips")
+        if not allowed_values:
             errors.append(f"[Peer #{index}] AllowedIPs missing")
         else:
             for network in _check_cidrs(
-                [a.strip() for a in allowed.split(",")], f"[Peer #{index}] AllowedIPs", errors
+                [a.strip() for value in allowed_values for a in value.split(",")],
+                f"[Peer #{index}] AllowedIPs",
+                errors,
             ):
                 peer_allowed.append((public or f"#{index}", network))
-        endpoint = keys.get("endpoint")
-        if endpoint and not _ENDPOINT_RE.match(endpoint):
-            errors.append(f"[Peer #{index}] invalid Endpoint '{endpoint}'")
-        keepalive = keys.get("persistentkeepalive")
-        if keepalive and keepalive.lower() != "off":
-            try:
-                int(keepalive)
-            except ValueError:
-                errors.append(f"[Peer #{index}] invalid PersistentKeepalive")
+        for endpoint in _present_values(section, "endpoint"):
+            if not _ENDPOINT_RE.match(endpoint):
+                errors.append(f"[Peer #{index}] invalid Endpoint '{endpoint}'")
+        for keepalive in _present_values(section, "persistentkeepalive"):
+            if keepalive.lower() != "off":
+                try:
+                    int(keepalive)
+                except ValueError:
+                    errors.append(f"[Peer #{index}] invalid PersistentKeepalive")
 
     for i in range(len(peer_allowed)):
         for j in range(i + 1, len(peer_allowed)):

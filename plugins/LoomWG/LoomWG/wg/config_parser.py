@@ -55,10 +55,11 @@ def sections_named(text: str, name: str) -> list[Section]:
     return [section for section in parse_sections(text) if section.name.lower() == wanted]
 
 
-def entries_map(section: Section) -> dict[str, str]:
-    """Map lower-cased keys to values (last value wins, valueless keys dropped)."""
-    return {
-        key.lower(): value
-        for key, value in section.entries
-        if value is not None
-    }
+def entries_values(section: Section, key: str) -> list[str]:
+    """Return every value recorded for ``key`` (case-insensitive), in order."""
+    wanted = key.lower()
+    return [
+        value
+        for entry_key, value in section.entries
+        if value is not None and entry_key.lower() == wanted
+    ]

@@ -280,6 +280,98 @@ def test_check_config_flags_unknown_section(load_loomwg):
     assert any("[end]" in error for error in result["data"]["errors"])
 
 
+def test_check_config_validates_every_repeated_address(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            f"PrivateKey = {_key(1)}",
+            "Address = not-a-cidr",
+            "Address = 10.66.66.1/24",
+        ]
+    )
+    result = check.check_config({"content": text})
+    assert result["data"]["valid"] is False
+    assert any("not-a-cidr" in error for error in result["data"]["errors"])
+
+
+def test_check_config_validates_every_repeated_allowed_ips(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            f"PrivateKey = {_key(1)}",
+            "Address = 10.66.66.1/24",
+            "",
+            "[Peer]",
+            f"PublicKey = {_key(2)}",
+            "AllowedIPs = bogus",
+            "AllowedIPs = 10.66.66.2/32",
+        ]
+    )
+    result = check.check_config({"content": text})
+    assert result["data"]["valid"] is False
+    assert any("bogus" in error for error in result["data"]["errors"])
+
+
+def test_check_config_does_not_flag_self_duplicate_public_key(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            f"PrivateKey = {_key(1)}",
+            "Address = 10.66.66.1/24",
+            "",
+            "[Peer]",
+            f"PublicKey = {_key(2)}",
+            f"PublicKey = {_key(2)}",
+            "AllowedIPs = 10.66.66.2/32",
+        ]
+    )
+    result = check.check_config({"content": text})
+    assert not any("duplicate PublicKey" in error for error in result["data"]["errors"])
+
+
+def test_check_config_reports_blank_public_key_as_missing(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            f"PrivateKey = {_key(1)}",
+            "Address = 10.66.66.1/24",
+            "",
+            "[Peer]",
+            "PublicKey =",
+            "AllowedIPs = 10.66.66.2/32",
+        ]
+    )
+    result = check.check_config({"content": text})
+    assert any("PublicKey missing" in error for error in result["data"]["errors"])
+    assert not any("invalid WireGuard key" in error for error in result["data"]["errors"])
+
+
+def test_check_config_reports_blank_private_key_as_missing(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            "PrivateKey =",
+            "Address = 10.66.66.1/24",
+        ]
+    )
+    result = check.check_config({"content": text})
+    assert any("PrivateKey missing" in error for error in result["data"]["errors"])
+    assert not any("invalid WireGuard key" in error for error in result["data"]["errors"])
+
+
+def test_entries_values_preserves_every_occurrence(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    section = check.parse_sections("[Interface]\nAddress = a\nAddress = b\n")[0]
+    assert check.entries_values(section, "Address") == ["a", "b"]
+    assert check.entries_values(section, "address") == ["a", "b"]
+    assert check.entries_values(section, "missing") == []
+
+
 def test_check_config_rejects_path_outside_config_dir(load_loomwg, monkeypatch, tmp_path):
     config_dir = tmp_path / "wireguard"
     config_dir.mkdir()
