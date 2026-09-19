@@ -971,6 +971,22 @@ def test_generate_keypair_empty_raises(load_loomwg, monkeypatch):
         keys.generate_keypair()
 
 
+def test_generate_keypair_validates_private_key_before_pubkey(load_loomwg, monkeypatch):
+    keys = load_loomwg("keys")["keys"]
+    calls: list[list[str]] = []
+
+    def fake_run(command, *args, **kwargs):
+        calls.append(command)
+        return "" if command[1] == "genkey" else "PUB"
+
+    monkeypatch.setattr(keys, "run_command", fake_run)
+
+    with pytest.raises(keys.CommandError, match="private key"):
+        keys.generate_keypair()
+
+    assert calls == [["wg", "genkey"]]
+
+
 def test_generate_keypair_redacts_private_key_from_logs(load_loomwg, monkeypatch, caplog):
     modules = load_loomwg("keys", "wireguard")
     keys, device = modules["keys"], modules["wireguard"]
