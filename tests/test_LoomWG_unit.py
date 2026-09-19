@@ -1351,7 +1351,8 @@ def test_check_config_reports_unreadable_interface_file(load_loomwg, monkeypatch
     assert "INVALID" in result["content"][0]["text"]
 
 
-def test_check_config_reports_unreadable_explicit_path(load_loomwg, tmp_path):
+def test_check_config_reports_unreadable_explicit_path(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     validate = load_loomwg("validate")["validate"]
     target = tmp_path / "broken.conf"
     target.write_bytes(b"\xff\xfe\x00")

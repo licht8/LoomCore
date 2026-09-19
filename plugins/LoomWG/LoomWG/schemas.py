@@ -176,7 +176,11 @@ TOOLS_SCHEMA.extend(
                     "interface": {"type": "string", "default": "wg0"},
                     "path": {
                         "type": "string",
-                        "description": "Optional: validate this config file instead of the interface file",
+                        "description": (
+                            "Optional: validate this config file instead of the "
+                            "interface file. Must resolve inside the WireGuard "
+                            "config directory."
+                        ),
                     },
                     "content": {
                         "type": "string",

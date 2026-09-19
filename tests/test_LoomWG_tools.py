@@ -2,6 +2,7 @@
 
 import base64
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,13 @@ import pytest
 def _key(seed: int) -> str:
     """Valid WireGuard key shape: base64 of 32 bytes."""
     return base64.b64encode(bytes([seed] * 32)).decode()
+
+
+def _symlink_or_skip(target: Path, link: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not permitted on this platform")
 
 
 _VALID_CONFIG = "\n".join(
@@ -270,6 +278,96 @@ def test_check_config_flags_unknown_section(load_loomwg):
     result = check.check_config({"content": text})
     assert result["data"]["valid"] is False
     assert any("[end]" in error for error in result["data"]["errors"])
+
+
+def test_check_config_rejects_path_outside_config_dir(load_loomwg, monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    secret = tmp_path / "secret.conf"
+    secret.write_text("TOP-SECRET-MARKER", encoding="utf-8")
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(config_dir))
+    check = load_loomwg("validate")["validate"]
+
+    with pytest.raises(ValueError, match="config directory"):
+        check.check_config({"path": str(secret)})
+
+
+def test_check_config_rejects_path_traversal(load_loomwg, monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    (tmp_path / "escape.conf").write_text("TOP-SECRET-MARKER", encoding="utf-8")
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(config_dir))
+    check = load_loomwg("validate")["validate"]
+
+    with pytest.raises(ValueError, match="config directory"):
+        check.check_config({"path": "../escape.conf"})
+
+
+def test_check_config_reports_symlink_loop_as_value_error(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    check = load_loomwg("validate")["validate"]
+    _symlink_or_skip(tmp_path / "b.conf", tmp_path / "a.conf")
+    _symlink_or_skip(tmp_path / "a.conf", tmp_path / "b.conf")
+
+    with pytest.raises(ValueError, match="configuration not found"):
+        check.check_config({"path": "a.conf"})
+
+
+def test_check_config_accepts_file_in_config_dir(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "wg0.conf").write_text(_VALID_CONFIG, encoding="utf-8")
+    check = load_loomwg("validate")["validate"]
+
+    by_name = check.check_config({"path": "wg0.conf"})
+    assert by_name["data"]["valid"] is True
+    assert by_name["data"]["source"] == str((tmp_path / "wg0.conf").resolve())
+
+    by_absolute = check.check_config({"path": str(tmp_path / "wg0.conf")})
+    assert by_absolute["data"]["valid"] is True
+
+
+def test_check_config_rejects_symlink_escaping_config_dir(load_loomwg, monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    secret = tmp_path / "secret.conf"
+    secret.write_text("TOP-SECRET-MARKER", encoding="utf-8")
+    _symlink_or_skip(secret, config_dir / "linked.conf")
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(config_dir))
+    check = load_loomwg("validate")["validate"]
+
+    with pytest.raises(ValueError, match="config directory") as info:
+        check.check_config({"path": "linked.conf"})
+
+    assert "TOP-SECRET-MARKER" not in str(info.value)
+
+
+def test_check_config_rejects_symlinked_directory_component(load_loomwg, monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "alice.conf").write_text("TOP-SECRET-MARKER", encoding="utf-8")
+    _symlink_or_skip(outside, config_dir / "clients")
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(config_dir))
+    check = load_loomwg("validate")["validate"]
+
+    with pytest.raises(ValueError, match="config directory") as info:
+        check.check_config({"path": "clients/alice.conf"})
+
+    assert "TOP-SECRET-MARKER" not in str(info.value)
+
+
+def test_check_config_accepts_descendant_in_config_dir(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    clients = tmp_path / "clients"
+    clients.mkdir()
+    (clients / "alice.conf").write_text(_VALID_CONFIG, encoding="utf-8")
+    check = load_loomwg("validate")["validate"]
+
+    result = check.check_config({"path": "clients/alice.conf"})
+
+    assert result["data"]["valid"] is True
+    assert result["data"]["source"] == str((clients / "alice.conf").resolve())
 
 
 # === wg_create_peer ===
