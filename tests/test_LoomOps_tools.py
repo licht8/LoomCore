@@ -1248,6 +1248,156 @@ def test_scan_health_reports_systemd_failure(load_loomops, monkeypatch, tmp_path
     assert "systemd: Cannot list failed units" in result["output"]
 
 
+def test_number_rejects_non_finite_values(load_loomops):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+
+    assert diagnostics._number({"x": float("nan")}, "x", "LOOMOPS_X", 80.0) == 80.0
+    assert diagnostics._number({"x": float("inf")}, "x", "LOOMOPS_X", 80.0) == 80.0
+    assert diagnostics._number({"x": float("-inf")}, "x", "LOOMOPS_X", 80.0) == 80.0
+    assert diagnostics._number({"x": "nope"}, "x", "LOOMOPS_X", 80.0) == 80.0
+    assert diagnostics._number({"x": "75"}, "x", "LOOMOPS_X", 80.0) == 75.0
+
+
+def test_oom_scan_falls_back_to_dmesg_when_journal_has_no_matches(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: True)
+    monkeypatch.setattr(diagnostics.logs, "_run_journal", lambda args: "")
+    monkeypatch.setattr(
+        diagnostics.monitoring,
+        "dmesg",
+        lambda args: {"entries": ["oom-kill: kernel record"]},
+    )
+
+    findings, missing = diagnostics._oom_findings(24)
+
+    assert len(findings) == 1
+    assert findings[0]["evidence"]["source"] == "dmesg"
+    assert missing == []
+
+
+def test_oom_scan_falls_back_to_dmesg_when_journal_unavailable(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: False)
+    monkeypatch.setattr(
+        diagnostics.monitoring,
+        "dmesg",
+        lambda args: {"entries": ["Out of memory: Killed process 123 (python)"]},
+    )
+
+    findings, missing = diagnostics._oom_findings(24)
+
+    assert len(findings) == 1
+    assert findings[0]["evidence"]["source"] == "dmesg"
+
+
+def test_oom_scan_falls_back_to_dmesg_when_journal_errors(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+
+    def boom(args):
+        raise RuntimeError("journalctl failed")
+
+    monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: True)
+    monkeypatch.setattr(diagnostics.logs, "_run_journal", boom)
+    monkeypatch.setattr(
+        diagnostics.monitoring, "dmesg", lambda args: {"entries": ["oom-kill: event"]}
+    )
+
+    findings, missing = diagnostics._oom_findings(24)
+
+    assert len(findings) == 1
+    assert findings[0]["evidence"]["source"] == "dmesg"
+    assert any("OOM scan (journal)" in note for note in missing)
+
+
+class _Usage:
+    def __init__(self, total: int, used: int):
+        self.total = total
+        self.used = used
+
+
+class _Stat:
+    def __init__(self, st_dev: int):
+        self.st_dev = st_dev
+
+
+def test_disk_findings_include_overlay_mounts(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monkeypatch.setattr(diagnostics, "_read_mounts", lambda: [("/", "overlay")])
+    monkeypatch.setattr(diagnostics, "_stat", lambda path: _Stat(1))
+    monkeypatch.setattr(diagnostics.shutil, "disk_usage", lambda path: _Usage(100, 97))
+
+    findings, missing = diagnostics._disk_findings(90.0)
+
+    assert missing == []
+    assert len(findings) == 1
+    assert findings[0]["evidence"]["filesystem"] == "overlay"
+    assert findings[0]["severity"] == "critical"
+
+
+def test_disk_findings_deduplicate_by_device(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monkeypatch.setattr(
+        diagnostics,
+        "_read_mounts",
+        lambda: [
+            ("/", "overlay"),
+            ("/var/lib/docker/overlay2/a/merged", "overlay"),
+            ("/var/lib/docker/overlay2/b/merged", "overlay"),
+        ],
+    )
+    devices = {"/": 1, "/var/lib/docker/overlay2/a/merged": 1, "/var/lib/docker/overlay2/b/merged": 1}
+    monkeypatch.setattr(diagnostics, "_stat", lambda path: _Stat(devices[path]))
+    monkeypatch.setattr(diagnostics.shutil, "disk_usage", lambda path: _Usage(100, 97))
+
+    findings, _missing = diagnostics._disk_findings(90.0)
+
+    assert len(findings) == 1
+
+
+def test_disk_findings_report_unmeasured_mounts(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monkeypatch.setattr(
+        diagnostics,
+        "_read_mounts",
+        lambda: [("/gone", "ext4"), ("/ok", "ext4")],
+    )
+
+    def stat(path):
+        if path == "/gone":
+            raise OSError("not traversable")
+        return _Stat(1)
+
+    monkeypatch.setattr(diagnostics, "_stat", stat)
+    monkeypatch.setattr(diagnostics.shutil, "disk_usage", lambda path: _Usage(100, 10))
+
+    findings, missing = diagnostics._disk_findings(90.0)
+
+    assert findings == []
+    assert missing == ["1 mount(s) could not be measured"]
+
+
+def test_disk_findings_do_not_swallow_a_readable_mount_on_a_failed_device(load_loomops, monkeypatch):
+    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    monkeypatch.setattr(
+        diagnostics,
+        "_read_mounts",
+        lambda: [("/first", "overlay"), ("/second", "overlay")],
+    )
+
+    def stat(path):
+        if path == "/first":
+            raise OSError("not traversable")
+        return _Stat(7)
+
+    monkeypatch.setattr(diagnostics, "_stat", stat)
+    monkeypatch.setattr(diagnostics.shutil, "disk_usage", lambda path: _Usage(100, 97))
+
+    findings, _missing = diagnostics._disk_findings(90.0)
+
+    assert len(findings) == 1
+    assert findings[0]["evidence"]["mount"] == "/second"
+
+
 def test_failed_units_handler(load_loomops, monkeypatch, tmp_path):
     services = load_loomops("services")["services"]
     _patch_systemd(

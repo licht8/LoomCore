@@ -8,6 +8,7 @@ to ``host_access.missing`` instead of producing an empty report.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 from datetime import UTC, datetime
@@ -18,6 +19,9 @@ from . import bounded_int, logs, monitoring
 from .services import failed_units
 
 PROC_MOUNTS = Path("/proc/mounts")
+
+# Module-local alias so tests can patch stat without touching the stdlib module.
+_stat = os.stat
 
 # Filesystems that do not represent real storage and would only add noise.
 PSEUDO_FILESYSTEMS = {
@@ -34,7 +38,6 @@ PSEUDO_FILESYSTEMS = {
     "hugetlbfs",
     "mqueue",
     "nsfs",
-    "overlay",
     "proc",
     "pstore",
     "ramfs",
@@ -62,9 +65,13 @@ def _number(
     if raw is None:
         raw = os.environ.get(env_name)
     try:
-        return float(raw)
+        value = float(raw)
     except (TypeError, ValueError):
         return default
+    # NaN and infinity would silently disable or distort detection: reject them.
+    if not math.isfinite(value):
+        return default
+    return value
 
 
 def _read_mounts() -> list[tuple[str, str]] | None:
@@ -115,6 +122,9 @@ def _oom_findings(hours: int) -> tuple[list[dict[str, Any]], list[str]]:
             )
         except RuntimeError as exc:
             missing.append(f"OOM scan (journal): {exc}")
+    # Fall back to dmesg whenever the journal produced no matches: a journald
+    # that does not carry kernel messages (or a rotated/subset mount) would
+    # otherwise hide OOM-kill records that only dmesg surfaces.
     if not text:
         source = "dmesg"
         try:
@@ -141,17 +151,27 @@ def _disk_findings(threshold: float) -> tuple[list[dict[str, Any]], list[str]]:
     if mounts is None:
         return [], ["/proc/mounts is not readable"]
     findings: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[Any] = set()
+    unmeasured = 0
     for target, filesystem in mounts:
-        if filesystem in PSEUDO_FILESYSTEMS or target in seen:
+        if filesystem in PSEUDO_FILESYSTEMS:
             continue
-        seen.add(target)
         try:
+            device = _stat(target).st_dev
             usage = shutil.disk_usage(target)
         except OSError:
+            unmeasured += 1
             continue
         if not usage.total:
+            unmeasured += 1
             continue
+        # Deduplicate by backing device, not mount point: one device mounted at
+        # several paths (e.g. container overlay layers) must report usage once.
+        # Mark it seen only after a successful read, so an unreadable mount does
+        # not hide a later readable mount on the same device.
+        if device in seen:
+            continue
+        seen.add(device)
         percent = usage.used / usage.total * 100
         if percent >= threshold:
             findings.append(
@@ -166,7 +186,10 @@ def _disk_findings(threshold: float) -> tuple[list[dict[str, Any]], list[str]]:
                     },
                 }
             )
-    return findings, []
+    missing = (
+        [f"{unmeasured} mount(s) could not be measured"] if unmeasured else []
+    )
+    return findings, missing
 
 
 def _load_finding(threshold: float) -> dict[str, Any] | None:
