@@ -1,13 +1,16 @@
-"""Core health check route."""
+"""Core health check route.
 
-from fastapi import APIRouter, Request
+``/health`` is deliberately **not** rate-limited: orchestrator liveness probes,
+uptime monitors and load balancers poll it frequently, and a ``429`` response
+would make a healthy service look down. The reply is a static, cheap constant,
+so there is nothing worth throttling.
+"""
 
-from src.core.rate_limit import limiter
+from fastapi import APIRouter
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-@limiter.limit("60 per 60 seconds")
-def health(request: Request):
+def health():
     return {"status": "ok"}
