@@ -26,6 +26,13 @@ MAX_CONNECTION_LIMIT = 5000
 
 _HOST_INIT_NAMES = {"systemd", "init"}
 
+# busybox/other minimal dmesg implementations reject util-linux flags.
+_USAGE_ERROR_MARKERS = ("invalid option", "unrecognized", "unknown option", "usage:")
+_PERMISSION_ERROR_MARKERS = (
+    "permission denied",
+    "not permitted",
+)
+
 
 def host_pid_active() -> bool:
     """Whether /proc looks like the host PID namespace (init is systemd/init)."""
@@ -120,13 +127,21 @@ def system_metrics(arguments: dict[str, Any]) -> dict[str, Any]:
     total_kb = memory.get("MemTotal", 0)
     available_kb = memory.get("MemAvailable", memory.get("MemFree", 0))
     used_kb = max(total_kb - available_kb, 0)
+    # Without /proc/meminfo (or with no MemTotal) the numbers are unknown, not
+    # zero — report them as None and label the row unavailable.
+    has_memory = total_kb > 0
     percent = cpu_percent()
     uptime = uptime_seconds()
 
+    memory_row = (
+        f"Memory: {_pct(used_kb, total_kb)} used of {total_kb // 1024} MiB"
+        if has_memory
+        else "Memory: n/a"
+    )
     rows = [
         f"CPU: {percent if percent is not None else 'n/a'}% across {cpu_count} cores",
         f"Load: {_fmt_load(load)}",
-        f"Memory: {_pct(used_kb, total_kb)} used of {total_kb // 1024} MiB",
+        memory_row,
         f"Uptime: {_fmt_uptime(uptime)}",
         f"Host PID namespace: {'yes' if host_pid_active() else 'no (container-scoped)'}",
     ]
@@ -136,10 +151,10 @@ def system_metrics(arguments: dict[str, Any]) -> dict[str, Any]:
         "load_per_cpu": round(load[0] / cpu_count, 2) if load else None,
         "cpu_count": cpu_count,
         "cpu_percent": percent,
-        "memory_total_kb": total_kb,
-        "memory_available_kb": available_kb,
-        "memory_used_kb": used_kb,
-        "memory_used_percent": _pct(used_kb, total_kb, raw=True),
+        "memory_total_kb": total_kb if has_memory else None,
+        "memory_available_kb": available_kb if has_memory else None,
+        "memory_used_kb": used_kb if has_memory else None,
+        "memory_used_percent": _pct(used_kb, total_kb, raw=True) if has_memory else None,
         "uptime_seconds": uptime,
         "host_pid_namespace": host_pid_active(),
     }
@@ -166,14 +181,10 @@ def _pct(part: int, whole: int, *, raw: bool = False):
     return value if raw else f"{value}%"
 
 
-def dmesg(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary = shutil.which("dmesg")
-    if binary is None:
-        raise RuntimeError("dmesg is not installed in this container")
-    lines = bounded_int(arguments.get("lines"), DEFAULT_DMESG_LINES, MAX_DMESG_LINES)
+def _run_dmesg(binary: str, args: list[str]) -> subprocess.CompletedProcess[str]:
     try:
-        completed = subprocess.run(
-            [binary, "--ctime"],
+        return subprocess.run(
+            [binary, *args],
             capture_output=True,
             text=True,
             timeout=10,
@@ -182,9 +193,34 @@ def dmesg(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"Cannot read the kernel ring buffer: {exc}") from exc
+
+
+def _is_usage_error(stderr: str) -> bool:
+    lowered = (stderr or "").lower()
+    return any(marker in lowered for marker in _USAGE_ERROR_MARKERS)
+
+
+def _is_permission_error(stderr: str) -> bool:
+    lowered = (stderr or "").lower()
+    return any(marker in lowered for marker in _PERMISSION_ERROR_MARKERS)
+
+
+def dmesg(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary = shutil.which("dmesg")
+    if binary is None:
+        raise RuntimeError("dmesg is not installed in this container")
+    lines = bounded_int(arguments.get("lines"), DEFAULT_DMESG_LINES, MAX_DMESG_LINES)
+    # --ctime is a util-linux extension; busybox dmesg and other minimal
+    # implementations reject it, so retry without it on a usage error instead
+    # of misreporting an unsupported flag as an access problem.
+    completed = _run_dmesg(binary, ["--ctime"])
+    if completed.returncode != 0 and _is_usage_error(completed.stderr):
+        completed = _run_dmesg(binary, [])
     if completed.returncode != 0:
         detail = (completed.stderr or "").strip() or "unknown error"
-        raise RuntimeError(f"dmesg failed (kernel.dmesg_restrict?): {detail}")
+        if _is_permission_error(detail):
+            raise RuntimeError(f"dmesg failed (kernel.dmesg_restrict?): {detail}")
+        raise RuntimeError(f"dmesg failed: {detail}")
     all_lines = completed.stdout.splitlines()
     selected = all_lines[-lines:]
     return {

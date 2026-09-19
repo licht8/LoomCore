@@ -1005,6 +1005,21 @@ def test_system_metrics_shape(load_loomops, monkeypatch, tmp_path):
     assert "CPU:" in result["output"]
 
 
+def test_system_metrics_without_meminfo_reports_unavailable(load_loomops, monkeypatch, tmp_path):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
+    monkeypatch.setattr(monitoring, "cpu_percent", lambda: None)
+
+    result = monitoring.system_metrics({})
+
+    assert result["memory_total_kb"] is None
+    assert result["memory_available_kb"] is None
+    assert result["memory_used_kb"] is None
+    assert result["memory_used_percent"] is None
+    assert "Memory: n/a" in result["output"]
+    assert "0 MiB" not in result["output"]
+
+
 def test_dmesg_truncates(load_loomops, monkeypatch):
     monitoring = load_loomops("monitoring")["monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
@@ -1023,6 +1038,53 @@ def test_dmesg_missing_binary(load_loomops, monkeypatch):
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match="not installed"):
         monitoring.dmesg({})
+
+
+def test_dmesg_falls_back_when_ctime_is_unsupported(load_loomops, monkeypatch):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if "--ctime" in argv:
+            return _Completed(returncode=1, stderr="dmesg: invalid option -- '-'")
+        return _Completed(stdout="line\n")
+
+    monkeypatch.setattr(monitoring.subprocess, "run", fake_run)
+
+    result = monitoring.dmesg({})
+
+    assert calls == [["/bin/dmesg", "--ctime"], ["/bin/dmesg"]]
+    assert result["entries"] == ["line"]
+
+
+def test_dmesg_permission_error_mentions_dmesg_restrict(load_loomops, monkeypatch):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
+    monkeypatch.setattr(
+        monitoring.subprocess,
+        "run",
+        lambda *a, **k: _Completed(
+            returncode=1, stderr="dmesg: read kernel buffer failed: Operation not permitted"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="dmesg_restrict"):
+        monitoring.dmesg({})
+
+
+def test_dmesg_generic_error_omits_dmesg_restrict(load_loomops, monkeypatch):
+    monitoring = load_loomops("monitoring")["monitoring"]
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
+    monkeypatch.setattr(
+        monitoring.subprocess, "run", lambda *a, **k: _Completed(returncode=1, stderr="boom")
+    )
+
+    with pytest.raises(RuntimeError, match="dmesg failed") as exc:
+        monitoring.dmesg({})
+
+    assert "dmesg_restrict" not in str(exc.value)
 
 
 def test_network_connections_shape(load_loomops, monkeypatch):
