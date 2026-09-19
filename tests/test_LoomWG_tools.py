@@ -608,6 +608,20 @@ def test_migrate_client_layout(load_loomwg, monkeypatch, tmp_path):
     assert client.migrate_client_layout() == {"conf": 0, "qr": 0}
 
 
+def test_migrate_client_layout_keeps_newer_artifact(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    clients = tmp_path / "clients"
+    (clients / "conf").mkdir(parents=True)
+    (clients / "alice.conf").write_text("legacy\n", encoding="utf-8")
+    (clients / "conf" / "alice.conf").write_text("current\n", encoding="utf-8")
+
+    moved = client.migrate_client_layout()
+
+    assert moved == {"conf": 0, "qr": 0}
+    assert (clients / "conf" / "alice.conf").read_text(encoding="utf-8") == "current\n"
+
+
 def test_export_client_rebuilds_missing_config(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     client = load_loomwg("client")["client"]

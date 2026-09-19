@@ -36,10 +36,18 @@ def migrate_client_layout() -> dict[str, int]:
     qr_dir = directory / QR_DIR_NAME
     for conf_path in directory.glob("*.conf"):
         conf_dir.mkdir(parents=True, exist_ok=True)
-        conf_path.replace(conf_dir / conf_path.name)
+        destination = conf_dir / conf_path.name
+        if destination.exists():
+            # Never clobber an already-migrated artifact (partial migration,
+            # recreated client, restored backup): the newer file wins.
+            continue
+        conf_path.replace(destination)
         moved["conf"] += 1
     for qr_path in directory.glob("*.png"):
         qr_dir.mkdir(parents=True, exist_ok=True)
-        qr_path.replace(qr_dir / qr_path.name)
+        destination = qr_dir / qr_path.name
+        if destination.exists():
+            continue
+        qr_path.replace(destination)
         moved["qr"] += 1
     return moved
