@@ -1380,6 +1380,89 @@ def test_client_addresses_rejects_non_list(load_loomwg):
         client._client_addresses({"addresses": "10.0.0.2/32"}, "wg0", [], [])
 
 
+def test_client_addresses_rejects_explicit_empty(load_loomwg, monkeypatch):
+    client = load_loomwg("client")["client"]
+    allocation_calls = []
+    monkeypatch.setattr(
+        client,
+        "_allocate_addresses",
+        lambda *args, **kwargs: allocation_calls.append(args) or ["10.0.0.2/32"],
+    )
+
+    for empty in ({"addresses": []}, {"addresses": ""}, {"allowed_ips": []}):
+        with pytest.raises(ValueError, match="non-empty"):
+            client._client_addresses(empty, "wg0", [], [])
+
+    assert allocation_calls == []
+
+
+def test_allocate_addresses_ipv6_near_the_top_does_not_overflow(load_loomwg, monkeypatch):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+
+    result = client._allocate_addresses(
+        "wg0",
+        ["10.0.0.0/30", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc/126"],
+        ["10.0.0.1"],
+    )
+
+    assert result == [
+        "10.0.0.2/32",
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe/128",
+    ]
+
+
+def test_allocate_addresses_keeps_ipv6_version_for_a_small_base(load_loomwg, monkeypatch):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+
+    result = client._allocate_addresses("wg0", ["10.0.0.0/24", "::/64"], ["10.0.0.1"])
+
+    assert result == ["10.0.0.2/32", "::2/128"]
+
+
+def test_allocate_addresses_ipv6_overflow_is_reported_as_exhaustion(
+    load_loomwg, monkeypatch
+):
+    client = load_loomwg("client")["client"]
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+
+    with pytest.raises(ValueError, match="No free"):
+        client._allocate_addresses(
+            "wg0",
+            ["10.0.0.0/30", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe/128"],
+            [],
+        )
+
+
+def test_remove_client_artifacts_survives_a_bad_private_key(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    conf_dir = tmp_path / "clients" / "conf"
+    conf_dir.mkdir(parents=True)
+    (conf_dir / "stale.conf").write_text(
+        "[Interface]\nPrivateKey = bad\n", encoding="utf-8"
+    )
+    (conf_dir / "target.conf").write_text(
+        "[Interface]\nPrivateKey = good\n", encoding="utf-8"
+    )
+
+    def fake_run(argv, **kwargs):
+        if kwargs.get("input_text") == "bad":
+            raise client.CommandError("wg pubkey failed")
+        return "PUBTARGET"
+
+    monkeypatch.setattr(client, "run_command", fake_run)
+
+    removed = client.remove_client_artifacts("PUBTARGET")
+
+    assert removed == ["target"]
+    assert not (conf_dir / "target.conf").exists()
+    assert (conf_dir / "stale.conf").exists()
+
+
 def test_create_client_success(load_loomwg, monkeypatch, tmp_path):
     client = load_loomwg("client")["client"]
     monkeypatch.setattr(

@@ -592,6 +592,73 @@ def test_export_existing_clients_rotate_false_skips_keyless(
     assert len(result["failed"]) == 1
 
 
+def test_export_existing_clients_detects_endpoint_once(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    keys = [_key(2), _key(3)]
+    monkeypatch.setattr(
+        client,
+        "iter_peers",
+        lambda interface: [{"public_key": key, "allowed_ips": []} for key in keys],
+    )
+    detections = []
+
+    def fail_detect():
+        detections.append(1)
+        raise ValueError("could not detect")
+
+    monkeypatch.setattr(client, "_detect_endpoint", fail_detect)
+    monkeypatch.setattr(
+        client, "export_client", lambda args: pytest.fail("export_client must not run")
+    )
+
+    result = client.export_existing_clients({"interface": "wg0"})
+
+    assert detections == [1]
+    assert len(result["failed"]) == 2
+    assert all("could not detect" in item["error"] for item in result["failed"])
+
+
+def test_export_existing_clients_rebuilds_keyed_client_without_detection(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    client = load_loomwg("client")["client"]
+    key = _key(2)
+    canonical = client.clients_store.canonical_name(key)
+    client.clients_store.upsert(
+        canonical,
+        {"public_key": key, "private_key": "stored", "endpoint": "1.2.3.4"},
+    )
+    monkeypatch.setattr(
+        client,
+        "iter_peers",
+        lambda interface: [{"public_key": key, "allowed_ips": []}],
+    )
+
+    def fail_detect():
+        raise ValueError("could not detect")
+
+    monkeypatch.setattr(client, "_detect_endpoint", fail_detect)
+    calls = []
+
+    def fake_export(args):
+        calls.append(args)
+        return {
+            "name": args["name"],
+            "rotated": False,
+            "client_config": "",
+            "qr_code": "",
+        }
+
+    monkeypatch.setattr(client, "export_client", fake_export)
+
+    result = client.export_existing_clients({"interface": "wg0"})
+
+    assert result["failed"] == []
+    assert calls and calls[0]["name"] == canonical
+
+
 def test_export_existing_clients_tool_formats(load_loomwg, monkeypatch):
     tools = load_loomwg("tools")["tools"]
     monkeypatch.setattr(

@@ -134,6 +134,23 @@ def _used_addresses(interface: str) -> set:
     return used
 
 
+def _ipv6_at_offset(ipv6_networks, host_offset: int, used: set) -> str | None:
+    """Return the free IPv6 address at ``host_offset`` in the first fitting network."""
+    for ipv6_network in ipv6_networks:
+        if (
+            int(ipv6_network.network_address) + host_offset
+            > int(ipv6_network.broadcast_address)
+        ):
+            # The IPv4-derived offset would overflow this network. Deriving the
+            # address from the network base keeps it an IPv6Address, whereas
+            # ip_address(int) coerces small values (e.g. ::/64) to IPv4.
+            continue
+        ipv6 = ipv6_network.network_address + host_offset
+        if ipv6 not in used:
+            return str(ipv6)
+    return None
+
+
 def _allocate_addresses(
     interface: str,
     server_networks: list[str],
@@ -144,23 +161,35 @@ def _allocate_addresses(
     networks = [ip_network(raw_network) for raw_network in server_networks]
     ipv4_networks = [network for network in networks if network.version == 4]
     ipv6_networks = [network for network in networks if network.version == 6]
+    # Largest offset any IPv6 network can hold: once a free IPv4 host sits past
+    # it, every later host is past it too, so the scan can stop.
+    ipv6_capacity = max(
+        (
+            int(network.broadcast_address) - int(network.network_address)
+            for network in ipv6_networks
+        ),
+        default=0,
+    )
 
     for ipv4_network in ipv4_networks:
         for ipv4 in ipv4_network.hosts():
             if ipv4 in used:
                 continue
-            host_offset = int(ipv4) - int(ipv4_network.network_address)
-            for ipv6_network in ipv6_networks:
-                ipv6 = ip_address(int(ipv6_network.network_address) + host_offset)
-                if ipv6 in ipv6_network and ipv6 not in used:
-                    return [f"{ipv4}/32", f"{ipv6}/128"]
             if not ipv6_networks:
                 return [f"{ipv4}/32"]
+            host_offset = int(ipv4) - int(ipv4_network.network_address)
+            if host_offset > ipv6_capacity:
+                break
+            ipv6 = _ipv6_at_offset(ipv6_networks, host_offset, used)
+            if ipv6 is not None:
+                return [f"{ipv4}/32", f"{ipv6}/128"]
     raise ValueError("No free IPv4/IPv6 pair available in the WireGuard networks")
 
 
 def _client_addresses(arguments: dict, interface: str, server_networks: list[str], server_addresses: list[str]) -> list[str]:
-    raw = arguments.get("addresses") or arguments.get("allowed_ips")
+    raw = arguments.get("addresses")
+    if raw is None:
+        raw = arguments.get("allowed_ips")
     if raw is None:
         return _allocate_addresses(interface, server_networks, server_addresses)
     if not isinstance(raw, list) or not raw:
@@ -204,7 +233,12 @@ def remove_client_artifacts(public_key: str) -> list[str]:
                 break
         if not private_key:
             continue
-        client_public_key = run_command(["wg", "pubkey"], timeout=5, input_text=private_key)
+        try:
+            client_public_key = run_command(["wg", "pubkey"], timeout=5, input_text=private_key)
+        except CommandError:
+            # A stale or malformed PrivateKey must not abort the sweep and leave
+            # the remaining artifacts orphaned.
+            continue
         if client_public_key != public_key:
             continue
 
@@ -523,9 +557,14 @@ def export_existing_clients(arguments: dict) -> dict:
     endpoint = str(
         arguments.get("endpoint") or os.environ.get("LOOMWG_ENDPOINT", "")
     ).strip()
+    # Detect the endpoint once. Failing per client would re-run detection (with
+    # its own timeouts) for every client that needs a rebuild.
+    endpoint_error: str | None = None
     if rotate and not endpoint:
-        with contextlib.suppress(ValueError):
+        try:
             endpoint = _detect_endpoint()
+        except ValueError as exc:
+            endpoint_error = str(exc)
 
     migrate_client_layout()
     for old_name in clients_store.migrate_legacy_names():
@@ -575,6 +614,13 @@ def export_existing_clients(arguments: dict) -> dict:
             failed.append(
                 {**entry, "error": "no stored private key; retry with rotate=true"}
             )
+            continue
+        if endpoint_error and needs_key:
+            # Only a client with no stored key needs a fresh create_client(),
+            # which is what re-runs endpoint detection; a config-less client
+            # that still has a private_key is rebuilt from the stored record
+            # (endpoint included) and does not require detection.
+            failed.append({**entry, "error": endpoint_error})
             continue
         try:
             exported = export_client(
