@@ -191,6 +191,33 @@ def test_show_config_masks_secrets(load_loomwg, monkeypatch):
     assert "(masked)" in shown["content"][0]["text"]
 
 
+def test_show_config_falls_back_when_interface_inactive(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    view = load_loomwg("config_view")["config_view"]
+    (tmp_path / "wg0.conf").write_text(_VALID_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(view, "active_interfaces", lambda: [])
+
+    def fail(*args, **kwargs):
+        raise view.CommandError("wg showconf failed")
+
+    monkeypatch.setattr(view, "run_command", fail)
+    result = view.show_config({"interface": "wg0"})
+    assert result["data"]["source"] == "file"
+    assert result["data"]["active"] is False
+
+
+def test_show_config_reraises_when_interface_active(load_loomwg, monkeypatch):
+    view = load_loomwg("config_view")["config_view"]
+    monkeypatch.setattr(view, "active_interfaces", lambda: ["wg0"])
+
+    def fail(*args, **kwargs):
+        raise view.CommandError("wg showconf failed")
+
+    monkeypatch.setattr(view, "run_command", fail)
+    with pytest.raises(view.CommandError, match="wg showconf failed"):
+        view.show_config({"interface": "wg0"})
+
+
 # === wg_check_interface_config ===
 
 def test_check_config_valid(load_loomwg):

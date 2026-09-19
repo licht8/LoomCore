@@ -7,7 +7,13 @@ from typing import Any
 
 from ..results import text_result
 from ..wg.config_parser import parse_sections
-from ..wg.device import CommandError, config_directory, run_command, validate_interface
+from ..wg.device import (
+    CommandError,
+    active_interfaces,
+    config_directory,
+    run_command,
+    validate_interface,
+)
 
 _SECRET_RE = re.compile(r"^\s*(PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 
@@ -73,6 +79,13 @@ def show_config(arguments: dict[str, Any]) -> dict[str, Any]:
         source = "live"
         active = True
     except CommandError:
+        # Only fall back to the on-disk config when the interface is genuinely
+        # not active. If it is listed but `wg showconf` still failed (missing
+        # binary, permission denied, unsupported flag, ...) re-raise instead of
+        # misreporting the interface as inactive. The check itself propagates
+        # infrastructure errors.
+        if interface in set(active_interfaces()):
+            raise
         path = config_directory() / f"{interface}.conf"
         if not path.is_file():
             raise CommandError(f"Configuration for {interface} not found") from None
