@@ -333,6 +333,86 @@ def test_setup_server_rejects_an_unsupported_firewall(load_loomwg, monkeypatch, 
     assert not (tmp_path / "wgtest.conf").exists()
 
 
+def test_setup_server_rolls_back_config_when_firewall_fails(
+    load_loomwg, monkeypatch, tmp_path
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path, firewall="iptables")
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("firewall exploded")
+
+    monkeypatch.setattr(provision, "configure_firewall", boom)
+
+    with pytest.raises(RuntimeError, match="firewall exploded"):
+        provision.setup_server({"interface": "wgtest"})
+
+    # The config must not survive a failed provision, or every retry would
+    # abort with "already exists".
+    assert not (tmp_path / "wgtest.conf").exists()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"ipv4_network": "10.0.0.1/32"},
+        {"ipv6_network": "fd42:42:42::1/128"},
+    ],
+)
+def test_setup_server_rejects_a_prefix_too_small(
+    load_loomwg, monkeypatch, tmp_path, arguments
+):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match="prefix is too small"):
+        provision.setup_server({"interface": "wgtest", **arguments})
+
+    assert not (tmp_path / "wgtest.conf").exists()
+
+
+def test_setup_server_accepts_point_to_point_prefixes(load_loomwg, monkeypatch, tmp_path):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path)
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *a, **k: "firewalld")
+
+    result = provision.setup_server(
+        {"interface": "wgtest", "ipv4_network": "10.0.0.0/31"}
+    )
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "Address = 10.0.0.1/31" in content
+    assert result["ipv4_network"] == "10.0.0.0/31"
+
+
+def test_setup_server_accepts_dns_search_domains(load_loomwg, monkeypatch, tmp_path):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path)
+    monkeypatch.delenv("LOOMWG_SKIP_FIREWALL", raising=False)
+    monkeypatch.setattr(provision, "configure_firewall", lambda *a, **k: "firewalld")
+
+    provision.setup_server(
+        {"interface": "wgtest", "dns": ["1.1.1.1", "corp.example.com"]}
+    )
+
+    content = (tmp_path / "wgtest.conf").read_text(encoding="utf-8")
+    assert "DNS = 1.1.1.1, corp.example.com" in content
+
+
+def test_setup_server_rejects_injected_dns(load_loomwg, monkeypatch, tmp_path):
+    provision = load_loomwg("provision")["provision"]
+    _patch_setup_server(provision, monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match="control characters"):
+        provision.setup_server(
+            {"interface": "wgtest", "dns": ["1.1.1.1\nPostUp = evil"]}
+        )
+
+    assert not (tmp_path / "wgtest.conf").exists()
+
+
 def test_configure_firewall_iptables_leaves_nat_to_the_hooks(load_loomwg, monkeypatch):
     provision = load_loomwg("provision")["provision"]
     commands: list[str] = []

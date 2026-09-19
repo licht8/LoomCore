@@ -12,6 +12,7 @@ firewall/NAT setup and configure it manually instead.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -197,13 +198,28 @@ def setup_server(arguments: dict) -> dict:
         raise ValueError("Invalid IPv4 or IPv6 network") from exc
     if v4.version != 4 or v6.version != 6:
         raise ValueError("An IPv4 network and an IPv6 network are required")
+    # The server takes network_address + 1; only /32 and /128 leave no room for
+    # a second address (/31 and /127 are valid point-to-point, RFC 3021/6164).
+    if v4.prefixlen > 31 or v6.prefixlen > 127:
+        raise ValueError("Network prefix is too small to hold the server address")
 
     listen_port = int(arguments.get("listen_port", 51820))
     if not 1 <= listen_port <= 65535:
         raise ValueError("Port must be in the range 1-65535")
     dns = arguments.get("dns", ["1.1.1.1", "1.0.0.1"])
-    if not isinstance(dns, list) or not dns or any(not str(item).strip() for item in dns):
+    if not isinstance(dns, list) or not dns:
         raise ValueError("dns must be a non-empty array of addresses")
+    # wg-quick's DNS= accepts addresses and search domains, so accept any
+    # non-empty name; only control characters are rejected, since a newline
+    # could smuggle extra directives into the config file.
+    dns = [str(item).strip() for item in dns]
+    if any(
+        not entry or any(ord(ch) < 32 or ord(ch) == 127 for ch in entry)
+        for entry in dns
+    ):
+        raise ValueError(
+            "dns entries must be non-empty names or addresses without control characters"
+        )
 
     path = config_path(interface)
     if path.exists():
@@ -225,7 +241,7 @@ def setup_server(arguments: dict) -> dict:
         f"Address = {address_v4}, {address_v6}",
         f"PrivateKey = {keypair['private_key']}",
         f"ListenPort = {listen_port}",
-        f"DNS = {', '.join(str(item).strip() for item in dns)}",
+        f"DNS = {', '.join(dns)}",
     ]
     if post_up:
         lines.append(f"PostUp = {post_up}")
@@ -233,9 +249,17 @@ def setup_server(arguments: dict) -> dict:
     lines.append("")
     atomic_write_text(path, "\n".join(lines), mode=0o600)
 
-    enable_forwarding()
-    if firewall != "skipped":
-        configure_firewall(firewall, interface, external_interface, listen_port)
+    try:
+        enable_forwarding()
+        if firewall != "skipped":
+            configure_firewall(firewall, interface, external_interface, listen_port)
+    except Exception:
+        # Remove the config file so a retry is not stuck on "already exists".
+        # Only the config file is rolled back: firewall changes applied above
+        # (if any) are left in place.
+        with contextlib.suppress(OSError):
+            path.unlink()
+        raise
 
     message = (
         f"Server configuration {interface} created. The interface has not been started yet. "
