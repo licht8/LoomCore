@@ -59,8 +59,11 @@ docker compose up -d --build         # VDS: sudo bash deploy/install.sh (nginx:8
 ## References
 
 - `RULES.md` — full rules (read in full).
+- `Agents/README.md` — coordinator workspace and recovery instructions (RULES 0a).
+- `docs/README.md` — documentation map (what goes where).
+- `CHANGELOG.md` — short dated entries (RULES 14).
 - `docs/architecture/AGENT.md` — plan-and-execute agent loop.
 - `docs/setup/DEPLOY.md` — VDS deployment.
 - `docs/setup/VDS_RUNBOOK.md` — Rocky Linux 10 end-to-end runbook.
 - `docs/setup/TESTING.md` — tests (WSL2/Docker/VDS), e2e checklist.
-- `docs/tasks/<name>/TZ_RU.md` + `REPORT_RU.md` — task specs and reports.
+- `docs/tasks/<name>/TZ_RU.md` + `REPORT_RU.md` — task specs and reports (`docs/tasks/_template/`).
