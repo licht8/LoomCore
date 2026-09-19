@@ -628,6 +628,7 @@ def test_parse_transfer_bytes(load_loomwg):
     assert wg._parse_transfer_bytes("2 MiB") == 2 * 1024**2
     assert wg._parse_transfer_bytes("3 TiB") == 3 * 1024**4
     assert wg._parse_transfer_bytes("1.5 PiB") == int(1.5 * 1024**5)
+    assert wg._parse_transfer_bytes("1.5 KB") == 0
     assert wg._parse_transfer_bytes("bogus") == 0
 
 
@@ -770,6 +771,7 @@ def test_read_interface_falls_back_when_peer_rows_are_unparsable(load_loomwg, mo
 
     assert peer["receive_bytes"] == 1536
     assert peer["transmit_bytes"] == 2 * 1024**2
+    assert peer["persistent_keepalive"] == 25
     assert peer["latest_handshake"] is not None
     assert wg.peer_is_online(peer) is True
 

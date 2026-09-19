@@ -205,22 +205,22 @@ def _read_human_peers(interface: str) -> list[dict[str, Any]]:
                 current["receive_bytes"] = _parse_transfer_bytes(values[0])
                 current["transmit_bytes"] = _parse_transfer_bytes(values[1])
         elif line.startswith("persistent keepalive: "):
+            # Human output reads "every 25 seconds"; "off" means disabled.
             value = line[22:].strip()
-            current["persistent_keepalive"] = (
-                int(value.split()[0]) if value and value.split()[0].isdigit() else 0
-            )
+            match = re.search(r"(\d+)", value)
+            current["persistent_keepalive"] = int(match.group(1)) if match else 0
     if current is not None:
         peers.append(current)
     return peers
 
 
 _TRANSFER_UNITS = {
-    "B": 1,
-    "KiB": 1024,
-    "MiB": 1024**2,
-    "GiB": 1024**3,
-    "TiB": 1024**4,
-    "PiB": 1024**5,
+    "b": 1,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+    "pib": 1024**5,
 }
 
 _HUMAN_AGE_UNITS = {
@@ -233,13 +233,18 @@ _HUMAN_AGE_UNITS = {
 
 
 def _parse_transfer_bytes(value: str) -> int:
-    match = re.search(r"([\d.]+)\s*(B|KiB|MiB|GiB|TiB|PiB)?", value)
+    match = re.search(r"([\d.]+)\s*([A-Za-z]*)", value)
     if not match:
         return 0
-    amount = float(match.group(1))
-    # The regex only matches units present in the map, so there is no silent
-    # fall-through to raw bytes for an unrecognised unit.
-    return int(amount * _TRANSFER_UNITS[match.group(2) or "B"])
+    unit = match.group(2).lower()
+    if unit:
+        factor = _TRANSFER_UNITS.get(unit)
+        if factor is None:
+            # An unrecognised unit must not be silently read as raw bytes.
+            return 0
+    else:
+        factor = 1
+    return int(float(match.group(1)) * factor)
 
 
 def _parse_human_age(value: str) -> str | None:
