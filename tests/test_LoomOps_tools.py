@@ -1865,6 +1865,7 @@ def test_configure_logging_targets_the_plugin_logger(
     monkeypatch.setattr(root, "handlers", [logging.NullHandler()], raising=False)
     stream = io.StringIO()
     monkeypatch.setattr(server.sys, "stderr", stream)
+    logging.getLogger("LoomOps").handlers = []
 
     server._configure_logging()
 
@@ -1873,6 +1874,66 @@ def test_configure_logging_targets_the_plugin_logger(
     assert plugin_logger.propagate is False
     server.logger.info("hello from plugin")
     assert "hello from plugin" in stream.getvalue()
+
+
+def test_configure_logging_is_idempotent_and_keeps_foreign_handlers(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    monkeypatch.setattr(server.sys, "stderr", io.StringIO())
+    plugin_logger = logging.getLogger("LoomOps")
+    plugin_logger.handlers = []
+    foreign = logging.NullHandler()
+    plugin_logger.addHandler(foreign)
+
+    server._configure_logging()
+    server._configure_logging()
+
+    managed = [
+        handler
+        for handler in plugin_logger.handlers
+        if isinstance(handler, server._PluginStderrHandler)
+    ]
+    assert len(managed) == 1
+    assert managed[0].stream is server.sys.stderr
+    assert foreign in plugin_logger.handlers
+
+
+def test_configure_logging_keeps_a_foreign_stderr_handler(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    monkeypatch.setattr(server.sys, "stderr", io.StringIO())
+    plugin_logger = logging.getLogger("LoomOps")
+    plugin_logger.handlers = []
+    foreign = logging.StreamHandler(server.sys.stderr)
+    plugin_logger.addHandler(foreign)
+
+    server._configure_logging()
+
+    assert foreign in plugin_logger.handlers
+
+
+def test_configure_logging_replaces_its_handler_when_stderr_changes(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    plugin_logger = logging.getLogger("LoomOps")
+    plugin_logger.handlers = []
+    monkeypatch.setattr(server.sys, "stderr", io.StringIO())
+    server._configure_logging()
+
+    replacement = io.StringIO()
+    monkeypatch.setattr(server.sys, "stderr", replacement)
+    server._configure_logging()
+
+    managed = [
+        handler
+        for handler in plugin_logger.handlers
+        if isinstance(handler, server._PluginStderrHandler)
+    ]
+    assert len(managed) == 1
+    assert managed[0].stream is replacement
 
 
 def test_configure_logging_applies_the_requested_level(
@@ -1901,3 +1962,44 @@ def test_configure_logging_warns_on_unknown_level(
 
     assert logging.getLogger("LoomOps").level == logging.INFO
     assert "Unknown LOOMOPS_LOG_LEVEL" in stream.getvalue()
+
+
+def test_configure_logging_rejects_notset(load_loomops, monkeypatch, restore_loomops_logger):
+    server = load_loomops("server")["server"]
+    monkeypatch.setenv("LOOMOPS_LOG_LEVEL", "notset")
+    stream = io.StringIO()
+    monkeypatch.setattr(server.sys, "stderr", stream)
+
+    server._configure_logging()
+
+    assert logging.getLogger("LoomOps").level == logging.INFO
+    assert "Unknown LOOMOPS_LOG_LEVEL" in stream.getvalue()
+
+
+def test_configure_logging_strips_padded_level(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    monkeypatch.setenv("LOOMOPS_LOG_LEVEL", " debug ")
+    stream = io.StringIO()
+    monkeypatch.setattr(server.sys, "stderr", stream)
+
+    server._configure_logging()
+
+    assert logging.getLogger("LoomOps").level == logging.DEBUG
+    assert "Unknown LOOMOPS_LOG_LEVEL" not in stream.getvalue()
+
+
+def test_configure_logging_warns_with_the_raw_input(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    monkeypatch.setenv("LOOMOPS_LOG_LEVEL", " Chatty ")
+    stream = io.StringIO()
+    monkeypatch.setattr(server.sys, "stderr", stream)
+
+    server._configure_logging()
+
+    value = stream.getvalue()
+    assert "'Chatty'" in value
+    assert "'CHATTY'" not in value
