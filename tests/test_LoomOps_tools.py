@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -1007,6 +1008,27 @@ def test_log_search_journal_unavailable_raises(load_loomops, monkeypatch):
         logs.log_search({"source": "journal"})
 
 
+def test_log_search_journal_escapes_the_query(load_loomops, monkeypatch):
+    logs = load_loomops("logs")["logs"]
+    captured: list[str] = []
+    monkeypatch.setattr(logs, "journal_available", lambda: True)
+    monkeypatch.setattr(logs, "_run_journal", lambda args: captured.extend(args) or "")
+
+    logs.log_search({"source": "journal", "query": "a+b(bar"})
+
+    assert captured[captured.index("--grep") + 1] == re.escape("a+b(bar")
+
+
+def test_log_search_files_rejects_time_filters(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(tmp_path))
+    monkeypatch.setattr(logs, "journal_available", lambda: False)
+    with pytest.raises(RuntimeError, match="since/unit"):
+        logs.log_search({"query": "error", "since": "1 hour ago"})
+    with pytest.raises(RuntimeError, match="since/unit"):
+        logs.log_search({"query": "error", "unit": "sshd"})
+
+
 def test_journal_errors_files_fallback(load_loomops, monkeypatch, tmp_path):
     logs = load_loomops("logs")["logs"]
     (tmp_path / "app.log").write_text("all good\ncritical failure\n", encoding="utf-8")
@@ -1159,6 +1181,19 @@ def test_iter_log_files_caps_each_root(load_loomops, monkeypatch, tmp_path):
     found = sorted(path.name for _root, path in logs._iter_log_files(limit=1))
 
     assert found == ["a.log", "c.log"]
+
+
+def test_iter_log_files_keeps_only_the_smallest_limit(load_loomops, monkeypatch, tmp_path):
+    logs = load_loomops("logs")["logs"]
+    root = tmp_path / "logs"
+    root.mkdir()
+    for name in ("e.log", "a.log", "c.log", "b.log", "d.log"):
+        (root / name).write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(logs, "log_roots", lambda: [root])
+
+    found = [path.name for _root, path in logs._iter_log_files(limit=2)]
+
+    assert found == ["a.log", "b.log"]
 
 
 def test_resolved_root_returns_none_on_symlink_loop(load_loomops, monkeypatch, tmp_path):

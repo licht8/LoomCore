@@ -9,7 +9,9 @@ back to scanning files under ``LOOMOPS_LOG_ROOTS``.
 
 from __future__ import annotations
 
+import heapq
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -176,10 +178,11 @@ def _iter_log_files(limit: int = 100):
         base = _resolved_root(root)
         if base is None or not base.is_dir():
             continue
-        for count, path in enumerate(sorted(_walk_regular_files(base)), start=1):
+        # nsmallest keeps only ``limit`` paths in memory (the tree is still
+        # traversed, but nothing is materialized); a plain sorted() would hold
+        # every path under the root at once.
+        for path in heapq.nsmallest(limit, _walk_regular_files(base)):
             yield base, path
-            if count >= limit:
-                break
 
 
 def log_search(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -196,7 +199,7 @@ def log_search(arguments: dict[str, Any]) -> dict[str, Any]:
             "journald is not available; use source='files' or mount the host "
             "journal under /host/journal (persistent) or /host/journal-volatile"
         )
-    return _search_files(query=query, limit=limit)
+    return _search_files(query=query, since=since, unit=unit, limit=limit)
 
 
 def _search_journal(*, query: str, since: str, unit: str, limit: int) -> dict[str, Any]:
@@ -206,7 +209,10 @@ def _search_journal(*, query: str, since: str, unit: str, limit: int) -> dict[st
     if unit:
         args += ["--unit", unit]
     if query:
-        args += ["--grep", query]
+        # --grep treats the value as a PCRE. Escape it so metacharacters are
+        # matched literally (as the file fallback does) instead of changing the
+        # match or making journalctl reject the pattern.
+        args += ["--grep", re.escape(query)]
     text = _run_journal(args)
     lines = _journal_lines(text)
     return {
@@ -217,10 +223,17 @@ def _search_journal(*, query: str, since: str, unit: str, limit: int) -> dict[st
     }
 
 
-def _search_files(*, query: str, limit: int) -> dict[str, Any]:
+def _search_files(*, query: str, since: str, unit: str, limit: int) -> dict[str, Any]:
     roots = log_roots()
     if not roots:
         raise RuntimeError("No log roots configured; set LOOMOPS_LOG_ROOTS")
+    if since or unit:
+        # File scanning cannot honor journald's time/unit selectors; failing
+        # loudly beats silently returning an unfiltered result.
+        raise RuntimeError(
+            "since/unit filters are only supported by journald; log files "
+            "cannot be time-filtered — mount the host journal or drop them"
+        )
     entries: list[str] = []
     scanned = 0
     needle = query.lower()
