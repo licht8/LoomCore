@@ -1858,3 +1858,19 @@ def test_protocol_id_less_request_error_uses_null_id(load_loomwg, monkeypatch):
 
     assert responses[0]["id"] is None
     assert responses[0]["error"]["code"] == -32603
+
+
+# === shell.py: timeout handling ===
+
+def test_run_shell_reports_a_timeout_as_runtime_error(load_loomwg, monkeypatch):
+    shell = load_loomwg("shell")["shell"]
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=args[0], timeout=kwargs["timeout"], output="partial", stderr="stuck"
+        )
+
+    monkeypatch.setattr(shell.subprocess, "run", timeout)
+
+    with pytest.raises(RuntimeError, match="timed out after 300s: stuck"):
+        shell.run_shell("wg-quick up wg0")

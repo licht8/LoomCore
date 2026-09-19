@@ -24,6 +24,7 @@ _MODULE_PATHS = {
     "install": "LoomWG.ops.install",
     "dependencies": "LoomWG.ops.dependencies",
     "provision": "LoomWG.ops.provision",
+    "shell": "LoomWG.ops.shell",
     "lifecycle": "LoomWG.ops.lifecycle",
     "service_mode": "LoomWG.ops.service",
     "stats": "LoomWG.ops.stats",
