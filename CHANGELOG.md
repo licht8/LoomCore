@@ -14,3 +14,9 @@ task report (RULES 14).
   `/api/auth/session`).
 - Hardened `/api/artifacts/{name}/{kind}`: sanitize the plugin-supplied download
   filename and media type, and stop returning the raw exception in the 404 body.
+- Widened session id columns (`sessions.id`, `messages.session_id`,
+  `audit_log.session_id`) to 64 chars (migration `006`) so the frontend's
+  `sess_<hex>` ids persist instead of failing the INSERT.
+- Hardened `/api/chat`: log LLM failures, return the budget 429 as
+  `{"detail": ...}` (matching the global rate-limit handler), and bound
+  `message` (1..8000) and `session_id` (<=64, `[A-Za-z0-9_-]`).

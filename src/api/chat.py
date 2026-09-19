@@ -23,8 +23,12 @@ airouter = AIRouter(plugin_manager=plugin_manager)
 
 
 class ChatRequest(BaseModel):
-    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    message: str
+    session_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+    )
+    message: str = Field(min_length=1, max_length=8000)
 
 
 @router.post("/chat")
@@ -39,8 +43,10 @@ async def chat_endpoint(
     try:
         return await airouter.route(payload.message, payload.session_id)
     except LlmBudgetExceeded as exc:
-        return JSONResponse(status_code=429, content={"error": str(exc)})
+        logger.warning("LLM budget exceeded (session=%s): %s", payload.session_id, exc)
+        return JSONResponse(status_code=429, content={"detail": str(exc)})
     except LlmError as exc:
+        logger.warning("LLM error (session=%s): %s", payload.session_id, exc)
         return JSONResponse(status_code=504, content={"error": str(exc)})
     except Exception:
         logger.exception("chat request failed (session=%s)", payload.session_id)
