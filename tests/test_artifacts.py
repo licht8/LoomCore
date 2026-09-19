@@ -134,7 +134,7 @@ async def test_download_artifact_returns_file(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_download_artifact_reports_reason(monkeypatch):
+async def test_download_artifact_hides_internal_reason(monkeypatch):
     class _FailingManager:
         async def execute_internal_tool(self, tool_name, arguments):
             raise ValueError("Client 'alice' not found")
@@ -145,4 +145,126 @@ async def test_download_artifact_reports_reason(monkeypatch):
     response = await artifacts_api.download_artifact("alice", "config", None)
 
     assert response.status_code == 404
-    assert json.loads(response.body)["reason"] == "Client 'alice' not found"
+    body = json.loads(response.body)
+    assert body == {"error": "Artifact not found or unavailable"}
+    assert "reason" not in body
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_sanitizes_filename(monkeypatch):
+    class _FakeManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            return {
+                "data": {
+                    "filename": 'alice";\r\nX-Evil: 1.conf',
+                    "media_type": "text/plain",
+                    "content_base64": base64.b64encode(b"[Interface]\n").decode(),
+                }
+            }
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FakeManager())
+
+    response = await artifacts_api.download_artifact("alice", "config", None)
+
+    disposition = response.headers["content-disposition"]
+    assert disposition == 'attachment; filename="alice____X-Evil__1.conf"'
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    assert disposition.count('"') == 2
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_returns_404_for_missing_file(monkeypatch):
+    class _FailingManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            raise FileNotFoundError("/etc/wireguard/alice.conf")
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FailingManager())
+
+    response = await artifacts_api.download_artifact("alice", "config", None)
+
+    assert response.status_code == 404
+
+
+_BACKEND_FAILURES = [
+    RuntimeError("Plugin 'LoomWG' is unavailable"),
+    PermissionError("access denied"),
+    TimeoutError("plugin call timed out"),
+    OSError("I/O error"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", _BACKEND_FAILURES)
+async def test_download_artifact_maps_backend_failures_to_404(monkeypatch, failure):
+    # Plugin-side failures reach the handler as RuntimeError/OSError (the
+    # plugin dispatcher wraps them and the manager re-raises), so they must
+    # stay a 404 rather than becoming a 500.
+    class _FailingManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            raise failure
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FailingManager())
+
+    response = await artifacts_api.download_artifact("alice", "config", None)
+
+    assert response.status_code == 404
+    assert json.loads(response.body) == {"error": "Artifact not found or unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_sanitizes_media_type(monkeypatch):
+    class _FakeManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            return {
+                "data": {
+                    "filename": "alice.conf",
+                    "media_type": 'text/plain"\r\nX-Evil: 1',
+                    "content_base64": base64.b64encode(b"[Interface]\n").decode(),
+                }
+            }
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FakeManager())
+
+    response = await artifacts_api.download_artifact("alice", "config", None)
+
+    assert response.status_code == 200
+    assert response.media_type == "application/octet-stream"
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_defaults_missing_media_type(monkeypatch):
+    class _FakeManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            return {
+                "data": {
+                    "filename": "alice.conf",
+                    "content_base64": base64.b64encode(b"[Interface]\n").decode(),
+                }
+            }
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FakeManager())
+
+    response = await artifacts_api.download_artifact("alice", "config", None)
+
+    assert response.status_code == 200
+    assert response.media_type == "application/octet-stream"
+
+
+def test_sanitize_filename_handles_none():
+    assert artifacts_api._sanitize_filename(None) == "artifact"
+
+
+@pytest.mark.parametrize("value", [None, ["text/plain"], "text/html", 123])
+def test_safe_media_type_rejects_non_allowlisted(value):
+    assert artifacts_api._safe_media_type(value) == "application/octet-stream"
+
+
+def test_safe_media_type_keeps_allowlist():
+    assert artifacts_api._safe_media_type("text/plain") == "text/plain"
+    assert artifacts_api._safe_media_type("image/png") == "image/png"

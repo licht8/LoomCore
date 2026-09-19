@@ -12,3 +12,5 @@ task report (RULES 14).
 - Fixed admin credential precedence: a stale/invalid session cookie no longer
   shadows a valid `Authorization: Bearer` token (`extract_admin_token`,
   `/api/auth/session`).
+- Hardened `/api/artifacts/{name}/{kind}`: sanitize the plugin-supplied download
+  filename and media type, and stop returning the raw exception in the 404 body.
