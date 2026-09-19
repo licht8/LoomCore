@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import os
 import re
 import signal
@@ -1841,3 +1842,62 @@ def test_protocol_id_less_request_error_uses_null_id(load_loomops, monkeypatch):
 
     assert responses[0]["id"] is None
     assert responses[0]["error"]["code"] == -32603
+
+
+# === server.py: logging configuration ===
+
+@pytest.fixture
+def restore_loomops_logger():
+    """Restore the shared `LoomOps` logger after a test mutates its config."""
+    logger = logging.getLogger("LoomOps")
+    handlers, level, propagate = list(logger.handlers), logger.level, logger.propagate
+    yield
+    logger.handlers = handlers
+    logger.setLevel(level)
+    logger.propagate = propagate
+
+
+def test_configure_logging_targets_the_plugin_logger(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [logging.NullHandler()], raising=False)
+    stream = io.StringIO()
+    monkeypatch.setattr(server.sys, "stderr", stream)
+
+    server._configure_logging()
+
+    plugin_logger = logging.getLogger("LoomOps")
+    assert [handler.stream for handler in plugin_logger.handlers] == [stream]
+    assert plugin_logger.propagate is False
+    server.logger.info("hello from plugin")
+    assert "hello from plugin" in stream.getvalue()
+
+
+def test_configure_logging_applies_the_requested_level(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    monkeypatch.setenv("LOOMOPS_LOG_LEVEL", "debug")
+    monkeypatch.setattr(server.sys, "stderr", io.StringIO())
+
+    server._configure_logging()
+
+    assert logging.getLogger("LoomOps").level == logging.DEBUG
+
+
+def test_configure_logging_warns_on_unknown_level(
+    load_loomops, monkeypatch, restore_loomops_logger
+):
+    server = load_loomops("server")["server"]
+    monkeypatch.setenv("LOOMOPS_LOG_LEVEL", "chatty")
+    stream = io.StringIO()
+    monkeypatch.setattr(server.sys, "stderr", stream)
+    # A host root logger above WARNING must not be able to swallow the warning.
+    monkeypatch.setattr(logging.getLogger(), "level", logging.CRITICAL)
+
+    server._configure_logging()
+
+    assert logging.getLogger("LoomOps").level == logging.INFO
+    assert "Unknown LOOMOPS_LOG_LEVEL" in stream.getvalue()
