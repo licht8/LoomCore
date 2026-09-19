@@ -470,6 +470,7 @@ def test_canonical_name_is_filesystem_safe(load_loomwg):
     store = load_loomwg("clients_store")["clients_store"]
     name = store.canonical_name(_key(2))
     assert name.startswith("peer-")
+    assert len(name) == len("peer-") + 32
     assert store.NAME_RE.fullmatch(name)
     assert name == store.canonical_name(_key(2))
 
@@ -488,6 +489,49 @@ def test_migrate_legacy_peer_names(load_loomwg, monkeypatch, tmp_path):
     assert store.get(canonical)["public_key"] == key
     assert store.get("peer-AAAA1111") is None
     assert store.get("china") is not None
+
+
+def test_migrate_legacy_names_does_not_clobber_a_different_peer(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    key = _key(2)
+    other = _key(3)
+    collision = "peer-COLLIDE"
+    monkeypatch.setattr(store, "canonical_name", lambda public_key: collision)
+    store.upsert(collision, {"public_key": other, "addresses": ["10.0.0.9/32"]})
+    store.upsert("peer-AAAA1111", {"public_key": key, "addresses": ["10.0.0.2/32"]})
+
+    renamed = store.migrate_legacy_names()
+
+    assert renamed == {}
+    assert store.get(collision)["public_key"] == other
+    assert store.get("peer-AAAA1111")["public_key"] == key
+
+
+def test_migrate_legacy_names_keeps_canonical_fields_on_same_key(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    store = load_loomwg("clients_store")["clients_store"]
+    key = _key(2)
+    collision = "peer-COLLIDE"
+    monkeypatch.setattr(store, "canonical_name", lambda public_key: collision)
+    store.upsert(
+        collision, {"public_key": key, "addresses": ["10.0.0.9/32"], "note": "canonical"}
+    )
+    store.upsert(
+        "peer-AAAA1111", {"public_key": key, "addresses": ["10.0.0.2/32"], "note": "legacy"}
+    )
+
+    renamed = store.migrate_legacy_names()
+
+    assert renamed == {"peer-AAAA1111": collision}
+    record = store.get(collision)
+    assert store.get("peer-AAAA1111") is None
+    assert record["addresses"] == ["10.0.0.9/32"]
+    assert record["note"] == "canonical"
 
 
 def test_export_existing_clients_imports_and_issues(load_loomwg, monkeypatch, tmp_path):

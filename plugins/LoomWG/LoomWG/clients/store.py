@@ -38,7 +38,7 @@ def canonical_name(public_key: str) -> str:
         raise ValueError("Invalid public key") from exc
     if len(raw) != 32:
         raise ValueError("Invalid public key")
-    return f"{_PEER_PREFIX}{raw[:6].hex()}"
+    return f"{_PEER_PREFIX}{raw[:16].hex()}"
 
 
 def store_path() -> Path:
@@ -141,7 +141,12 @@ def migrate_legacy_names() -> dict[str, str]:
             continue
         if canonical == name:
             continue
-        data[canonical] = {**data.get(canonical, {}), **data[name]}
+        existing = data.get(canonical)
+        if existing is not None and existing.get("public_key") != public_key:
+            # A different peer already owns this canonical name; leave both
+            # records alone rather than merging or overwriting distinct peers.
+            continue
+        data[canonical] = {**data[name], **(existing or {})}
         del data[name]
         renamed[name] = canonical
     if renamed:
