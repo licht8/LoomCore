@@ -18,15 +18,25 @@ def extract_admin_token(
 ) -> str | None:
     """Extract the admin token from the session cookie or Bearer header.
 
+    Candidates are evaluated in a fixed, validated order: the session cookie
+    first, then the ``Authorization: Bearer`` value. A candidate wins only when
+    :func:`is_valid_admin_credential` confirms it, so a stale, expired or
+    attacker-supplied cookie can no longer shadow a valid Bearer token. When
+    neither candidate validates, the raw cookie is returned if present,
+    otherwise the Bearer value, so ``require_admin_token`` can still report the
+    precise failure (401/403/503) instead of a generic 401.
+
     Query-string tokens are intentionally NOT accepted: a token in the URL
     leaks through access logs, browser history and Referer headers.
     """
     cookie = request.cookies.get(SESSION_COOKIE)
-    if cookie:
-        return cookie
+    header = None
     if authorization and authorization.startswith("Bearer "):
-        return authorization.removeprefix("Bearer ").strip()
-    return None
+        header = authorization.removeprefix("Bearer ").strip()
+    for candidate in (cookie, header):
+        if candidate and is_valid_admin_credential(candidate):
+            return candidate
+    return cookie or header
 
 
 def require_admin_token_from_request(

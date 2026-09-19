@@ -241,6 +241,22 @@ async def test_session_accepts_static_bearer_token(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_falls_through_to_bearer_when_cookie_is_stale(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, "bogus")
+        response = await client.get(
+            "/api/auth/session",
+            headers={"Authorization": "Bearer static-token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True}
+
+
+@pytest.mark.asyncio
 async def test_session_rejects_wrong_bearer_token(monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "token")
     monkeypatch.setattr(settings, "admin_token", "static-token")

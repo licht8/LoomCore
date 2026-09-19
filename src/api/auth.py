@@ -115,10 +115,7 @@ async def auth_session(request: Request, authorization: str | None = Header(defa
     accepted.
     """
     cookie = request.cookies.get(SESSION_COOKIE)
-    if cookie:
-        payload = decode_jwt_token(cookie, settings.session_secret)
-        if not payload:
-            raise HTTPException(status_code=401, detail="Not authenticated")
+    if cookie and decode_jwt_token(cookie, settings.session_secret):
         return {"authenticated": True}
 
     if authorization and authorization.startswith("Bearer "):
