@@ -2008,3 +2008,40 @@ def test_run_shell_reports_a_timeout_as_runtime_error(load_loomwg, monkeypatch):
 
     with pytest.raises(RuntimeError, match="timed out after 300s: stuck"):
         shell.run_shell("wg-quick up wg0")
+
+
+# === util/files.py: atomic writes ===
+
+def test_atomic_write_fsyncs_the_temp_file_before_replace(load_loomwg, monkeypatch, tmp_path):
+    files = load_loomwg("files")["files"]
+    events: list[str] = []
+    real_fsync = files.os.fsync
+    real_replace = files.os.replace
+
+    def spy_fsync(descriptor, *args, **kwargs):
+        events.append("fsync")
+        return real_fsync(descriptor, *args, **kwargs)
+
+    def spy_replace(source, destination, *args, **kwargs):
+        events.append("replace")
+        return real_replace(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(files.os, "fsync", spy_fsync)
+    monkeypatch.setattr(files.os, "replace", spy_replace)
+
+    target = tmp_path / "wg0.conf"
+    files.atomic_write_text(target, "[Interface]\n", mode=0o600)
+
+    assert target.read_text(encoding="utf-8") == "[Interface]\n"
+    assert events.index("fsync") < events.index("replace")
+
+
+def test_atomic_write_replaces_content_and_cleans_up(load_loomwg, tmp_path):
+    files = load_loomwg("files")["files"]
+    target = tmp_path / "wg0.conf"
+    target.write_text("old", encoding="utf-8")
+
+    files.atomic_write_text(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert list(tmp_path.glob(".wg0.conf.*")) == []

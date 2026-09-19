@@ -15,6 +15,7 @@ _MODULE_PATHS = {
     "wireguard": "LoomWG.wg.device",
     "keys": "LoomWG.wg.keys",
     "validate": "LoomWG.wg.validate",
+    "files": "LoomWG.util.files",
     "config": "LoomWG.peers.config",
     "config_view": "LoomWG.peers.view",
     "clients_store": "LoomWG.clients.store",
