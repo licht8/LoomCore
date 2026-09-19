@@ -898,6 +898,71 @@ def test_ip_addresses_parses_json(load_loomops, monkeypatch):
     assert system_info._ip_addresses() == {"eth0": ["10.0.0.2"]}
 
 
+def test_network_status_skips_non_numeric_counters(load_loomops, monkeypatch, tmp_path):
+    system_info = load_loomops("system_info")["system_info"]
+    proc = tmp_path / "dev"
+    proc.write_text(
+        "Interfaces: 1\n face |bytes    packets\n"
+        "  eth0: x 0 0 0 0 0 0 0 y 0 0 0 0 0 0 0\n"
+        "  eth1: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(system_info, "PROC_NET_DEV", proc)
+    monkeypatch.setattr(system_info.shutil, "which", lambda name: None)
+
+    result = system_info.network_status({})
+
+    assert [item["name"] for item in result["interfaces"]] == ["eth1"]
+
+
+def test_ip_addresses_tolerates_unexpected_shapes(load_loomops, monkeypatch):
+    system_info = load_loomops("system_info")["system_info"]
+    monkeypatch.setattr(system_info.shutil, "which", lambda name: "/sbin/ip")
+
+    monkeypatch.setattr(
+        system_info.subprocess,
+        "run",
+        lambda *a, **k: _Completed(stdout='{"ifname": "eth0"}'),
+    )
+    assert system_info._ip_addresses() == {}
+
+    monkeypatch.setattr(
+        system_info.subprocess,
+        "run",
+        lambda *a, **k: _Completed(stdout="[1, \"two\"]"),
+    )
+    assert system_info._ip_addresses() == {}
+
+    monkeypatch.setattr(
+        system_info.subprocess,
+        "run",
+        lambda *a, **k: _Completed(stdout='[{"ifname": "eth0", "addr_info": null}]'),
+    )
+    assert system_info._ip_addresses() == {"eth0": []}
+
+    monkeypatch.setattr(
+        system_info.subprocess,
+        "run",
+        lambda *a, **k: _Completed(stdout='[{"ifname": "eth0", "addr_info": "x"}]'),
+    )
+    assert system_info._ip_addresses() == {"eth0": []}
+
+
+def test_ip_addresses_logs_lookup_failures(load_loomops, monkeypatch, caplog):
+    system_info = load_loomops("system_info")["system_info"]
+    monkeypatch.setattr(system_info.shutil, "which", lambda name: "/sbin/ip")
+
+    def boom(*args, **kwargs):
+        raise OSError("ip exploded")
+
+    monkeypatch.setattr(system_info.subprocess, "run", boom)
+
+    with caplog.at_level("WARNING"):
+        assert system_info._ip_addresses() == {}
+
+    assert "Failed to read IP addresses" in caplog.text
+
+
 # === monitoring ===
 
 def _fake_host_proc(root, init_name="systemd"):
