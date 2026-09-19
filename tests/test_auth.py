@@ -98,6 +98,12 @@ def test_decode_jwt_rejects_none_and_wrong_secret():
     assert decode_jwt_token("not-a-token", SECRET) is None
 
 
+def test_decode_jwt_rejects_empty_secret():
+    token = create_jwt_token({"username": "admin"}, SECRET)
+
+    assert decode_jwt_token(token, "") is None
+
+
 def test_decode_jwt_rejects_expired_token():
     token = create_jwt_token({"username": "admin"}, SECRET, expires_in=-10)
     assert decode_jwt_token(token, SECRET) is None

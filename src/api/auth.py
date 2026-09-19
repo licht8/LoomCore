@@ -10,6 +10,7 @@ from src.auth import (
     SESSION_COOKIE,
     create_jwt_token,
     decode_jwt_token,
+    generate_password_hash,
     revoke_jwt_token,
     verify_password,
     verify_totp,
@@ -26,6 +27,10 @@ from src.core.security import (
 from src.core.security_log import log_security_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# Consumed by verify_password when no admin hash is configured so a login still
+# pays the full PBKDF2 cost (constant-work login; the value is never valid).
+_DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
 
 
 @router.post("/login")
@@ -57,12 +62,16 @@ async def login(request: Request):
             "login_failure", reason="invalid_body_shape", client=client_ip(request)
         )
         raise HTTPException(status_code=400, detail="Invalid request body")
-    valid = (
-        data.get("username") == settings.admin_username
-        and admin_jwt_mode_enabled()
-        and verify_password(str(data.get("password", "")), settings.admin_password_hash)
-        and verify_totp(str(data.get("totp", "")), settings.admin_totp_secret)
+    username_ok = secrets.compare_digest(
+        str(data.get("username") or "").encode("utf-8"),
+        (settings.admin_username or "").encode("utf-8"),
     )
+    password_ok = verify_password(
+        str(data.get("password", "")),
+        settings.admin_password_hash or _DUMMY_PASSWORD_HASH,
+    )
+    totp_ok = verify_totp(str(data.get("totp", "")), settings.admin_totp_secret)
+    valid = username_ok and admin_jwt_mode_enabled() and password_ok and totp_ok
     if not valid:
         log_security_event(
             "login_failure",
@@ -84,10 +93,7 @@ async def login(request: Request):
         SESSION_COOKIE,
         token,
         httponly=True,
-        secure=(
-            settings.secure_cookies
-            or request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
-        ),
+        secure=settings.secure_cookies or is_https(request),
         samesite="strict",
         max_age=28800,
     )
@@ -105,14 +111,16 @@ async def logout(request: Request):
 
 
 @router.get("/session")
+@limiter.limit("30 per 60 seconds")
 async def auth_session(request: Request, authorization: str | None = Header(default=None)):
     """Report whether the caller holds a valid admin credential.
 
     Accepts either credential the active auth mode allows: the httpOnly session
     cookie (JWT, the pre-existing path) or the static Bearer token (so the token
-    login can verify itself against this non-rate-limited endpoint). A valid
-    credential the active mode disables gets 403 rather than being silently
-    accepted.
+    login can verify itself against this endpoint). A valid credential the active
+    mode disables gets 403 rather than being silently accepted. Rate-limited to
+    30 requests/min per client IP so it cannot serve as an unthrottled
+    credential-guessing oracle.
     """
     cookie = request.cookies.get(SESSION_COOKIE)
     if cookie and decode_jwt_token(cookie, settings.session_secret):

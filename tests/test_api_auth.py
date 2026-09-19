@@ -10,6 +10,8 @@ import time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import src.api.auth as auth_module
+import src.auth as auth_core
 from src.auth import (
     SESSION_COOKIE,
     create_jwt_token,
@@ -89,6 +91,38 @@ async def test_login_cookie_not_secure_over_http(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_login_sets_secure_cookie_for_forwarded_proto_list(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "secure_cookies", False)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+            headers={"X-Forwarded-Proto": "https, http"},
+        )
+
+    assert response.status_code == 200
+    assert "secure" in response.headers["set-cookie"].lower()
+
+
+@pytest.mark.asyncio
+async def test_login_sets_secure_cookie_for_uppercase_https(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "secure_cookies", False)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+            headers={"X-Forwarded-Proto": "HTTPS"},
+        )
+
+    assert response.status_code == 200
+    assert "secure" in response.headers["set-cookie"].lower()
+
+
+@pytest.mark.asyncio
 async def test_login_rejects_bad_credentials(monkeypatch):
     _valid_credentials(monkeypatch)
 
@@ -99,6 +133,58 @@ async def test_login_rejects_bad_credentials(monkeypatch):
         )
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_verifies_password_and_totp_for_wrong_username(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    calls = {"password": 0, "totp": 0}
+
+    def spy_password(password, encoded):
+        calls["password"] += 1
+        return auth_core.verify_password(password, encoded)
+
+    def spy_totp(candidate, secret):
+        calls["totp"] += 1
+        return auth_core.verify_totp(candidate, secret)
+
+    monkeypatch.setattr(auth_module, "verify_password", spy_password)
+    monkeypatch.setattr(auth_module, "verify_totp", spy_totp)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "not-admin", "password": "pw", "totp": code},
+            headers={"X-Forwarded-For": "198.51.100.40"},
+        )
+
+    assert response.status_code == 401
+    assert calls == {"password": 1, "totp": 1}
+
+
+@pytest.mark.asyncio
+async def test_login_uses_dummy_hash_when_unconfigured(monkeypatch):
+    code = _valid_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "admin_password_hash", "")
+    monkeypatch.setattr(settings, "auth_mode", "jwt")
+    seen = {}
+
+    def spy_password(password, encoded):
+        seen["encoded"] = encoded
+        return auth_core.verify_password(password, encoded)
+
+    monkeypatch.setattr(auth_module, "verify_password", spy_password)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "pw", "totp": code},
+            headers={"X-Forwarded-For": "198.51.100.41"},
+        )
+
+    assert response.status_code == 401
+    assert seen["encoded"]
+    assert seen["encoded"].startswith("pbkdf2_sha256$")
 
 
 @pytest.mark.asyncio
@@ -336,3 +422,17 @@ async def test_protected_endpoint_allows_token_when_tls_not_required(monkeypatch
         )
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_session_rate_limited(monkeypatch):
+    monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
+    headers = {"X-Forwarded-For": "203.0.113.250"}
+
+    async with _client() as client:
+        for _ in range(30):
+            response = await client.get("/api/auth/session", headers=headers)
+            assert response.status_code == 401
+        limited = await client.get("/api/auth/session", headers=headers)
+
+    assert limited.status_code == 429

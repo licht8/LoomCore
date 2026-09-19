@@ -20,3 +20,7 @@ task report (RULES 14).
 - Hardened `/api/chat`: log LLM failures, return the budget 429 as
   `{"detail": ...}` (matching the global rate-limit handler), and bound
   `message` (1..8000) and `session_id` (<=64, `[A-Za-z0-9_-]`).
+- Hardened admin auth: `login` no longer short-circuits at the username check
+  (constant-work PBKDF2/TOTP), `decode_jwt_token` fails closed on an empty
+  signing secret, the cookie `Secure` flag derives from `is_https()`, and
+  `/api/auth/session` is rate-limited to 30/min.

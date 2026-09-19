@@ -299,3 +299,15 @@ async def test_limiter_from_core_module():
 
     assert core_limiter is not None
     assert hasattr(core_limiter, "limiter") or hasattr(core_limiter, "_backends")
+
+
+def test_session_limit_registered_as_30_per_minute():
+    """The admin session oracle is capped at 30 requests/min per client."""
+    from src.core.rate_limit import limiter
+
+    entry = limiter._route_limits.get("src.api.auth.auth_session")
+    assert entry, "No rate limit registered for src.api.auth.auth_session"
+    rate = entry[0].limit
+    assert (rate.amount, rate.multiples) == (30, 60), (
+        f"src.api.auth.auth_session: expected 30/60, got {rate}"
+    )

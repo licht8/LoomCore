@@ -93,3 +93,12 @@ def load_loomops(monkeypatch):
     yield _load
 
     _purge_package("LoomOps")
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Clear slowapi state before every test so limits never leak between them."""
+    from src.core.rate_limit import limiter
+
+    limiter.reset()
+    yield

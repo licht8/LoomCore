@@ -115,8 +115,12 @@ def create_jwt_token(payload: dict, secret: str, expires_in: int = 28800) -> str
 
 
 def decode_jwt_token(token: str | None, secret: str, max_age: int = 28800) -> dict | None:
-    """Verify and decode a JWT token. Returns payload dict or None."""
-    if not token:
+    """Verify and decode a JWT token. Returns payload dict or None.
+
+    Fails closed on a missing token or an empty signing key: an HMAC keyed with
+    ``""`` is not a key, so an empty secret must never validate a token.
+    """
+    if not token or not secret:
         return None
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])
