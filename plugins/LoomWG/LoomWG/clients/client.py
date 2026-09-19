@@ -15,7 +15,7 @@ from ..peers.config import add_peer, config_path, iter_peers, remove_peer, upser
 from ..util.files import atomic_write_text
 from ..wg.config_parser import parse_sections
 from ..wg.device import CommandError, run_command
-from ..wg.keys import generate_keypair
+from ..wg.keys import generate_keypair, validate_public_key
 from ..wg.validate import validate_config_text
 from . import store as clients_store
 from .paths import (
@@ -270,7 +270,11 @@ def create_client(arguments: dict) -> dict:
         }:
             raise ValueError(f"Client address {address} is already in use")
     keypair = generate_keypair()
-    preshared_key = run_command(["wg", "genpsk"], sensitive=True)
+    preshared_key = arguments.get("preshared_key")
+    if preshared_key is not None:
+        preshared_key = validate_public_key(str(preshared_key))
+    else:
+        preshared_key = run_command(["wg", "genpsk"], sensitive=True)
     client_path, qr_path = client_paths(name)
     if client_path.exists() or qr_path.exists():
         raise ValueError(f"Client '{name}' already exists")

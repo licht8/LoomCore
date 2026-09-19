@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from datetime import UTC, datetime
 from functools import partial
 from ipaddress import ip_network
@@ -42,6 +43,8 @@ from .wg.device import (
 from .wg.keys import validate_public_key
 from .wg.validate import check_config
 
+logger = logging.getLogger(__name__)
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -73,16 +76,15 @@ def list_interfaces(arguments: dict[str, Any]) -> dict[str, Any]:
 def status(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
     if interface not in set(active_interfaces()):
-        try:
-            run_command(["wg-quick", "up", interface], timeout=60)
-        except CommandError:
-            return text_result(
-                f"{interface}: DOWN\nPeers: 0\nOnline: 0\nOffline: 0",
-                interface=interface,
-                active=False,
-                peer_count=0,
-                online_peers=0,
-            )
+        # Observation only: bringing the interface up is the caller's decision
+        # (wg_interface_start / wg_setup_server), not a side effect of status.
+        return text_result(
+            f"{interface}: DOWN\nPeers: 0\nOnline: 0\nOffline: 0",
+            interface=interface,
+            active=False,
+            peer_count=0,
+            online_peers=0,
+        )
 
     details = read_interface(interface)
     online = sum(peer_is_online(peer) for peer in details["peers"])
@@ -181,14 +183,9 @@ def diagnostics(arguments: dict[str, Any]) -> dict[str, Any]:
         checks["active"] = False
         checks["interfaces_error"] = str(exc)
 
-    # Try to bring it up if a config exists but the interface is not active
+    # Observation only: diagnostics never brings the interface up itself; the
+    # caller decides via wg_interface_start / wg_setup_server.
     config_exists = (config_directory() / f"{interface}.conf").is_file()
-    if config_exists and not checks["active"]:
-        try:
-            run_command(["wg-quick", "up", interface], timeout=60)
-            checks["active"] = True
-        except CommandError:
-            checks["active"] = False
 
     checks["link_present"] = has_link(interface)
     checks["config_present"] = config_exists
@@ -320,6 +317,8 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         provision_args: dict[str, Any] = {"interface": interface, "name": name}
         if addresses_arg:
             provision_args["addresses"] = addresses_arg
+        if preshared_key is not None:
+            provision_args["preshared_key"] = preshared_key
         created = create_client(provision_args)
         store_client_record(name, created)
         safe = {
@@ -344,8 +343,13 @@ def add_peer(arguments: dict[str, Any]) -> dict[str, Any]:
             existing_peer = peer
             break
 
-    # Idempotent: same peer with the same allowed IPs is a no-op.
-    if existing_peer is not None and set(existing_peer["allowed_ips"]) == set(allowed_ips):
+    # Idempotent: same peer with the same allowed IPs is a no-op, unless the
+    # caller asked to rotate the preshared key.
+    if (
+        existing_peer is not None
+        and preshared_key is None
+        and set(existing_peer["allowed_ips"]) == set(allowed_ips)
+    ):
         clients_store.upsert(
             name,
             {
@@ -436,23 +440,49 @@ def remove_peer(arguments: dict[str, Any]) -> dict[str, Any]:
     if interface not in set(active_interfaces()):
         raise CommandError(f"Interface {interface} is not active")
     run_command(["wg", "set", interface, "peer", public_key, "remove"])
-    with contextlib.suppress(FileNotFoundError, ValueError):
+    errors: list[str] = []
+    try:
         delete_peer(interface, public_key)
+    except FileNotFoundError:
+        # The on-disk config is gone; there is nothing left to un-persist.
+        pass
+    except ValueError:
+        # The peer is already absent from the config file; it is in sync.
+        pass
+    except OSError as exc:
+        errors.append(f"could not update config: {exc}")
+        logger.warning(
+            "peer %s removed from %s live state but its config entry could not be "
+            "removed: %s",
+            public_key[:12],
+            interface,
+            exc,
+        )
     try:
         removed_clients = remove_client_artifacts(public_key)
-    except Exception:
+    except OSError as exc:
         removed_clients = []
+        errors.append(f"could not remove client files: {exc}")
+        logger.warning(
+            "removed peer %s but could not remove its client files: %s",
+            public_key[:12],
+            exc,
+        )
 
     removed_names = clients_store.remove_by_public_key(public_key)
     if name and name not in removed_names:
         clients_store.remove(name)
         removed_names = [*removed_names, name]
+    message = f"Peer {public_key[:12]}... removed from {interface}"
+    if errors:
+        message += "\nWarning: " + "; ".join(errors)
     return text_result(
-        f"Peer {public_key[:12]}... removed from {interface}",
+        message,
         interface=interface,
         public_key=public_key,
         removed_client_files=removed_clients,
         removed_clients=removed_names,
+        errors=errors,
     )
 
 

@@ -1634,6 +1634,44 @@ def test_create_client_success(load_loomwg, monkeypatch, tmp_path):
     assert conf in written and qr in written
 
 
+def test_create_client_honours_supplied_preshared_key(load_loomwg, monkeypatch, tmp_path):
+    client = load_loomwg("client")["client"]
+    supplied = _fake_key(21)
+    monkeypatch.setattr(
+        client,
+        "_server_settings",
+        lambda interface: ("SERVERPUB", 51820, ["10.66.66.0/24"], ["10.66.66.1"]),
+    )
+    monkeypatch.setattr(client, "_client_addresses", lambda *a, **k: ["10.66.66.2/32"])
+    monkeypatch.setattr(client, "_used_addresses", lambda interface: set())
+    monkeypatch.setattr(
+        client, "generate_keypair", lambda: {"private_key": "priv", "public_key": "pub"}
+    )
+    genpsk_calls: list = []
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ["wg", "genpsk"]:
+            genpsk_calls.append(command)
+        return ""
+
+    monkeypatch.setattr(client, "run_command", fake_run)
+    added: list = []
+    monkeypatch.setattr(client, "add_peer", lambda *a: added.append(a))
+    monkeypatch.setattr(client, "_write_secret", lambda path, content: None)
+    monkeypatch.setattr(client, "_generate_qr", lambda content, path: None)
+    monkeypatch.setattr(
+        client, "client_paths", lambda name: (tmp_path / "alice.conf", tmp_path / "alice.png")
+    )
+
+    result = client.create_client(
+        {"interface": "wg0", "name": "alice", "endpoint": "1.2.3.4", "preshared_key": supplied}
+    )
+
+    assert result["preshared_key"] == supplied
+    assert added == [("wg0", "pub", ["10.66.66.2/32"], supplied)]
+    assert genpsk_calls == []
+
+
 def test_create_client_rejects_existing_name(load_loomwg, monkeypatch, tmp_path):
     client = load_loomwg("client")["client"]
     monkeypatch.setattr(

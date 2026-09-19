@@ -518,6 +518,73 @@ def test_add_peer_idempotent_same_allowed_ips(load_loomwg, monkeypatch, tmp_path
     assert ran == []
 
 
+def test_add_peer_applies_preshared_key_when_allowed_ips_unchanged(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    key = _key(8)
+    new_psk = _key(9)
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(
+        tools,
+        "read_interface",
+        lambda interface: {"peers": [{"public_key": key, "allowed_ips": ["10.0.0.2/32"]}]},
+    )
+    monkeypatch.setattr(tools, "iter_peers", lambda interface: [])
+    calls = []
+    monkeypatch.setattr(
+        tools, "run_command", lambda *args, **kwargs: calls.append((args, kwargs)) or ""
+    )
+    upserts = []
+    monkeypatch.setattr(tools, "upsert_peer", lambda *args, **kwargs: upserts.append(args) or True)
+
+    result = tools.add_peer(
+        {
+            "name": "peer1",
+            "public_key": key,
+            "allowed_ips": ["10.0.0.2/32"],
+            "preshared_key": new_psk,
+        }
+    )
+
+    assert result["data"]["changed"] is True
+    assert calls[0][0][0][5:] == ["allowed-ips", "10.0.0.2/32", "preshared-key", "/dev/stdin"]
+    assert calls[0][1]["input_text"] == new_psk
+    assert upserts == [("wg0", key, ["10.0.0.2/32"], new_psk)]
+
+
+def test_add_peer_forwards_preshared_key_when_provisioning(
+    load_loomwg, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    psk = _key(3)
+    captured: dict = {}
+
+    def fake_create(arguments):
+        captured.update(arguments)
+        return {
+            "name": arguments["name"],
+            "interface": "wg0",
+            "public_key": _key(4),
+            "private_key": _key(5),
+            "preshared_key": psk,
+            "addresses": ["10.0.0.2/32"],
+            "endpoint": "vpn:51820",
+            "client_config": "alice.conf",
+            "qr_code": "alice.png",
+        }
+
+    monkeypatch.setattr(tools, "create_client", fake_create)
+    monkeypatch.setattr(tools, "store_client_record", lambda name, created: None)
+
+    result = tools.add_peer({"name": "alice", "preshared_key": psk})
+
+    assert captured["preshared_key"] == psk
+    assert result["data"]["changed"] is True
+
+
 def test_add_peer_updates_existing_allowed_ips(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     tools = load_loomwg("tools")["tools"]
@@ -675,6 +742,68 @@ def test_remove_peer_by_name(load_loomwg, monkeypatch, tmp_path):
 
     assert result["data"]["public_key"] == key
     assert store.get("alice") is None
+
+
+def test_remove_peer_reports_artifact_removal_failure(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    mods = load_loomwg("tools", "clients_store")
+    tools, store = mods["tools"], mods["clients_store"]
+    key = _key(5)
+    store.upsert("alice", {"public_key": key, "addresses": ["10.0.0.2/32"]})
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(tools, "delete_peer", lambda *args, **kwargs: None)
+
+    def boom(public_key):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr(tools, "remove_client_artifacts", boom)
+
+    result = tools.remove_peer({"name": "alice"})
+
+    assert result["data"]["errors"] == ["could not remove client files: disk on fire"]
+    assert "Warning:" in result["content"][0]["text"]
+
+
+# === wg_interface_status / wg_diagnostics (observation only) ===
+
+def test_status_does_not_start_inactive_interface(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    monkeypatch.setattr(tools, "active_interfaces", lambda: [])
+    calls = []
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: calls.append(args) or "")
+
+    result = tools.status({"interface": "wg0"})
+
+    assert result["data"]["active"] is False
+    assert calls == []
+
+
+def test_diagnostics_does_not_start_inactive_interface(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    tools = load_loomwg("tools")["tools"]
+    (tmp_path / "wg0.conf").write_text("[Interface]\n", encoding="utf-8")
+    monkeypatch.setattr(tools, "active_interfaces", lambda: [])
+    monkeypatch.setattr(tools, "has_link", lambda interface: False)
+    monkeypatch.setattr(tools, "dependency_report", lambda: {"ready": True, "missing": []})
+    monkeypatch.setattr(
+        tools,
+        "runtime_report",
+        lambda: {
+            "manifest": {},
+            "issues": [],
+            "permission_warnings": [],
+            "permission_notes": [],
+        },
+    )
+    calls = []
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: calls.append(args) or "")
+
+    result = tools.diagnostics({"interface": "wg0"})
+
+    assert result["data"]["active"] is False
+    assert not any(call[:2] == ["wg-quick", "up"] for call in calls)
 
 
 # === wg_list_peers ===
