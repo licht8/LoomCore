@@ -1252,6 +1252,57 @@ def test_iter_peers_matches_non_canonical_key_case(load_loomwg, monkeypatch, tmp
     assert config.iter_peers("wg0") == []
 
 
+def test_remove_peer_rejects_invalid_key(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    config_file = tmp_path / "wg0.conf"
+    original = "[Interface]\nPrivateKey = x\n"
+    config_file.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="public key"):
+        config.remove_peer("wg0", "")
+
+    assert config_file.read_text(encoding="utf-8") == original
+
+
+def test_upsert_peer_treats_reordered_allowed_ips_as_no_change(
+    load_loomwg, monkeypatch, tmp_path
+):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key = _fake_key(33)
+    (tmp_path / "wg0.conf").write_text(
+        f"[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = {key}\n"
+        "AllowedIPs = 10.0.0.2/32, 10.0.0.3/32\n",
+        encoding="utf-8",
+    )
+
+    assert config.upsert_peer("wg0", key, ["10.0.0.3/32", "10.0.0.2/32"], None) is False
+
+
+def test_upsert_peer_does_not_grow_separators(load_loomwg, monkeypatch, tmp_path):
+    config = load_loomwg("config")["config"]
+    monkeypatch.setattr(config, "config_directory", lambda: tmp_path)
+    monkeypatch.setattr(config, "validate_config_text", lambda text: None)
+    key_a = _fake_key(31)
+    key_b = _fake_key(32)
+    config_file = tmp_path / "wg0.conf"
+    config_file.write_text(
+        "[Interface]\nPrivateKey = x\n\n"
+        f"[Peer]\nPublicKey = {key_a}\nAllowedIPs = 10.0.0.2/32\n\n"
+        f"[Peer]\nPublicKey = {key_b}\nAllowedIPs = 10.0.0.3/32\n",
+        encoding="utf-8",
+    )
+
+    for suffix in ("4", "5", "6"):
+        config.upsert_peer("wg0", key_a, [f"10.0.0.{suffix}/32"], None)
+
+    text = config_file.read_text(encoding="utf-8")
+    assert "\n\n\n" not in text
+    assert text.count("[Peer]") == 2
+
+
 # === wg/validate.py: config text validation ===
 
 def test_validate_config_text_cleans_temp_and_raises(load_loomwg, monkeypatch):

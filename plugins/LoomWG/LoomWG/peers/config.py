@@ -138,7 +138,7 @@ def upsert_peer(
             elif key == "presharedkey":
                 current_psk = value.strip()
 
-        if current_allowed == allowed_ips and (
+        if sorted(current_allowed) == sorted(allowed_ips) and (
             preshared_key is None or preshared_key == current_psk
         ):
             return False
@@ -149,11 +149,15 @@ def upsert_peer(
     if not found:
         updated_blocks.append(_peer_block(public_key, allowed_ips, preshared_key).splitlines())
 
-    _write(path, "\n\n".join("\n".join(block) for block in updated_blocks))
+    _write(
+        path,
+        "\n\n".join("\n".join(block).strip() for block in updated_blocks),
+    )
     return True
 
 
 def remove_peer(interface: str, public_key: str) -> None:
+    validate_public_key(public_key)
     path = config_path(interface)
     if not path.is_file():
         raise FileNotFoundError(f"Configuration {path} not found")
