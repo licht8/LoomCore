@@ -76,7 +76,7 @@ _PROBE_INTERFACE = "loomwgprobe"
 _KERNEL_HINT = (
     "The host kernel does not provide WireGuard. The plugin cannot install "
     "kernel modules on the host. On the HOST install the module for your "
-    "kernel (Debian/Ubuntu: apt-get install -y kmod-wireguard; RHEL/Rocky: "
+    "kernel (Debian/Ubuntu: apt-get install -y wireguard-dkms; RHEL/Rocky: "
     "dnf install -y kmod-wireguard) or upgrade to a kernel that includes "
     "WireGuard (Linux 5.6+), then retry."
 )

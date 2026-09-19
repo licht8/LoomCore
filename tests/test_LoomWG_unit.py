@@ -446,6 +446,7 @@ def test_ensure_kernel_module_reports_host_hint(load_loomwg, monkeypatch):
     result = install.ensure_kernel_module()
 
     assert result["loaded"] is False
+    assert "wireguard-dkms" in result["message"]
     assert "kmod-wireguard" in result["message"]
 
 
