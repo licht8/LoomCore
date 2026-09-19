@@ -210,11 +210,13 @@ def setup_server(arguments: dict) -> dict:
     if not isinstance(dns, list) or not dns:
         raise ValueError("dns must be a non-empty array of addresses")
     # wg-quick's DNS= accepts addresses and search domains, so accept any
-    # non-empty name; only control characters are rejected, since a newline
-    # could smuggle extra directives into the config file.
+    # non-empty name; only control characters and the line separators
+    # str.splitlines() honours (U+0085, U+2028, U+2029) are rejected, since any
+    # of them could smuggle extra directives into the config on a later rewrite.
     dns = [str(item).strip() for item in dns]
     if any(
-        not entry or any(ord(ch) < 32 or ord(ch) == 127 for ch in entry)
+        not entry
+        or any(ord(ch) < 32 or ord(ch) in (0x7F, 0x85, 0x2028, 0x2029) for ch in entry)
         for entry in dns
     ):
         raise ValueError(

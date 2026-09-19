@@ -401,14 +401,21 @@ def test_setup_server_accepts_dns_search_domains(load_loomwg, monkeypatch, tmp_p
     assert "DNS = 1.1.1.1, corp.example.com" in content
 
 
-def test_setup_server_rejects_injected_dns(load_loomwg, monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "1.1.1.1\nPostUp = evil",
+        "1.1.1.1\u0085PostUp = evil",
+        "1.1.1.1\u2028PostUp = evil",
+        "1.1.1.1\u2029PostUp = evil",
+    ],
+)
+def test_setup_server_rejects_injected_dns(load_loomwg, monkeypatch, tmp_path, payload):
     provision = load_loomwg("provision")["provision"]
     _patch_setup_server(provision, monkeypatch, tmp_path)
 
     with pytest.raises(ValueError, match="control characters"):
-        provision.setup_server(
-            {"interface": "wgtest", "dns": ["1.1.1.1\nPostUp = evil"]}
-        )
+        provision.setup_server({"interface": "wgtest", "dns": [payload]})
 
     assert not (tmp_path / "wgtest.conf").exists()
 
