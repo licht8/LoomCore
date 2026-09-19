@@ -34,7 +34,7 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
+        String(64), primary_key=True, default=lambda: str(uuid4())
     )
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id"), index=True
@@ -55,7 +55,7 @@ class Message(Base):
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
     session_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("sessions.id"), index=True
+        String(64), ForeignKey("sessions.id"), index=True
     )
 
     role: Mapped[str] = mapped_column(String)  # 'user', 'assistant', 'system', 'tool'
@@ -85,7 +85,7 @@ class AuditEntry(Base):
         String, nullable=False, index=True
     )  # UTC isoformat
     actor: Mapped[str] = mapped_column(String, default="admin")
-    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     plan_id: Mapped[str | None] = mapped_column(String, nullable=True)
     revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tool: Mapped[str] = mapped_column(String, nullable=False)
