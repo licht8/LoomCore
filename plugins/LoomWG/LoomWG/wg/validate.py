@@ -65,7 +65,7 @@ def _read_config_text(path: Path) -> str:
     try:
         relative = path.relative_to(base)
     except ValueError as exc:
-        raise ValueError(f"Refusing to follow symlink: {path}") from exc
+        raise ValueError(f"Path '{path}' is outside the config directory") from exc
     current = base
     try:
         for part in relative.parts:

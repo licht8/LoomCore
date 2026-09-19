@@ -357,6 +357,18 @@ def test_check_config_rejects_symlinked_directory_component(load_loomwg, monkeyp
     assert "TOP-SECRET-MARKER" not in str(info.value)
 
 
+def test_check_config_read_rejects_path_outside_config_dir(load_loomwg, monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    outside = tmp_path / "outside.conf"
+    outside.write_text(_VALID_CONFIG, encoding="utf-8")
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(config_dir))
+    validate = load_loomwg("validate")["validate"]
+
+    with pytest.raises(ValueError, match="outside the config directory"):
+        validate._read_config_text(outside)
+
+
 def test_check_config_accepts_descendant_in_config_dir(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     clients = tmp_path / "clients"
