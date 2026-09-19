@@ -626,6 +626,8 @@ def test_parse_transfer_bytes(load_loomwg):
     wg = load_loomwg("wireguard")["wireguard"]
     assert wg._parse_transfer_bytes("1.5 KiB") == 1536
     assert wg._parse_transfer_bytes("2 MiB") == 2 * 1024**2
+    assert wg._parse_transfer_bytes("3 TiB") == 3 * 1024**4
+    assert wg._parse_transfer_bytes("1.5 PiB") == int(1.5 * 1024**5)
     assert wg._parse_transfer_bytes("bogus") == 0
 
 
@@ -634,6 +636,19 @@ def test_peer_is_online(load_loomwg):
     recent = datetime.now(tz=UTC).isoformat()
     assert wg.peer_is_online({"latest_handshake": recent}) is True
     assert wg.peer_is_online({"latest_handshake": None}) is False
+
+
+def test_parse_human_age(load_loomwg):
+    wg = load_loomwg("wireguard")["wireguard"]
+    recent = wg._parse_human_age("1 minute, 21 seconds ago")
+    assert recent is not None
+    assert wg.peer_is_online({"latest_handshake": recent}) is True
+
+    old = wg._parse_human_age("3 days, 4 hours ago")
+    assert old is not None
+    assert wg.peer_is_online({"latest_handshake": old}) is False
+
+    assert wg._parse_human_age("ages ago") is None
 
 
 def test_validate_interface(load_loomwg):
@@ -710,6 +725,73 @@ def test_read_interface_handles_none_allowed_ips(load_loomwg, monkeypatch):
     peer = wg.read_interface("wg0")["peers"][0]
 
     assert peer["allowed_ips"] == []
+
+
+def test_read_interface_does_not_fall_back_for_idle_interface(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    calls: list[list[str]] = []
+
+    def fake_run(command, *args, **kwargs):
+        calls.append(command)
+        return "wPriv== wServerPub== 51820 off"
+
+    monkeypatch.setattr(wg, "run_command", fake_run)
+
+    details = wg.read_interface("wg0")
+
+    assert details["peers"] == []
+    assert len(calls) == 1
+
+
+def test_read_interface_falls_back_when_peer_rows_are_unparsable(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    dump = "wPriv== wServerPub== 51820 off\nbroken peer row"
+    human = "\n".join(
+        [
+            "interface: wg0",
+            "  public key: wServerPub==",
+            "  listening port: 51820",
+            "",
+            "peer: wPeerPub==",
+            "  endpoint: 91.90.160.72:51361",
+            "  allowed ips: 10.66.66.4/32",
+            "  latest handshake: 1 minute, 21 seconds ago",
+            "  transfer: 1.5 KiB received, 2 MiB sent",
+            "  persistent keepalive: every 25 seconds",
+        ]
+    )
+
+    def fake_run(command, *args, **kwargs):
+        return human if command == ["wg", "show", "wg0"] else dump
+
+    monkeypatch.setattr(wg, "run_command", fake_run)
+
+    peer = wg.read_interface("wg0")["peers"][0]
+
+    assert peer["receive_bytes"] == 1536
+    assert peer["transmit_bytes"] == 2 * 1024**2
+    assert peer["latest_handshake"] is not None
+    assert wg.peer_is_online(peer) is True
+
+
+def test_read_interface_rejects_non_numeric_listen_port(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    monkeypatch.setattr(wg, "run_command", lambda *a, **k: "wPriv== wServerPub== notaport off")
+
+    with pytest.raises(wg.CommandError, match="listen port"):
+        wg.read_interface("wg0")
+
+
+def test_read_interface_rejects_non_numeric_transfer(load_loomwg, monkeypatch):
+    wg = load_loomwg("wireguard")["wireguard"]
+    dump = (
+        "wPriv== wServerPub== 51820 off\n"
+        "wPeerPub== (none) 1.2.3.4:51820 10.66.66.4/32 0 nope 96416563 25"
+    )
+    monkeypatch.setattr(wg, "run_command", lambda *a, **k: dump)
+
+    with pytest.raises(wg.CommandError, match="receive bytes"):
+        wg.read_interface("wg0")
 
 
 # === device.py: run_command / has_link / configured_interfaces ===

@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +109,16 @@ def _parse_timestamp(value: str) -> str | None:
         return None
 
 
+def _parse_int(value: str, description: str) -> int:
+    """Parse a numeric ``wg`` output field, raising ``CommandError`` on garbage."""
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise CommandError(
+            f"Unexpected wg output: {description} is not a number: {value!r}"
+        ) from exc
+
+
 def read_interface(interface: str) -> dict[str, Any]:
     dump_output = run_command(["wg", "show", interface, "dump"], sensitive=True)
     lines = dump_output.splitlines()
@@ -120,11 +130,13 @@ def read_interface(interface: str) -> dict[str, Any]:
         raise CommandError(f"Unexpected wg output format for {interface}")
 
     peers: list[dict[str, Any]] = []
+    unparsed_peers = False
     for line in lines[1:]:
         # `wg show dump` normally uses tabs, but some wrappers normalize
         # whitespace before returning command output.
         parts = line.split()
         if len(parts) < 8:
+            unparsed_peers = True
             continue
         allowed_ips = parts[3]
         keepalive = parts[7]
@@ -134,20 +146,23 @@ def read_interface(interface: str) -> dict[str, Any]:
                 "endpoint": None if parts[2] == "(none)" else parts[2],
                 "allowed_ips": [] if allowed_ips == "(none)" else allowed_ips.split(","),
                 "latest_handshake": _parse_timestamp(parts[4]),
-                "receive_bytes": int(parts[5]),
-                "transmit_bytes": int(parts[6]),
+                "receive_bytes": _parse_int(parts[5], "receive bytes"),
+                "transmit_bytes": _parse_int(parts[6], "transmit bytes"),
                 # wg prints "off" for the keepalive interval when it is unset.
                 "persistent_keepalive": int(keepalive) if keepalive.isdigit() else 0,
             }
         )
 
-    if not peers:
+    # Some platforms/wrappers emit dump rows that cannot be split; only then do
+    # we pay for a second `wg show` call. An interface with no peers at all is
+    # a legitimate result and must not trigger the fallback.
+    if not peers and unparsed_peers:
         peers = _read_human_peers(interface)
 
     return {
         "interface": interface,
         "public_key": interface_parts[1],
-        "listen_port": int(interface_parts[2]),
+        "listen_port": _parse_int(interface_parts[2], "listen port"),
         "peers": peers,
     }
 
@@ -181,9 +196,9 @@ def _read_human_peers(interface: str) -> list[dict[str, Any]]:
                 value.strip() for value in line[13:].split(",") if value.strip()
             ]
         elif line.startswith("latest handshake: "):
-            # Human-readable durations are not compatible with the ISO
-            # timestamp format used by peer_is_online().
-            current["latest_handshake"] = None
+            # Convert the human-readable age ("1 minute, 21 seconds ago")
+            # back into an ISO timestamp peer_is_online() can compare.
+            current["latest_handshake"] = _parse_human_age(line[18:].strip())
         elif line.startswith("transfer: "):
             values = line[10:].split(",")
             if len(values) == 2:
@@ -199,13 +214,47 @@ def _read_human_peers(interface: str) -> list[dict[str, Any]]:
     return peers
 
 
+_TRANSFER_UNITS = {
+    "B": 1,
+    "KiB": 1024,
+    "MiB": 1024**2,
+    "GiB": 1024**3,
+    "TiB": 1024**4,
+    "PiB": 1024**5,
+}
+
+_HUMAN_AGE_UNITS = {
+    "year": 365 * 24 * 3600,
+    "day": 24 * 3600,
+    "hour": 3600,
+    "minute": 60,
+    "second": 1,
+}
+
+
 def _parse_transfer_bytes(value: str) -> int:
-    match = re.search(r"([\d.]+)\s*([KMGTP]i?B)?", value)
+    match = re.search(r"([\d.]+)\s*(B|KiB|MiB|GiB|TiB|PiB)?", value)
     if not match:
         return 0
     amount = float(match.group(1))
-    units = {"B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
-    return int(amount * units.get(match.group(2) or "B", 1))
+    # The regex only matches units present in the map, so there is no silent
+    # fall-through to raw bytes for an unrecognised unit.
+    return int(amount * _TRANSFER_UNITS[match.group(2) or "B"])
+
+
+def _parse_human_age(value: str) -> str | None:
+    """Convert a ``wg show`` handshake age ("1 minute, 21 seconds ago") to ISO."""
+    total_seconds = 0
+    matched = False
+    for amount, unit in re.findall(r"(\d+)\s*([A-Za-z]+)", value):
+        factor = _HUMAN_AGE_UNITS.get(unit.rstrip("s").lower())
+        if factor is None:
+            return None
+        total_seconds += int(amount) * factor
+        matched = True
+    if not matched:
+        return None
+    return (datetime.now(tz=UTC) - timedelta(seconds=total_seconds)).isoformat()
 
 
 def peer_is_online(peer: dict[str, Any], timeout_seconds: int = 180) -> bool:
