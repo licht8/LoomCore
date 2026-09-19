@@ -1261,7 +1261,7 @@ def test_number_rejects_non_finite_values(load_loomops):
 def test_oom_scan_falls_back_to_dmesg_when_journal_has_no_matches(load_loomops, monkeypatch):
     diagnostics = load_loomops("diagnostics")["diagnostics"]
     monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: True)
-    monkeypatch.setattr(diagnostics.logs, "_run_journal", lambda args: "")
+    monkeypatch.setattr(diagnostics.logs, "_run_journal", lambda args: "-- No entries --\n")
     monkeypatch.setattr(
         diagnostics.monitoring,
         "dmesg",

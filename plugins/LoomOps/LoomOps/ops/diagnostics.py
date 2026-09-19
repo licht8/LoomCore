@@ -124,8 +124,10 @@ def _oom_findings(hours: int) -> tuple[list[dict[str, Any]], list[str]]:
             missing.append(f"OOM scan (journal): {exc}")
     # Fall back to dmesg whenever the journal produced no matches: a journald
     # that does not carry kernel messages (or a rotated/subset mount) would
-    # otherwise hide OOM-kill records that only dmesg surfaces.
-    if not text:
+    # otherwise hide OOM-kill records that only dmesg surfaces. journalctl
+    # prints a non-empty "-- No entries --" marker on a successful empty query,
+    # so gate on real lines rather than the raw text.
+    if not logs._journal_lines(text):
         source = "dmesg"
         try:
             text = "\n".join(monitoring.dmesg({"lines": 2000})["entries"])
