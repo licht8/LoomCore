@@ -5,6 +5,11 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # Env
 .env
 .env.*
@@ -32,3 +37,6 @@ logs/
 
 # Docker
 *.log
+
+# Archives
+*.rar
