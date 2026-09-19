@@ -765,6 +765,27 @@ def test_remove_peer_reports_artifact_removal_failure(load_loomwg, monkeypatch, 
     assert "Warning:" in result["content"][0]["text"]
 
 
+def test_remove_peer_reports_malformed_artifact_as_warning(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    mods = load_loomwg("tools", "clients_store")
+    tools, store = mods["tools"], mods["clients_store"]
+    key = _key(5)
+    store.upsert("alice", {"public_key": key, "addresses": ["10.0.0.2/32"]})
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(tools, "run_command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(tools, "delete_peer", lambda *args, **kwargs: None)
+
+    def malformed(public_key):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(tools, "remove_client_artifacts", malformed)
+
+    result = tools.remove_peer({"name": "alice"})
+
+    assert result["data"]["errors"] and "could not remove client files" in result["data"]["errors"][0]
+    assert store.get("alice") is None
+
+
 # === wg_interface_status / wg_diagnostics (observation only) ===
 
 def test_status_does_not_start_inactive_interface(load_loomwg, monkeypatch, tmp_path):

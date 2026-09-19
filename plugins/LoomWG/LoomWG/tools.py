@@ -460,7 +460,8 @@ def remove_peer(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     try:
         removed_clients = remove_client_artifacts(public_key)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers UnicodeDecodeError from a malformed client config.
         removed_clients = []
         errors.append(f"could not remove client files: {exc}")
         logger.warning(
