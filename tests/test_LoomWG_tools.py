@@ -1071,6 +1071,21 @@ def test_service_enable_disable(load_loomwg, monkeypatch, tmp_path):
     assert not service._read_state().get("wg0")
 
 
+def test_service_enable_does_not_persist_on_start_failure(load_loomwg, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
+    service = load_loomwg("service_mode")["service_mode"]
+    monkeypatch.setattr(service, "active_interfaces", lambda: [])
+
+    def fail(*args, **kwargs):
+        raise service.CommandError("wg-quick up failed")
+
+    monkeypatch.setattr(service, "run_command", fail)
+
+    with pytest.raises(service.CommandError):
+        service.enable({"interface": "wg0"})
+    assert not service._read_state().get("wg0")
+
+
 def test_apply_autostart_brings_up_flagged(load_loomwg, monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     service = load_loomwg("service_mode")["service_mode"]
