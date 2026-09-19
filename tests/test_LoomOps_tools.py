@@ -115,6 +115,16 @@ def test_handler_returns_mcp_shape(load_loomops, tmp_path):
     assert result["data"]["total_bytes"] > 0
 
 
+def test_tool_wrapper_rejects_reserved_content_key(load_loomops):
+    tools = load_loomops("tools")["tools"]
+
+    def collide(_arguments):
+        return {"output": "ok", "content": "collision"}
+
+    with pytest.raises(ValueError, match="reserved key 'content'"):
+        tools._tool(collide)({})
+
+
 # === commands ===
 
 def test_allowed_commands_parses_commas_and_spaces(load_loomops, monkeypatch):

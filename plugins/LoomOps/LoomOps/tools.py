@@ -25,6 +25,11 @@ def _tool(func: Callable[[dict[str, Any]], dict[str, Any]]):
     def handler(arguments: dict[str, Any]) -> dict[str, Any]:
         data = func(arguments or {})
         output = data.pop("output", "")
+        # ``text_result`` takes the text positionally, so a ``content`` key in
+        # the payload would collide and raise a TypeError that the JSON-RPC
+        # dispatcher cannot translate; reject it as a ValueError instead.
+        if "content" in data:
+            raise ValueError("ops result must not use the reserved key 'content'")
         return text_result(output, **data)
 
     return handler
