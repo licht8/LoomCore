@@ -644,6 +644,28 @@ def test_list_processes_respects_limit(load_loomops, monkeypatch, tmp_path):
     assert result["limited"] is True
 
 
+def test_list_processes_skips_vanished_processes(load_loomops, monkeypatch, tmp_path):
+    processes = load_loomops("processes")["processes"]
+    _fake_proc(tmp_path, 7, "live", "S", "live")
+    (tmp_path / "9").mkdir()  # pid directory exists but status vanished mid-scan
+    monkeypatch.setattr(processes, "PROC_ROOT", tmp_path)
+
+    result = processes.list_processes({})
+
+    assert [row["pid"] for row in result["processes"]] == [7]
+
+
+def test_start_time_parses_stat_with_spaces_in_comm(load_loomops, monkeypatch, tmp_path):
+    processes = load_loomops("processes")["processes"]
+    base = tmp_path / "42"
+    base.mkdir()
+    fields = ["S"] + ["0"] * 18 + ["98765"] + ["0"] * 20
+    (base / "stat").write_text(f"42 (my proc) {' '.join(fields)}\n", encoding="utf-8")
+    monkeypatch.setattr(processes, "PROC_ROOT", tmp_path)
+
+    assert processes._start_time(42) == "98765"
+
+
 def test_kill_process_rejects_unsafe_targets(load_loomops):
     processes = load_loomops("processes")["processes"]
     with pytest.raises(ValueError, match="integer"):
@@ -659,6 +681,7 @@ def test_kill_process_rejects_unsafe_targets(load_loomops):
 def test_kill_process_signals_and_audits(load_loomops, monkeypatch, tmp_path):
     processes = load_loomops("processes")["processes"]
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    monkeypatch.setattr(processes, "_start_time", lambda pid: "100")
     killed = []
     monkeypatch.setattr(processes.os, "kill", lambda pid, sig: killed.append((pid, sig)))
 
@@ -671,6 +694,7 @@ def test_kill_process_signals_and_audits(load_loomops, monkeypatch, tmp_path):
 
 def test_kill_process_reports_missing_pid(load_loomops, monkeypatch):
     processes = load_loomops("processes")["processes"]
+    monkeypatch.setattr(processes, "_start_time", lambda pid: "100")
 
     def fake_kill(pid, sig):
         raise ProcessLookupError
@@ -678,6 +702,19 @@ def test_kill_process_reports_missing_pid(load_loomops, monkeypatch):
     monkeypatch.setattr(processes.os, "kill", fake_kill)
     with pytest.raises(ValueError, match="No process"):
         processes.kill_process({"pid": 4321})
+
+
+def test_kill_process_refuses_a_recycled_pid(load_loomops, monkeypatch):
+    processes = load_loomops("processes")["processes"]
+    times = iter(["100", "200"])
+    monkeypatch.setattr(processes, "_start_time", lambda pid: next(times))
+    killed = []
+    monkeypatch.setattr(processes.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    with pytest.raises(ValueError, match="changed"):
+        processes.kill_process({"pid": 4321})
+
+    assert killed == []
 
 
 # === services ===

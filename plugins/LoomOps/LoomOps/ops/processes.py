@@ -29,13 +29,39 @@ def _read_text(path: Path) -> str:
         return ""
 
 
+def _start_time(pid: int) -> str | None:
+    """The process start time (22nd field of /proc/<pid>/stat), or None.
+
+    Used to pin a target's identity across a signal: the kernel may recycle a
+    pid once the original process exits, so the bare pid is not enough.
+    """
+    text = _read_text(PROC_ROOT / str(pid) / "stat")
+    if not text:
+        return None
+    close = text.rfind(")")
+    if close == -1:
+        return None
+    # Fields after the comm (which may contain spaces) start at State (field 3);
+    # starttime is field 22, i.e. index 22 - 3 within this slice.
+    fields = text[close + 1 :].split()
+    index = 22 - 3
+    if len(fields) <= index:
+        return None
+    return fields[index]
+
+
 def _process(pid: int) -> dict[str, Any] | None:
     base = PROC_ROOT / str(pid)
     if not base.is_dir():
         return None
+    status_text = _read_text(base / "status")
+    if not status_text:
+        # The pid vanished mid-scan (or status is unreadable): treat it as gone
+        # rather than emitting a blank row that looks like live data.
+        return None
     name = ""
     state = ""
-    for line in _read_text(base / "status").splitlines():
+    for line in status_text.splitlines():
         if line.startswith("Name:"):
             name = line.partition(":")[2].strip()
         elif line.startswith("State:"):
@@ -78,6 +104,11 @@ def kill_process(arguments: dict[str, Any]) -> dict[str, Any]:
     pid = arguments.get("pid")
     if isinstance(pid, bool) or not isinstance(pid, int):
         raise ValueError("pid must be an integer")
+    # Pin the target's identity now, before the remaining validation, and
+    # confirm it just before signalling: the two reads straddle that work, so a
+    # pid that exits and is recycled in between is refused instead of receiving
+    # a signal meant for the original process.
+    start_time = _start_time(pid)
     if pid <= 1:
         raise ValueError("Refusing to signal pid <= 1")
     if pid == os.getpid():
@@ -87,6 +118,12 @@ def kill_process(arguments: dict[str, Any]) -> dict[str, Any]:
     if sig is None:
         raise ValueError(
             f"Unsupported signal '{name}'. Allowed: {', '.join(ALLOWED_SIGNALS)}"
+        )
+    if start_time is None:
+        raise ValueError(f"No process with pid {pid}")
+    if _start_time(pid) != start_time:
+        raise ValueError(
+            f"Process {pid} changed before it could be signalled; refusing to signal"
         )
     try:
         os.kill(pid, sig)
