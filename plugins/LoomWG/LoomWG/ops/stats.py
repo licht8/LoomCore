@@ -14,7 +14,10 @@ def _share(peer_total: int, grand_total: int) -> float:
 
 def stats(arguments: dict[str, Any]) -> dict[str, Any]:
     interface = validate_interface(arguments)
-    top_n = max(1, int(arguments.get("top", 5) or 5))
+    try:
+        top_n = max(1, int(arguments.get("top", 5) or 5))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("'top' must be an integer") from exc
 
     details = read_interface(interface)
     peers = details["peers"]

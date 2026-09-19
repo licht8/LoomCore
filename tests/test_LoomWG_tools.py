@@ -1120,3 +1120,10 @@ def test_stats_snapshot(load_loomwg, monkeypatch):
     assert data["total_transmit_bytes"] == 350
     assert len(data["peers"]) == 1
     assert data["peers"][0]["share"] == 80.0
+
+
+def test_stats_rejects_non_integer_top(load_loomwg):
+    stats = load_loomwg("stats")["stats"]
+    for value in ([5], "abc", {"x": 1}):
+        with pytest.raises(ValueError, match="'top' must be an integer"):
+            stats.stats({"interface": "wg0", "top": value})
