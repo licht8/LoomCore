@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+import threading
 
 from .clients.client import migrate_client_layout
 from .manifest import runtime_report
@@ -33,13 +34,21 @@ def _log_manifest_report() -> None:
         logger.info("optional permission: %s", note)
 
 
-def run_server() -> None:
-    _configure_logging()
-    _log_manifest_report()
+def _apply_autostart() -> None:
     try:
         apply_autostart()
     except Exception as exc:  # autostart must never block plugin startup
         logger.warning("autostart failed: %s", exc)
+
+
+def run_server() -> None:
+    _configure_logging()
+    _log_manifest_report()
+    # Run off the startup path: the core waits only 10s for `initialize`, and
+    # `wg-quick up` can exceed that per interface.
+    threading.Thread(
+        target=_apply_autostart, name="loomwg-autostart", daemon=True
+    ).start()
     try:
         migrate_client_layout()
     except Exception as exc:  # migration must never block plugin startup

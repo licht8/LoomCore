@@ -1,6 +1,7 @@
 """Unit tests for the expanded LoomWG toolset and the JSON client store."""
 
 import base64
+import threading
 
 import pytest
 
@@ -1125,6 +1126,37 @@ def test_apply_autostart_brings_up_flagged(load_loomwg, monkeypatch, tmp_path):
     service.apply_autostart()
 
     assert any(call[0][:2] == ["wg-quick", "up"] for call in calls)
+
+
+def test_run_server_does_not_block_on_autostart(load_loomwg, monkeypatch):
+    server = load_loomwg("server")["server"]
+    order: list[str] = []
+    started = threading.Event()
+    allow_finish = threading.Event()
+
+    def slow_autostart():
+        order.append("autostart-start")
+        started.set()
+        allow_finish.wait(timeout=5)
+        order.append("autostart-end")
+
+    def fake_run(*args, **kwargs):
+        order.append("run")
+
+    monkeypatch.setattr(server, "apply_autostart", slow_autostart)
+    monkeypatch.setattr(server, "migrate_client_layout", lambda: None)
+    monkeypatch.setattr(server, "_configure_logging", lambda: None)
+    monkeypatch.setattr(server, "_log_manifest_report", lambda: None)
+    monkeypatch.setattr(server, "run", fake_run)
+
+    server.run_server()
+
+    # The protocol loop must start before a slow autostart finishes, or the core
+    # would time the plugin out while `wg-quick up` is still running.
+    assert "run" in order
+    assert "autostart-end" not in order
+    assert started.wait(timeout=5)
+    allow_finish.set()
 
 
 # === wg_stats ===
