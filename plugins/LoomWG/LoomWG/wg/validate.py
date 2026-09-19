@@ -239,8 +239,8 @@ def check_config(arguments: dict[str, Any]) -> dict[str, Any]:
         else:
             for candidate in public_keys:
                 _check_key(candidate, f"[Peer #{index}] PublicKey", errors)
-                if candidate in seen_peers:
-                    errors.append(f"[Peer #{index}] duplicate PublicKey")
+            if any(candidate in seen_peers for candidate in public_keys):
+                errors.append(f"[Peer #{index}] duplicate PublicKey")
             seen_peers.update(public_keys)
         for preshared_key in _present_values(section, "presharedkey"):
             _check_key(preshared_key, f"[Peer #{index}] PresharedKey", errors)

@@ -332,6 +332,29 @@ def test_check_config_does_not_flag_self_duplicate_public_key(load_loomwg):
     assert not any("duplicate PublicKey" in error for error in result["data"]["errors"])
 
 
+def test_check_config_reports_duplicate_public_key_once_per_peer(load_loomwg):
+    check = load_loomwg("validate")["validate"]
+    text = "\n".join(
+        [
+            "[Interface]",
+            f"PrivateKey = {_key(1)}",
+            "Address = 10.66.66.1/24",
+            "",
+            "[Peer]",
+            f"PublicKey = {_key(2)}",
+            "AllowedIPs = 10.66.66.2/32",
+            "",
+            "[Peer]",
+            f"PublicKey = {_key(2)}",
+            f"PublicKey = {_key(2)}",
+            "AllowedIPs = 10.66.66.3/32",
+        ]
+    )
+    result = check.check_config({"content": text})
+    duplicates = [error for error in result["data"]["errors"] if "duplicate PublicKey" in error]
+    assert len(duplicates) == 1
+
+
 def test_check_config_reports_blank_public_key_as_missing(load_loomwg):
     check = load_loomwg("validate")["validate"]
     text = "\n".join(
