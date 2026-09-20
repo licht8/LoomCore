@@ -24,3 +24,6 @@ task report (RULES 14).
   (constant-work PBKDF2/TOTP), `decode_jwt_token` fails closed on an empty
   signing secret, the cookie `Secure` flag derives from `is_https()`, and
   `/api/auth/session` is rate-limited to 30/min.
+- Fixed a file-descriptor leak in LoomWG `validate_config_text`: dropped the
+  redundant `os.chmod` before wrapping the `mkstemp` descriptor, so a failing
+  `chmod` can no longer leak the fd.

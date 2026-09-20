@@ -1439,6 +1439,28 @@ def test_validate_config_text_passes_and_cleans_temp(load_loomwg, monkeypatch):
     assert not Path(seen[0]).exists()
 
 
+def test_validate_config_text_does_not_chmod_temp(load_loomwg, monkeypatch):
+    validate = load_loomwg("validate")["validate"]
+    seen: list[str] = []
+    chmod_calls: list[str] = []
+
+    def fake_run_command(command, *args, **kwargs):
+        seen.append(command[-1])
+        return "stripped"
+
+    def fake_chmod(path, mode, *args, **kwargs):
+        chmod_calls.append(str(path))
+
+    monkeypatch.setattr(validate, "run_command", fake_run_command)
+    monkeypatch.setattr(validate.os, "chmod", fake_chmod)
+
+    validate.validate_config_text("[Interface]\nPrivateKey = x\n")
+
+    assert chmod_calls == []
+    assert len(seen) == 1
+    assert not Path(seen[0]).exists()
+
+
 def test_check_config_reports_unreadable_interface_file(load_loomwg, monkeypatch, tmp_path):
     validate = load_loomwg("validate")["validate"]
     (tmp_path / "wg0.conf").write_bytes(b"\xff\xfe\x00")

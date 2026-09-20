@@ -128,7 +128,6 @@ def validate_config_text(text: str) -> None:
     descriptor, tmp_name = tempfile.mkstemp(suffix=".conf")
     tmp_path = Path(tmp_name)
     try:
-        os.chmod(tmp_path, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as tmp_file:
             tmp_file.write(text)
         run_command(["wg-quick", "strip", str(tmp_path)], sensitive=True)
