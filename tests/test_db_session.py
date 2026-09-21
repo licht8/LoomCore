@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from src.db import session as db_session
 from src.db.models import Message, Session, User
@@ -25,9 +26,10 @@ class _FakeResult:
 
 
 class _FakeSession:
-    def __init__(self, results=None, fail_commit_on=None):
+    def __init__(self, results=None, fail_commit_on=None, commit_error=None):
         self._results = list(results or [])
         self._fail_commit_on = fail_commit_on
+        self._commit_error = commit_error or RuntimeError("commit failed")
         self.added = []
         self.commit_count = 0
         self.refreshed = []
@@ -39,7 +41,7 @@ class _FakeSession:
     async def commit(self):
         self.commit_count += 1
         if self._fail_commit_on == self.commit_count:
-            raise RuntimeError("commit failed")
+            raise self._commit_error
 
     async def rollback(self):
         self.rolled_back += 1
@@ -158,5 +160,40 @@ async def test_ensure_session_reraises_when_recovery_finds_no_row():
 
     with pytest.raises(RuntimeError, match="commit failed"):
         await db_session.ensure_session(db, "sess-4")
+
+    assert db.rolled_back == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_recovers_when_user_insert_races():
+    winner = User(id="u-race", identifier="default", provider="web")
+    db = _FakeSession(
+        results=[
+            _FakeResult(scalar=None),
+            _FakeResult(scalar=winner),
+            _FakeResult(scalar=None),
+        ],
+        fail_commit_on=1,
+        commit_error=IntegrityError("INSERT", {}, Exception("duplicate key")),
+    )
+
+    session_id = await db_session.ensure_session(db, "sess-race")
+
+    assert session_id == "sess-race"
+    assert db.rolled_back == 1
+    assert db.commit_count == 2
+    assert any(isinstance(obj, Session) for obj in db.added)
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_reraises_when_user_recovery_finds_nothing():
+    db = _FakeSession(
+        results=[_FakeResult(scalar=None), _FakeResult(scalar=None)],
+        fail_commit_on=1,
+        commit_error=IntegrityError("INSERT", {}, Exception("duplicate key")),
+    )
+
+    with pytest.raises(IntegrityError):
+        await db_session.ensure_session(db, "sess-user-race")
 
     assert db.rolled_back == 1

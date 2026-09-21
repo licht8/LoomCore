@@ -21,9 +21,13 @@ class User(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
-    identifier: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    identifier: Mapped[str] = mapped_column(String, nullable=False)
     provider: Mapped[str] = mapped_column(String, default="web")  # 'web', 'telegram'
     role: Mapped[str] = mapped_column(String, default="user")  # 'admin', 'user'
+
+    __table_args__ = (
+        UniqueConstraint("provider", "identifier", name="uq_users_provider_identifier"),
+    )
 
     sessions: Mapped[list["Session"]] = relationship(
         "Session", back_populates="user", cascade="all, delete-orphan"

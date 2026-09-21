@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Message, Session, User
@@ -71,19 +72,26 @@ async def ensure_session(
     session_db: AsyncSession,
     session_id: str,
     user_identifier: str = "default",
+    provider: str = "web",
 ) -> str:
     """Ensure the session exists.
 
-    1. Find the user by identifier (or create them).
+    1. Find the user by ``(provider, identifier)`` (or create them).
     2. Find the session by id (or create it).
     3. Return session_id.
 
-    If the session already exists — return its id unchanged.
-    If the user does not exist — create them with default parameters.
+    Identity is scoped to ``provider`` so a web identity and a Telegram identity
+    that share the same string do not collide. If the session already exists —
+    return its id unchanged. If the user does not exist — create them with
+    default parameters; a concurrent insert that wins the race is recovered by
+    re-reading after the rollback.
     """
     # 1. Find or create the user
     result = await session_db.execute(
-        select(User).where(User.identifier == user_identifier)
+        select(User).where(
+            User.provider == provider,
+            User.identifier == user_identifier,
+        )
     )
     user = result.scalar_one_or_none()
 
@@ -91,12 +99,27 @@ async def ensure_session(
         user = User(
             id=str(uuid4()),
             identifier=user_identifier,
-            provider="web",
+            provider=provider,
             role="user",
         )
         session_db.add(user)
-        await session_db.commit()
-        await session_db.refresh(user)
+        try:
+            await session_db.commit()
+        except IntegrityError:
+            await session_db.rollback()
+            # A concurrent insert won the race — re-read the winning row.
+            result = await session_db.execute(
+                select(User).where(
+                    User.provider == provider,
+                    User.identifier == user_identifier,
+                )
+            )
+            user = result.scalar_one_or_none()
+            if user is None:
+                # Not a duplicate-key race: surface the original failure.
+                raise
+        else:
+            await session_db.refresh(user)
 
     # 2. Find or create the session
     session_result = await session_db.execute(
