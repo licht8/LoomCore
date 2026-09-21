@@ -24,7 +24,7 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
   chmod 600 .env
   echo "Created $REPO_DIR/.env. Edit it, then rerun:"
-  echo "  - HETZNER_API_KEY and POSTGRES_PASSWORD"
+  echo "  - POSTGRES_PASSWORD (and an admin login below)"
   echo "  - JWT login: SESSION_SECRET, ADMIN_PASSWORD_HASH, ADMIN_TOTP_SECRET"
   echo "    (hash a password with: python -m src.auth 'your-password')"
   echo "  - Leave ADMIN_TOKEN empty unless you set AUTH_MODE=both for headless API access."
