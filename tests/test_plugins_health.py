@@ -24,6 +24,7 @@ async def test_healthcheck_loop_restarts_unhealthy(monkeypatch):
 
         async def restart_plugin(self, name):
             restarted.append(name)
+            return True
 
     monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
     iterations = {"count": 0}
@@ -88,6 +89,7 @@ async def test_healthcheck_loop_skips_disabled(monkeypatch):
 
         async def restart_plugin(self, name):
             restarted.append(name)
+            return True
 
     monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
     iterations = {"count": 0}
@@ -103,6 +105,41 @@ async def test_healthcheck_loop_skips_disabled(monkeypatch):
         await health_module.healthcheck_loop()
 
     assert restarted == []
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_loop_logs_warning_when_restart_fails(monkeypatch, caplog):
+    class _FakeManager:
+        def plugin_names(self):
+            return ["demo"]
+
+        def is_enabled(self, name):
+            return True
+
+        def is_healthy(self, name):
+            return False
+
+        async def restart_plugin(self, name):
+            return False
+
+    monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
+    iterations = {"count": 0}
+
+    async def fake_sleep(_seconds):
+        iterations["count"] += 1
+        if iterations["count"] > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(health_module.asyncio, "sleep", fake_sleep)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="loomcore.plugins.health"),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await health_module.healthcheck_loop()
+
+    assert "could not be restarted" in caplog.text
+    assert "restarted successfully" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -155,6 +192,7 @@ async def test_healthcheck_loop_checks_remaining_plugins_after_an_error(monkeypa
 
         async def restart_plugin(self, name):
             restarted.append(name)
+            return True
 
     monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
     iterations = {"count": 0}

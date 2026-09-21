@@ -26,8 +26,10 @@ async def healthcheck_loop() -> None:
                 if not plugin_manager.is_healthy(name):
                     logger.warning(f"Plugin '{name}' is unhealthy — restarting")
                     try:
-                        await plugin_manager.restart_plugin(name)
-                        logger.info(f"Plugin '{name}' restarted successfully")
+                        if await plugin_manager.restart_plugin(name):
+                            logger.info(f"Plugin '{name}' restarted successfully")
+                        else:
+                            logger.warning(f"Plugin '{name}' could not be restarted")
                     except Exception as exc:
                         logger.error(f"Failed to restart '{name}': {exc}")
             except Exception as exc:

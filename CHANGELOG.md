@@ -68,3 +68,10 @@ task report (RULES 14).
 - The LLM client rejects budget costs below 1, retries transient statuses
   (408/429/5xx) with `Retry-After`/backoff, and reuses one pooled `httpx.AsyncClient`
   that is closed on shutdown.
+- Removed the ambiguous `result` field from `tool_response` events (an explicit
+  `null` was indistinguishable from an absent key) and corrected the
+  `exclude_none` docstring; `extract_text` tolerates malformed MCP content and
+  `None`.
+- The plugin health loop logs a warning when a restart fails instead of always
+  reporting success, and the shared `PluginManager` is built lazily
+  (`get_plugin_manager()`, PEP 562) instead of at import.
