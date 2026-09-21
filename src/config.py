@@ -12,15 +12,19 @@ DEFAULT_DATABASE_URL = "postgresql+asyncpg://localhost:5432/loomcore"
 
 class Settings(BaseSettings):
     database_url: str = DEFAULT_DATABASE_URL
-    hetzner_api_key: str = ""
-    hetzner_base_url: str = "https://inference.hetzner.com/api/v1"
-    hetzner_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
-    hetzner_connect_timeout: float = 15.0
-    hetzner_read_timeout: float = 90.0
-    hetzner_write_timeout: float = 30.0
-    hetzner_pool_timeout: float = 15.0
-    hetzner_max_retries: int = 2
-    hetzner_enable_thinking: bool = False
+    # Optional LLM env bootstrap. All empty by default so a plain deployment
+    # starts unconfigured and the admin picks a provider in Settings.
+    llm_provider: str = ""
+    llm_base_url: str = ""
+    llm_model: str = ""
+    llm_api_key: str = ""
+    llm_connect_timeout: float = 15.0
+    llm_read_timeout: float = 90.0
+    llm_write_timeout: float = 30.0
+    llm_pool_timeout: float = 15.0
+    llm_max_retries: int = 2
+    llm_enable_thinking: bool = False
+    llm_settings_file: str = ""
     debug: bool = False
     admin_token: str = ""
     admin_username: str = "admin"

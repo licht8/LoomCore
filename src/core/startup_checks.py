@@ -10,6 +10,7 @@ import logging
 from src.auth import revocation_store_path
 from src.config import settings
 from src.core.security import admin_jwt_mode_enabled
+from src.llm.config import get_active
 
 logger = logging.getLogger("loomcore.security")
 
@@ -62,8 +63,18 @@ def _check_revocation_store() -> None:
         )
 
 
+def _check_llm_provider() -> None:
+    """Warn when no LLM provider is configured yet (chat replies with a hint)."""
+    if not get_active().configured:
+        logger.warning(
+            "No LLM provider is configured; chat will reply with a setup hint "
+            "until an admin chooses one in Settings."
+        )
+
+
 def check_security_posture() -> None:
     """Run all startup security-posture checks (warnings and fail-closed errors)."""
     _check_auth_mode()
     _check_tls()
     _check_revocation_store()
+    _check_llm_provider()

@@ -11,3 +11,7 @@ class LlmTimeoutError(LlmError):
 
 class LlmBudgetExceeded(LlmError):
     """The process-wide daily LLM call budget is exhausted."""
+
+
+class LlmNotConfigured(LlmError):
+    """No LLM provider has been configured yet."""

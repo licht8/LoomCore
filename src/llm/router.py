@@ -4,7 +4,6 @@ import re
 import time
 from collections.abc import Iterable
 
-from src.config import settings
 from src.core.agent import (
     AGENT_PLAN_TOOL,
     PLANNER_REASK_LIMIT,
@@ -19,7 +18,8 @@ from src.core.timing import log_stage, span
 from src.db import session as db_session
 from src.db.database import async_session_factory
 from src.db.session import ensure_session
-from src.llm.client import HetznerClient
+from src.llm.client import OpenAICompatClient
+from src.llm.config import NOT_CONFIGURED_MESSAGE, get_active
 from src.llm.prompt import build_planner_messages, build_summary_messages
 from src.plugins.manager import PluginManager
 
@@ -168,9 +168,7 @@ class AIRouter:
     """
 
     def __init__(self, plugin_manager: PluginManager | None = None):
-        self.client = HetznerClient(
-            api_key=settings.hetzner_api_key,
-        )
+        self.client = OpenAICompatClient()
         self.plugin_manager = plugin_manager
 
     async def aclose(self) -> None:
@@ -191,6 +189,9 @@ class AIRouter:
         4. Validate the plan; re-ask once when it is malformed.
         5. Persist and return the plan, or the plain-text answer.
         """
+        if not get_active().configured:
+            return {"type": "text", "content": NOT_CONFIGURED_MESSAGE}
+
         route_started = time.monotonic()
         history_dicts = await self._begin_turn(session_id, user_message)
 
@@ -343,9 +344,14 @@ class AIRouter:
         observations: list[dict],
     ) -> str:
         """Produce the SOUL-voiced summary for a completed plan."""
+        config = get_active()
+        if not config.configured:
+            return NOT_CONFIGURED_MESSAGE
         messages = build_summary_messages(user_message, plan, observations)
         async with span("summary_call", steps=len(plan.get("steps", []))):
-            llm_response = await self.client.chat_completion(messages)
+            llm_response = await self.client.chat_completion(
+                messages, model=config.summary_model or None
+            )
             content, _tool_name, _tool_args, _raw = self._parse_completion(llm_response)
         return content
 

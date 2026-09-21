@@ -6,6 +6,13 @@ import pytest
 
 from src.config import settings
 from src.core import startup_checks
+from src.llm.config import LlmConfig
+
+_CONFIGURED = LlmConfig(
+    provider="custom",
+    base_url="https://llm.test/v1",
+    model="test-model",
+)
 
 
 def _settings(monkeypatch, **overrides):
@@ -20,6 +27,7 @@ def _settings(monkeypatch, **overrides):
     }
     for key, value in {**defaults, **overrides}.items():
         monkeypatch.setattr(settings, key, value)
+    monkeypatch.setattr(startup_checks, "get_active", lambda: _CONFIGURED)
 
 
 def test_secure_posture_is_silent(monkeypatch, tmp_path, caplog):
@@ -104,3 +112,17 @@ def test_unwritable_revocation_store_warns(monkeypatch, tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="loomcore.security"):
         startup_checks.check_security_posture()
     assert any("cannot be persisted to" in message for message in caplog.messages)
+
+
+def test_unconfigured_llm_provider_warns(monkeypatch, tmp_path, caplog):
+    _settings(
+        monkeypatch,
+        admin_token="static",
+        loomcore_revoked_file=str(tmp_path / "revoked.json"),
+    )
+    monkeypatch.setattr(startup_checks, "get_active", lambda: LlmConfig())
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        startup_checks.check_security_posture()
+    assert any(
+        "No LLM provider is configured" in message for message in caplog.messages
+    )
