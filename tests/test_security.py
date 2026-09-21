@@ -103,6 +103,29 @@ def test_declared_risk_is_normalized_and_falls_back_when_unknown():
     assert classify_tool_risk("wg_remove_peer", "nonsense") == "dangerous"
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "x_remove_user",
+        "x_kill_worker",
+        "x_stop_service",
+        "x_uninstall",
+        "x_purge",
+        "x_wipe",
+    ],
+)
+def test_destructive_stems_are_dangerous(tool_name):
+    assert classify_tool_risk(tool_name) == "dangerous"
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["x_install_tool", "x_disable_feature", "x_enable_feature"],
+)
+def test_install_enable_disable_are_moderate(tool_name):
+    assert classify_tool_risk(tool_name) == "moderate"
+
+
 def _clear_admin_settings(monkeypatch, **overrides):
     defaults = {
         "admin_token": "",

@@ -51,9 +51,11 @@ def _check_revocation_store() -> None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8"):
+            pass
     except OSError as exc:
         logger.warning(
-            "Revocation store '%s' is not writable (%s); falling back to "
+            "Revocation store '%s' cannot be persisted to (%s); falling back to "
             "in-memory and logout will not survive a restart.",
             path,
             exc,

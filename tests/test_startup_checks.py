@@ -23,14 +23,16 @@ def _settings(monkeypatch, **overrides):
 
 
 def test_secure_posture_is_silent(monkeypatch, tmp_path, caplog):
+    store = tmp_path / "revoked.json"
     _settings(
         monkeypatch,
         admin_token="static",
-        loomcore_revoked_file=str(tmp_path / "revoked.json"),
+        loomcore_revoked_file=str(store),
     )
     with caplog.at_level(logging.WARNING, logger="loomcore.security"):
         startup_checks.check_security_posture()
     assert caplog.messages == []
+    assert store.exists()
 
 
 def test_insecure_cookie_warns(monkeypatch, tmp_path, caplog):
@@ -92,13 +94,13 @@ def test_empty_revocation_store_warns_in_memory(monkeypatch, caplog):
 
 
 def test_unwritable_revocation_store_warns(monkeypatch, tmp_path, caplog):
-    blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory")
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
     _settings(
         monkeypatch,
         admin_token="static",
-        loomcore_revoked_file=str(blocker / "sub" / "revoked.json"),
+        loomcore_revoked_file=str(store_dir),
     )
     with caplog.at_level(logging.WARNING, logger="loomcore.security"):
         startup_checks.check_security_posture()
-    assert any("not writable" in message for message in caplog.messages)
+    assert any("cannot be persisted to" in message for message in caplog.messages)

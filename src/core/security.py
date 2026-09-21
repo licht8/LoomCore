@@ -143,17 +143,9 @@ def is_valid_admin_credential(token: str | None) -> bool:
 
 VALID_TOOL_RISKS = frozenset({"safe", "moderate", "dangerous"})
 
-
-def classify_tool_risk(tool_name: str, declared: str | None = None) -> str:
-    """Determine the risk level of a tool call.
-
-    A plugin- or core-declared risk (``declared``) takes precedence over the
-    name heuristics. Returns: 'dangerous', 'moderate' or 'safe'.
-    """
-    if isinstance(declared, str) and declared.strip().lower() in VALID_TOOL_RISKS:
-        return declared.strip().lower()
-
-    explicit_dangerous = {
+# Tools that must always sit behind approval.
+_EXPLICIT_DANGEROUS = frozenset(
+    {
         "wg_remove_peer",
         "wg_export_existing_clients",
         "wg_setup_server",
@@ -171,9 +163,12 @@ def classify_tool_risk(tool_name: str, declared: str | None = None) -> str:
         "ops_kill_process",
         "ops_systemctl_restart",
     }
-    # Read-only tools that must never sit behind approval, even though the
-    # heuristic keywords below would otherwise flag them (e.g. "..._config").
-    explicit_safe = {
+)
+
+# Read-only tools that must never sit behind approval, even though the
+# heuristic keywords below would otherwise flag them (e.g. "..._config").
+_EXPLICIT_SAFE = frozenset(
+    {
         "wg_list_interfaces",
         "wg_list_peers",
         "wg_interface_status",
@@ -194,21 +189,50 @@ def classify_tool_risk(tool_name: str, declared: str | None = None) -> str:
         "ops_read_file",
         "ops_systemctl_status",
     }
+)
+
+# Whole underscore/dash-separated tokens, matched against a name's tokens so
+# substrings like "rm" in "form" (or "add" in "address") do not trigger.
+_DANGEROUS_TOKENS = frozenset(
+    {
+        "restart",
+        "delete",
+        "drop",
+        "reboot",
+        "rm",
+        "chmod",
+        "flush",
+        "remove",
+        "kill",
+        "stop",
+        "wipe",
+        "purge",
+        "uninstall",
+    }
+)
+_MODERATE_TOKENS = frozenset(
+    {"create", "add", "set", "config", "deploy", "install", "disable", "enable"}
+)
+
+
+def classify_tool_risk(tool_name: str, declared: str | None = None) -> str:
+    """Determine the risk level of a tool call.
+
+    A plugin- or core-declared risk (``declared``) takes precedence over the
+    name heuristics. Returns: 'dangerous', 'moderate' or 'safe'.
+    """
+    if isinstance(declared, str) and declared.strip().lower() in VALID_TOOL_RISKS:
+        return declared.strip().lower()
 
     tool_lower = tool_name.lower()
-    if tool_lower in explicit_dangerous:
+    if tool_lower in _EXPLICIT_DANGEROUS:
         return "dangerous"
-    if tool_lower in explicit_safe:
+    if tool_lower in _EXPLICIT_SAFE:
         return "safe"
 
-    # Match whole underscore/dash-separated tokens so substrings like "rm" in
-    # "form" (or "add" in "address") no longer trigger a false positive.
     tokens = {token for token in re.split(r"[^a-z0-9]+", tool_lower) if token}
-    dangerous = {"restart", "delete", "drop", "reboot", "rm", "chmod", "flush"}
-    moderate = {"create", "add", "set", "config", "deploy"}
-
-    if tokens & dangerous:
+    if tokens & _DANGEROUS_TOKENS:
         return "dangerous"
-    if tokens & moderate:
+    if tokens & _MODERATE_TOKENS:
         return "moderate"
     return "safe"
