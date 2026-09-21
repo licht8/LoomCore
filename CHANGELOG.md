@@ -43,3 +43,13 @@ task report (RULES 14).
 - Audit: the session-taking append helper is private and documents that it
   commits the passed session; `verify_chain` accepts `expected_count` /
   `expected_head` anchors to detect truncation.
+- Agent plans that exceed `max_steps` now fail loudly (status `failed`, a
+  `plan_step` failure that carries its `step`) instead of silently truncating,
+  and emitted step events are shallow copies so consumers never see later
+  mutation.
+- Revocation store reloads when its file signature changes, is guarded by a
+  `threading.RLock` with in-place merge and unique temp-file writes (concurrent
+  revocations no longer lost); `verify_password` bounds the PBKDF2 round count
+  and catches `OverflowError`.
+- Security events newline-escape the event name, guard field rendering against a
+  hostile `__repr__`, and redact known-sensitive keys (password/token/secret/...).

@@ -85,3 +85,51 @@ async def test_rate_limit_exceeded_is_logged(caplog):
 
     assert response.status_code == 429
     assert any("rate_limit_exceeded" in m for m in caplog.messages)
+
+
+class _BadRepr:
+    def __repr__(self):
+        raise RuntimeError("no repr available")
+
+
+def test_log_security_event_sanitizes_event_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        log_security_event("bad\ninjected\r")
+
+    records = [r for r in caplog.records if r.name == "loomcore.security"]
+    assert records, "expected a loomcore.security record"
+    message = records[0].getMessage()
+    assert "bad\\ninjected\\r" in message
+    assert "\n" not in message
+    assert "\r" not in message
+
+
+def test_log_security_event_survives_bad_repr(caplog):
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        log_security_event("demo_event", payload=_BadRepr())
+
+    records = [r for r in caplog.records if r.name == "loomcore.security"]
+    assert records, "expected a loomcore.security record"
+    assert "<unrepresentable>" in records[0].getMessage()
+
+
+def test_log_security_event_redacts_sensitive_fields(caplog):
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        log_security_event(
+            "demo_event",
+            password="hunter2",
+            token="secret-token",
+            secret="shh",
+            authorization="Bearer abc",
+            client="1.2.3.4",
+        )
+
+    records = [r for r in caplog.records if r.name == "loomcore.security"]
+    assert records, "expected a loomcore.security record"
+    message = records[0].getMessage()
+    assert "hunter2" not in message
+    assert "secret-token" not in message
+    assert "shh" not in message
+    assert "Bearer abc" not in message
+    assert "***" in message
+    assert "1.2.3.4" in message

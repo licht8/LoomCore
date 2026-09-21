@@ -15,16 +15,44 @@ from typing import Any
 
 logger = logging.getLogger("loomcore.security")
 
+_SENSITIVE_MARKERS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "authorization",
+    "api_key",
+    "apikey",
+    "cookie",
+    "totp",
+)
+_REDACTED = "***"
+
+
+def _render_field(key: str, value: Any) -> str:
+    """Render one ``key=value`` field, redacting sensitive keys safely."""
+    if any(marker in key.lower() for marker in _SENSITIVE_MARKERS):
+        return _REDACTED
+    try:
+        return repr(value)
+    except Exception:  # noqa: BLE001 - a hostile __repr__ must not break the caller
+        return "<unrepresentable>"
+
 
 def log_security_event(event: str, **fields: Any) -> None:
     """Log a security-relevant event with structured ``key=value`` fields.
 
     ``None`` values are dropped so callers can pass optional context freely.
+    The event name is newline-escaped and known-sensitive field values are
+    redacted, so a record can never inject forged log lines or leak credentials.
     """
-    rendered = " ".join(
-        f"{key}={value!r}" for key, value in sorted(fields.items()) if value is not None
-    )
-    if rendered:
-        logger.warning("%s %s", event, rendered)
+    safe_event = str(event).replace("\r", "\\r").replace("\n", "\\n")
+    parts = [
+        f"{key}={_render_field(key, value)}"
+        for key, value in sorted(fields.items())
+        if value is not None
+    ]
+    if parts:
+        logger.warning("%s %s", safe_event, " ".join(parts))
     else:
-        logger.warning("%s", event)
+        logger.warning("%s", safe_event)
