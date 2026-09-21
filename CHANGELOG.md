@@ -81,3 +81,9 @@ task report (RULES 14).
 - The router only recovers a textual `name {json}` tool call when the name is
   known and the body parses, and no longer appends an empty assistant turn when
   re-asking.
+- WebSocket plan execution no longer aborts remaining steps when persisting a
+  tool message fails: the terminal event is still sent, the plan completes, and
+  the failure is logged.
+- WebSocket inbound frames are shape-validated (non-string `message` or non-dict
+  frames are ignored) and malformed JSON frames are reported and skipped instead
+  of closing the connection; bad frames still consume the per-identity throttle.

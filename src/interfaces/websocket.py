@@ -194,16 +194,23 @@ async def _run_plan(
             raw = event.get("result")
             content = _extract_text(raw)
             artifacts = _build_artifacts(raw)
-            await _save_tool_message(
-                session_id,
-                step["tool"],
-                step.get("args"),
-                content,
-                status="success",
-                summary="Done",
-                risk=step.get("risk"),
-                artifacts=artifacts,
-            )
+            try:
+                await _save_tool_message(
+                    session_id,
+                    step["tool"],
+                    step.get("args"),
+                    content,
+                    status="success",
+                    summary="Done",
+                    risk=step.get("risk"),
+                    artifacts=artifacts,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist success tool message for %s: %s",
+                    step["tool"],
+                    exc,
+                )
             await send(
                 tool_success_payload(step["tool"], content, step.get("risk"), artifacts)
             )
@@ -212,15 +219,22 @@ async def _run_plan(
             if tracker is not None:
                 tracker["tool"] = None
             message = event.get("error") or f"Step failed: {step.get('tool')}"
-            await _save_tool_message(
-                session_id,
-                step["tool"],
-                step.get("args"),
-                message,
-                status="error",
-                summary="Error",
-                risk=step.get("risk"),
-            )
+            try:
+                await _save_tool_message(
+                    session_id,
+                    step["tool"],
+                    step.get("args"),
+                    message,
+                    status="error",
+                    summary="Error",
+                    risk=step.get("risk"),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist error tool message for %s: %s",
+                    step["tool"],
+                    exc,
+                )
             await send(_tool_error_payload(step["tool"], message, step.get("risk")))
             await audit_step(step, "failed", message)
         if show_plan:
@@ -677,7 +691,15 @@ async def websocket_endpoint(
             return
 
         # Regular text message from the user
-        user_text = data if isinstance(data, str) else data.get("message", "")
+        if isinstance(data, str):
+            user_text = data
+        elif isinstance(data, dict) and isinstance(data.get("message"), str):
+            user_text = data["message"]
+        else:
+            logger.warning(
+                "Ignoring frame with no string message for session %s", session_id
+            )
+            return
         if not user_text:
             return
         if is_busy():
@@ -718,7 +740,18 @@ async def websocket_endpoint(
     try:
         while True:
             # Read JSON from the client
-            data = await websocket.receive_json()
+            try:
+                data = await websocket.receive_json()
+            except ValueError:
+                if not _allow_ws_message(identity):
+                    await send(error_payload("Rate limit exceeded. Please slow down."))
+                    continue
+                logger.warning(
+                    "Ignoring malformed JSON frame for session %s", session_id
+                )
+                with contextlib.suppress(Exception):
+                    await send(error_payload("Malformed JSON frame ignored."))
+                continue
             logger.info(f"📥 Received client message: {_describe_client_message(data)}")
             if not _allow_ws_message(identity):
                 await send(error_payload("Rate limit exceeded. Please slow down."))

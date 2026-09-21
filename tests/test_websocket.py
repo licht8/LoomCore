@@ -2,6 +2,8 @@
 
 import asyncio
 import copy
+import json
+import logging
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -1024,7 +1026,7 @@ async def test_plan_failure_emits_plan_done_failed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_plan_survives_persistence_crash(monkeypatch):
+async def test_run_plan_completes_when_tool_persistence_fails(monkeypatch, caplog):
     sent, send = _collector()
     _patch_plan_runtime(monkeypatch)
     plan = _safe_two_step_plan()
@@ -1034,15 +1036,20 @@ async def test_run_plan_survives_persistence_crash(monkeypatch):
 
     monkeypatch.setattr(ws_module, "_save_tool_message", boom_save)
 
-    await ws_module._run_plan(
-        send, "sess", "inspect", plan, {"tool": None, "plan": None}
-    )
+    with caplog.at_level(logging.WARNING, logger="loomcore.websocket"):
+        await ws_module._run_plan(
+            send, "sess", "inspect", plan, {"tool": None, "plan": None}
+        )
 
+    assert "Failed to persist success tool message" in caplog.text
     types = [p["type"] for p in sent]
-    assert "error" in types
+    assert "error" not in types
+    terminal = [p for p in sent if p["type"] == "tool_response"]
+    assert len(terminal) == 2
+    assert all(p["status"] == "success" for p in terminal)
     assert "response" in types
     done = next(p for p in sent if p["type"] == "plan_done")
-    assert done["status"] == "failed"
+    assert done["status"] == "done"
 
 
 @pytest.mark.asyncio
@@ -1095,6 +1102,102 @@ async def test_websocket_unrelated_message_cancels_plan_card(monkeypatch):
     assert any(p.get("content") == "ok" for p in ws.sent)
 
 
+# === inbound frame validation ===
+
+
+class _BadJsonWebSocket(FakeWebSocket):
+    """Fake socket whose first receive_json raises a JSON decode error."""
+
+    def __init__(self, incoming, **kwargs):
+        super().__init__(incoming, **kwargs)
+        self._raise_once = True
+
+    async def receive_json(self):
+        if self._raise_once:
+            self._raise_once = False
+            raise json.JSONDecodeError("bad frame", "not-json", 0)
+        return await super().receive_json()
+
+
+class _RepeatedBadJsonWebSocket(FakeWebSocket):
+    """Fake socket that rejects a fixed number of malformed frames first."""
+
+    def __init__(self, bad_frames, incoming=None, **kwargs):
+        super().__init__(incoming or [], **kwargs)
+        self._bad_frames = bad_frames
+
+    async def receive_json(self):
+        if self._bad_frames > 0:
+            self._bad_frames -= 1
+            raise json.JSONDecodeError("bad frame", "not-json", 0)
+        return await super().receive_json()
+
+
+@pytest.mark.asyncio
+async def test_websocket_ignores_non_string_message(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_route(user_text, session_id):
+        calls.append(user_text)
+        return {"type": "text", "content": "ok"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": 123}, {"message": "hello"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert calls == ["hello"]
+    assert any(p.get("content") == "ok" for p in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_websocket_ignores_non_dict_frame(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_route(user_text, session_id):
+        calls.append(user_text)
+        return {"type": "text", "content": "ok"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([123, {"message": "hello"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert calls == ["hello"]
+    assert any(p.get("content") == "ok" for p in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_websocket_skips_malformed_json_frame(monkeypatch):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_route(user_text, session_id):
+        calls.append(user_text)
+        return {"type": "text", "content": "ok"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = _BadJsonWebSocket([{"message": "hello"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    errors = [p for p in ws.sent if p["type"] == "error"]
+    assert errors and errors[0]["error"] == "Malformed JSON frame ignored."
+    assert calls == ["hello"]
+    assert any(p.get("content") == "ok" for p in ws.sent)
+
+
 # === WebSocket message rate limiting ===
 
 def test_allow_ws_message_enforces_window(monkeypatch):
@@ -1123,6 +1226,21 @@ async def test_websocket_rejects_messages_over_the_limit(monkeypatch):
     errors = [p for p in ws.sent if p["type"] == "error"]
     assert len(errors) == 1
     assert "Rate limit" in errors[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_websocket_rate_limits_malformed_frames(monkeypatch):
+    _patch_db(monkeypatch)
+    monkeypatch.setattr(ws_module, "WS_MESSAGE_LIMIT_PER_MINUTE", 1)
+
+    ws = _RepeatedBadJsonWebSocket(2)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    errors = [p["error"] for p in ws.sent if p["type"] == "error"]
+    assert sum("Malformed JSON frame ignored." in error for error in errors) == 1
+    assert sum("Rate limit" in error for error in errors) == 1
 
 
 # === central mutation audit ===
