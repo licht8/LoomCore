@@ -151,6 +151,21 @@ def test_rebuild_cache_clears_stale_schemas_and_risks():
     assert manager._tool_risk == {}
 
 
+def test_rebuild_cache_rejects_duplicate_tool_names(caplog):
+    manager = PluginManager()
+    manager._rebuild_tool_cache("alpha", [_schema(name="shared", risk="safe")])
+
+    with caplog.at_level(logging.WARNING, logger="loomcore.plugins"):
+        manager._rebuild_tool_cache(
+            "beta", [_schema(name="shared", risk="moderate")]
+        )
+
+    assert manager._tool_plugins["shared"] == "alpha"
+    assert manager.tool_risk("shared") == "safe"
+    assert manager.tool_schema("shared")["required"] == ["a"]
+    assert any("already" in record.getMessage() for record in caplog.records)
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_by_name_rejects_invalid_args(monkeypatch):
     manager = PluginManager()
@@ -447,6 +462,24 @@ async def test_restart_failure_marks_stopped(monkeypatch):
 
     assert await manager._restart_plugin("demo") is False
     assert plugin.state == PluginState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_restart_failure_kills_spawned_child(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, state=PluginState.STOPPED)
+    killed: list[str] = []
+
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def boom(name):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(manager, "_initialize_plugin", boom)
+    monkeypatch.setattr(manager, "_kill_and_stop", lambda name: killed.append(name))
+
+    assert await manager._restart_plugin("demo") is False
+    assert killed == ["demo"]
 
 
 # === _write_request ===
@@ -746,6 +779,51 @@ async def test_get_all_tools_skips_failing_plugin(monkeypatch):
     assert manager._internal_tools["wg_internal"] == "good"
 
 
+@pytest.mark.asyncio
+async def test_get_all_tools_drops_tools_a_plugin_stops_advertising(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "demo")
+    advertised = [[{"name": "wg_old"}], [{"name": "wg_new"}]]
+    calls: list[int] = []
+
+    async def fake_get_tools(plugin_name):
+        index = min(len(calls), len(advertised) - 1)
+        calls.append(1)
+        return advertised[index]
+
+    monkeypatch.setattr(manager, "get_tools", fake_get_tools)
+
+    first = await manager.get_all_tools()
+    second = await manager.get_all_tools()
+
+    assert [tool["name"] for tool in first] == ["wg_old"]
+    assert [tool["name"] for tool in second] == ["wg_new"]
+    assert "wg_old" not in manager._tool_plugins
+    assert manager._tool_plugins == {"wg_new": "demo"}
+
+
+@pytest.mark.asyncio
+async def test_get_all_tools_does_not_restart_busy_plugin(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "busy", state=PluginState.BUSY)
+    restarted: list[str] = []
+
+    async def fake_get_tools(plugin_name):
+        raise RuntimeError("busy")
+
+    async def fake_restart(plugin_name):
+        restarted.append(plugin_name)
+        return True
+
+    monkeypatch.setattr(manager, "get_tools", fake_get_tools)
+    monkeypatch.setattr(manager, "_restart_plugin", fake_restart)
+
+    tools = await manager.get_all_tools()
+
+    assert tools == []
+    assert restarted == []
+
+
 # === manifest-aware discovery ===
 
 
@@ -925,6 +1003,25 @@ async def test_enable_plugin_failure_reverts(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_enable_failure_kills_spawned_child(monkeypatch, tmp_path):
+    manager = PluginManager(state_path=tmp_path / "state.json")
+    plugin = _add_plugin(manager)
+    plugin.enabled = False
+    killed: list[str] = []
+
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def boom(name):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(manager, "_initialize_plugin", boom)
+    monkeypatch.setattr(manager, "_kill_and_stop", lambda name: killed.append(name))
+
+    assert await manager.enable_plugin("demo") is False
+    assert killed == ["demo"]
+
+
+@pytest.mark.asyncio
 async def test_reload_plugin_refreshes_enabled(monkeypatch):
     manager = PluginManager()
     plugin = _add_plugin(manager)
@@ -942,6 +1039,24 @@ async def test_reload_plugin_refreshes_enabled(monkeypatch):
     assert await manager.reload_plugin("demo") is True
     assert plugin.state == PluginState.IDLE
     assert await manager.reload_plugin("ghost") is False
+
+
+@pytest.mark.asyncio
+async def test_reload_failure_kills_spawned_child(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager)
+    killed: list[str] = []
+
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def boom(name):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(manager, "_initialize_plugin", boom)
+    monkeypatch.setattr(manager, "_kill_and_stop", lambda name: killed.append(name))
+
+    assert await manager.reload_plugin("demo") is False
+    assert killed == ["demo", "demo"]
 
 
 @pytest.mark.asyncio

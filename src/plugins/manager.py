@@ -426,6 +426,7 @@ class PluginManager:
                 plugin.state = PluginState.IDLE
             except Exception as exc:
                 logger.error(f"Failed to enable plugin '{plugin_name}': {exc}")
+                self._kill_and_stop(plugin_name)
                 plugin.enabled = False
                 plugin.state = PluginState.STOPPED
                 self._disabled.add(plugin_name)
@@ -460,6 +461,7 @@ class PluginManager:
                 plugin.state = PluginState.IDLE
             except Exception as exc:
                 logger.error(f"Failed to reload plugin '{plugin_name}': {exc}")
+                self._kill_and_stop(plugin_name)
                 plugin.state = PluginState.STOPPED
                 return False
 
@@ -566,6 +568,7 @@ class PluginManager:
 
         except Exception as exc:
             logger.error(f"Failed to restart plugin '{plugin_name}': {exc}")
+            self._kill_and_stop(plugin_name)
             plugin.state = PluginState.STOPPED
             return False
         finally:
@@ -614,6 +617,15 @@ class PluginManager:
             tool_name = tool.get("name")
             if not tool_name:
                 continue
+            owner = self._tool_plugins.get(tool_name) or self._internal_tools.get(
+                tool_name
+            )
+            if owner is not None and owner != plugin_name:
+                logger.warning(
+                    f"Plugin '{plugin_name}' publishes tool '{tool_name}' already "
+                    f"owned by plugin '{owner}'; ignoring the duplicate"
+                )
+                continue
             schema = tool.get("inputSchema")
             if isinstance(schema, dict) and schema:
                 self._tool_schemas[tool_name] = schema
@@ -627,8 +639,8 @@ class PluginManager:
                 external.append(tool)
         return external
 
-    def _rebuild_tool_cache(self, plugin_name: str, tools: list[dict]) -> None:
-        """Rebuild the plugin's tool caches (drop old entries, add new ones)."""
+    def _rebuild_tool_cache(self, plugin_name: str, tools: list[dict]) -> list[dict]:
+        """Rebuild the plugin's tool caches; return the LLM-facing tools."""
         # Remove this plugin's old entries from every cache.
         stale = [
             name
@@ -643,7 +655,7 @@ class PluginManager:
             self._tool_risk.pop(name, None)
 
         # Add new ones: internal — core only, the rest — for the LLM
-        self._index_tools(plugin_name, tools)
+        return self._index_tools(plugin_name, tools)
 
     # ------------------------------------------------------------------
     # Task 2: is_healthy / get_plugin_status methods
@@ -889,20 +901,27 @@ class PluginManager:
                 continue
             try:
                 tools = await self.get_tools(plugin_name)
-                all_tools.extend(self._index_tools(plugin_name, tools))
+                all_tools.extend(self._rebuild_tool_cache(plugin_name, tools))
             except Exception as exc:
                 logger.warning(f"Failed to fetch tools for plugin '{plugin_name}': {exc}")
                 failed_plugins.append(plugin_name)
 
         # Try to restart the plugins that did not respond
         for plugin_name in failed_plugins:
+            plugin = self._plugins.get(plugin_name)
+            if plugin is not None and plugin.state == PluginState.BUSY:
+                logger.info(
+                    f"Plugin '{plugin_name}' is busy; skipping auto-restart from "
+                    f"get_all_tools"
+                )
+                continue
             logger.info(f"Attempting auto-restart of plugin '{plugin_name}' from get_all_tools")
             try:
                 if await self._restart_plugin(plugin_name):
                     # _restart_plugin already refreshed the tool cache; re-read the
                     # tools only to include them in the returned list.
                     tools = await self.get_tools(plugin_name)
-                    all_tools.extend(self._index_tools(plugin_name, tools))
+                    all_tools.extend(self._rebuild_tool_cache(plugin_name, tools))
             except Exception as inner_exc:
                 logger.error(f"Failed to restart plugin '{plugin_name}' from get_all_tools: {inner_exc}")
 
