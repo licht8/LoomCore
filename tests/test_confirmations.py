@@ -73,3 +73,46 @@ def test_shipped_config_lists_are_non_empty():
     assert "да" in approve
     assert "no" in reject
     assert "нет" in reject
+
+
+def test_long_phrases_are_dropped_with_a_warning(tmp_path, caplog):
+    config = tmp_path / "long.json"
+    config.write_text(
+        json.dumps({"approve": ["go ahead now please", "yes"], "reject": ["no"]}),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        approve, reject = confirmations.load_phrases(config)
+
+    assert "yes" in approve
+    assert "go ahead now please" not in approve
+    assert "no" in reject
+    assert any("go ahead now please" in record.message for record in caplog.records)
+
+
+def test_missing_config_is_not_cached(tmp_path):
+    path = tmp_path / "appears-later.json"
+    assert confirmations.load_phrases(path) == (frozenset(), frozenset())
+
+    path.write_text(json.dumps({"approve": ["yes"]}), encoding="utf-8")
+
+    approve, reject = confirmations.load_phrases(path)
+    assert "yes" in approve
+    assert reject == frozenset()
+
+
+def test_clear_phrase_cache_rereads_edited_file(tmp_path):
+    config = tmp_path / "edit.json"
+    config.write_text(json.dumps({"approve": ["yes"]}), encoding="utf-8")
+    assert "yes" in confirmations.load_phrases(config)[0]
+
+    config.write_text(json.dumps({"approve": ["yep"]}), encoding="utf-8")
+    assert "yes" in confirmations.load_phrases(config)[0]
+    assert "yep" not in confirmations.load_phrases(config)[0]
+
+    confirmations.clear_phrase_cache()
+
+    approve, _ = confirmations.load_phrases(config)
+    assert "yep" in approve
+    assert "yes" not in approve
