@@ -90,10 +90,23 @@ export function DashboardSidebar() {
       <div className="mt-auto flex flex-col py-4">
         <div className="mx-3 border-t border-border/50" />
         <div className="flex flex-col gap-1.5 pt-4">
-          <button type="button" className={itemClass(false)}>
-            <Settings className={iconClass(false)} strokeWidth={1.75} />
+          <Link
+            href="/settings"
+            aria-current={isActive("/settings") ? "page" : undefined}
+            className={itemClass(isActive("/settings"))}
+          >
+            {isActive("/settings") && (
+              <span
+                aria-hidden
+                className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-foreground/60"
+              />
+            )}
+            <Settings
+              className={iconClass(isActive("/settings"))}
+              strokeWidth={1.75}
+            />
             Settings
-          </button>
+          </Link>
         </div>
       </div>
     </aside>
