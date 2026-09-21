@@ -6,9 +6,11 @@ import logging
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.api import chat as chat_api
 from src.api import plugins as plugins_api
 from src.config import settings
 from src.core.core_tools import CORE_TOOLS_SCHEMA
+from src.interfaces import websocket as ws_interfaces
 from src.main import app
 from src.plugins.manager import PluginManager
 
@@ -125,6 +127,37 @@ async def test_lifespan_logs_and_swallows_a_healthcheck_crash(
 
     assert "Background healthcheck stopped unexpectedly" in caplog.text
     assert "healthcheck boom" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_llm_clients(monkeypatch, tmp_path):
+    """Shutdown must close both shared LLM clients."""
+    from src import app as app_module
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    closed = []
+
+    class _FakeRouter:
+        def __init__(self, label):
+            self._label = label
+
+        async def aclose(self):
+            closed.append(self._label)
+
+    async def fake_get_all_tools():
+        return []
+
+    monkeypatch.setattr(settings, "plugins_dir", str(plugins_dir))
+    monkeypatch.setattr(app_module.plugin_manager, "discover_plugins", lambda _dir: [])
+    monkeypatch.setattr(app_module.plugin_manager, "get_all_tools", fake_get_all_tools)
+    monkeypatch.setattr(chat_api, "airouter", _FakeRouter("chat"))
+    monkeypatch.setattr(ws_interfaces, "airouter_with_plugins", _FakeRouter("ws"))
+
+    async with app_module.lifespan(app):
+        pass
+
+    assert closed == ["chat", "ws"]
 
 
 @pytest.mark.asyncio

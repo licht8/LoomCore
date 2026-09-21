@@ -173,6 +173,10 @@ class AIRouter:
         )
         self.plugin_manager = plugin_manager
 
+    async def aclose(self) -> None:
+        """Close the router's shared HTTP client."""
+        await self.client.aclose()
+
     async def route(
         self,
         user_message: str,

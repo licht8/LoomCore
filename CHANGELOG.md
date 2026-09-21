@@ -3,7 +3,7 @@
 Short entries only: date + one or two lines. Details live in `docs/` or in the
 task report (RULES 14).
 
-## 2026-09-19
+## 2026-09-21
 
 - Rewrote `RULES.md` for the current LoomCore architecture (thin core + MCP
   plugins + plan-and-execute agent).
@@ -62,3 +62,9 @@ task report (RULES 14).
 - `core_list_tools` tolerates malformed plugin catalogs, and `dispatch_core_tool`
   refuses a dangerous core tool unless `approved=True` (threaded through the agent
   dispatcher and the websocket `_execute_tool`).
+- User identity is scoped to `(provider, identifier)` (migration `007`), and
+  `ensure_session` recovers a concurrent user-insert race by re-reading instead of
+  surfacing `IntegrityError`.
+- The LLM client rejects budget costs below 1, retries transient statuses
+  (408/429/5xx) with `Retry-After`/backoff, and reuses one pooled `httpx.AsyncClient`
+  that is closed on shutdown.

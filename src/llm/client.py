@@ -12,6 +12,24 @@ from src.llm.exceptions import LlmBudgetExceeded, LlmError, LlmTimeoutError
 
 logger = logging.getLogger("loomcore.llm")
 
+# Transient provider statuses worth retrying; everything else fails immediately.
+_RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Seconds to wait before retrying a transient HTTP failure.
+
+    Honours a numeric ``Retry-After`` header (capped at 5s) and otherwise backs
+    off exponentially. HTTP-date values are ignored and fall back to the backoff.
+    """
+    header = response.headers.get("retry-after")
+    if header:
+        try:
+            return min(float(header), 5.0)
+        except ValueError:
+            pass
+    return min(2 ** (attempt - 1), 5)
+
 
 class HetznerClient:
     """Client for the Hetzner Inference API."""
@@ -21,6 +39,7 @@ class HetznerClient:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.hetzner_api_key
         self.base_url = settings.hetzner_base_url
+        self._client: httpx.AsyncClient | None = None
 
     def _timeout(self) -> httpx.Timeout:
         return httpx.Timeout(
@@ -29,6 +48,18 @@ class HetznerClient:
             write=settings.hetzner_write_timeout,
             pool=settings.hetzner_pool_timeout,
         )
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return the shared HTTP client, creating it on first use."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._timeout())
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the shared HTTP client and reset it for a later rebuild."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def chat_completion(
         self,
@@ -40,10 +71,12 @@ class HetznerClient:
         """Send a request to the LLM and return the JSON response.
 
         ``tool_choice`` and ``temperature`` are forwarded when set (``None``
-        leaves the provider default).         Retries transport/timeout errors up to
-        `HETZNER_MAX_RETRIES` times and raises `LlmTimeoutError`/`LlmError` with
-        a clear message on failure. Each attempt consumes the process-wide daily
-        call budget and raises `LlmBudgetExceeded` when it is exhausted.
+        leaves the provider default). Retries transport/timeout errors and
+        transient HTTP statuses (408/429/5xx) up to `HETZNER_MAX_RETRIES` times
+        with backoff, then raises `LlmTimeoutError`/`LlmError` with a clear
+        message. Each attempt consumes the process-wide daily call budget and
+        raises `LlmBudgetExceeded` when it is exhausted. The underlying HTTP
+        client is shared across calls; close it with :meth:`aclose`.
         """
         payload: dict = {
             "model": self.MODEL,
@@ -72,69 +105,83 @@ class HetznerClient:
         max_attempts = max(1, settings.hetzner_max_retries + 1)
         last_exc: Exception | None = None
 
-        async with httpx.AsyncClient(timeout=self._timeout()) as client:
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    budget = consume_llm_budget()
-                except LlmBudgetExceeded as exc:
-                    log_security_event(
-                        "llm_budget_exceeded",
-                        limit=settings.llm_daily_call_limit,
-                        detail=str(exc),
-                    )
-                    raise
-                started = time.monotonic()
+        client = self._get_client()
+        for attempt in range(1, max_attempts + 1):
+            try:
+                budget = consume_llm_budget()
+            except LlmBudgetExceeded as exc:
+                log_security_event(
+                    "llm_budget_exceeded",
+                    limit=settings.llm_daily_call_limit,
+                    detail=str(exc),
+                )
+                raise
+            started = time.monotonic()
+            logger.info(
+                f"📡 LLM request: model={self.MODEL}, "
+                f"attempt={attempt}/{max_attempts}, "
+                f"budget_used={budget['used']}"
+            )
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                elapsed = time.monotonic() - started
                 logger.info(
-                    f"📡 LLM request: model={self.MODEL}, "
-                    f"attempt={attempt}/{max_attempts}, "
-                    f"budget_used={budget['used']}"
+                    f"✅ LLM response: status={response.status_code}, "
+                    f"size={len(response.content)}, elapsed={elapsed:.1f}s"
                 )
                 try:
-                    response = await client.post(url, headers=headers, json=payload)
-                    response.raise_for_status()
-                    elapsed = time.monotonic() - started
-                    logger.info(
-                        f"✅ LLM response: status={response.status_code}, "
-                        f"size={len(response.content)}, elapsed={elapsed:.1f}s"
-                    )
-                    try:
-                        data = response.json()
-                    except ValueError as exc:
-                        raise LlmError(f"LLM returned invalid JSON: {exc}") from exc
-                    usage = data.get("usage") or {}
-                    completion_tokens = usage.get("completion_tokens")
-                    log_stage(
-                        "llm_call",
-                        elapsed,
-                        model=self.MODEL,
-                        attempt=f"{attempt}/{max_attempts}",
-                        messages=len(messages),
-                        prompt_chars=prompt_chars,
-                        approx_prompt_tokens=prompt_chars // 4,
-                        tools=len(tools) if tools else 0,
-                        prompt_tokens=usage.get("prompt_tokens"),
-                        completion_tokens=completion_tokens,
-                        out_tok_per_s=(
-                            round(completion_tokens / elapsed, 1)
-                            if completion_tokens and elapsed > 0
-                            else None
-                        ),
-                    )
-                    return data
-                except httpx.HTTPStatusError as exc:
-                    status = exc.response.status_code if exc.response is not None else "?"
-                    body = exc.response.text[:500] if exc.response is not None else ""
-                    logger.error(f"❌ LLM HTTP error {status}: {body}")
-                    raise LlmError(f"LLM API error {status}") from exc
-                except (httpx.TimeoutException, httpx.TransportError) as exc:
-                    last_exc = exc
-                    elapsed = time.monotonic() - started
+                    data = response.json()
+                except ValueError as exc:
+                    raise LlmError(f"LLM returned invalid JSON: {exc}") from exc
+                usage = data.get("usage") or {}
+                completion_tokens = usage.get("completion_tokens")
+                log_stage(
+                    "llm_call",
+                    elapsed,
+                    model=self.MODEL,
+                    attempt=f"{attempt}/{max_attempts}",
+                    messages=len(messages),
+                    prompt_chars=prompt_chars,
+                    approx_prompt_tokens=prompt_chars // 4,
+                    tools=len(tools) if tools else 0,
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=completion_tokens,
+                    out_tok_per_s=(
+                        round(completion_tokens / elapsed, 1)
+                        if completion_tokens and elapsed > 0
+                        else None
+                    ),
+                )
+                return data
+            except httpx.HTTPStatusError as exc:
+                status = (
+                    exc.response.status_code if exc.response is not None else "?"
+                )
+                body = exc.response.text[:500] if exc.response is not None else ""
+                if (
+                    isinstance(status, int)
+                    and status in _RETRYABLE_STATUSES
+                    and attempt < max_attempts
+                ):
+                    delay = _retry_delay(exc.response, attempt)
                     logger.warning(
-                        f"⚠️ LLM transport error on attempt {attempt}/{max_attempts} "
-                        f"after {elapsed:.1f}s: {type(exc).__name__}: {exc}"
+                        f"⚠️ LLM HTTP error {status} on attempt "
+                        f"{attempt}/{max_attempts}; retrying in {delay:.1f}s"
                     )
-                    if attempt < max_attempts:
-                        await asyncio.sleep(min(2 ** (attempt - 1), 5))
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(f"❌ LLM HTTP error {status}: {body}")
+                raise LlmError(f"LLM API error {status}") from exc
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                elapsed = time.monotonic() - started
+                logger.warning(
+                    f"⚠️ LLM transport error on attempt {attempt}/{max_attempts} "
+                    f"after {elapsed:.1f}s: {type(exc).__name__}: {exc}"
+                )
+                if attempt < max_attempts:
+                    await asyncio.sleep(min(2 ** (attempt - 1), 5))
 
         if isinstance(last_exc, httpx.TimeoutException):
             raise LlmTimeoutError(

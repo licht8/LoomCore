@@ -86,6 +86,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await healthcheck_task
 
+        # Close the shared LLM HTTP clients so their connection pools are
+        # released instead of being reclaimed at process exit.
+        from src.interfaces import websocket as ws_runtime
+
+        with contextlib.suppress(Exception):
+            await chat.airouter.aclose()
+        with contextlib.suppress(Exception):
+            await ws_runtime.airouter_with_plugins.aclose()
+
 
 def create_app() -> FastAPI:
     """Create and configure the application instance."""

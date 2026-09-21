@@ -40,9 +40,12 @@ def llm_budget_status() -> dict:
 def consume_llm_budget(cost: int = 1) -> dict:
     """Reserve ``cost`` calls from the daily budget and return the new status.
 
-    Raises ``LlmBudgetExceeded`` when a limit is configured and the reservation
-    would exceed it. The counter rolls over automatically at UTC midnight.
+    Raises ``ValueError`` when ``cost`` is less than 1, and ``LlmBudgetExceeded``
+    when a limit is configured and the reservation would exceed it. The counter
+    rolls over automatically at UTC midnight.
     """
+    if cost < 1:
+        raise ValueError(f"LLM budget cost must be >= 1, got {cost}")
     limit = settings.llm_daily_call_limit
     today = _today()
     if _state["day"] != today:

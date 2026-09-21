@@ -49,3 +49,15 @@ def test_day_rollover_resets_counter(monkeypatch):
     assert budget.llm_budget_status()["used"] == 0
     budget.consume_llm_budget()
     assert budget.llm_budget_status()["used"] == 1
+
+
+def test_zero_cost_is_rejected():
+    with pytest.raises(ValueError, match="cost must be >= 1"):
+        budget.consume_llm_budget(cost=0)
+    assert budget.llm_budget_status()["used"] == 0
+
+
+def test_negative_cost_is_rejected():
+    with pytest.raises(ValueError, match="cost must be >= 1"):
+        budget.consume_llm_budget(cost=-1)
+    assert budget.llm_budget_status()["used"] == 0
