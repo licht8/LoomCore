@@ -233,10 +233,21 @@ async def execute_plan(
     only when the plan has been approved.
     """
     approved = plan.get("status") == "approved"
-    steps = plan.get("steps", [])[:max_steps]
+    all_steps = plan.get("steps", [])
+    if len(all_steps) > max_steps:
+        plan["status"] = "failed"
+        await emit(
+            {
+                "type": "plan_step",
+                "phase": "failed",
+                "step": dict(all_steps[0]),
+                "error": f"plan has more than {max_steps} steps",
+            }
+        )
+        return {"plan": plan, "results": []}
     results: list[dict] = []
 
-    for step in steps:
+    for step in all_steps:
         if step.get("risk") != "safe" and not approved:
             step["status"] = "blocked"
             plan["status"] = "failed"
@@ -244,7 +255,7 @@ async def execute_plan(
                 {
                     "type": "plan_step",
                     "phase": "failed",
-                    "step": step,
+                    "step": dict(step),
                     "error": "step requires approval",
                 }
             )
@@ -252,7 +263,7 @@ async def execute_plan(
 
         step["status"] = "running"
         plan["status"] = "running"
-        await emit({"type": "plan_step", "phase": "started", "step": step})
+        await emit({"type": "plan_step", "phase": "started", "step": dict(step)})
         try:
             raw = await dispatch(step["tool"], step["args"])
         except Exception as exc:  # noqa: BLE001 - surface any tool failure
@@ -264,7 +275,7 @@ async def execute_plan(
                 {
                     "type": "plan_step",
                     "phase": "failed",
-                    "step": step,
+                    "step": dict(step),
                     "error": str(exc),
                 }
             )
@@ -272,7 +283,7 @@ async def execute_plan(
 
         step["status"] = "done"
         await emit(
-            {"type": "plan_step", "phase": "done", "step": step, "result": raw}
+            {"type": "plan_step", "phase": "done", "step": dict(step), "result": raw}
         )
         results.append({"step": step, "result": raw})
 

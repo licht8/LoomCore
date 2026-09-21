@@ -266,3 +266,63 @@ async def test_execute_plan_stops_on_failure():
     assert result["plan"]["status"] == "failed"
     assert result["plan"]["steps"][0]["status"] == "failed"
     assert result["plan"]["steps"][0]["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_fails_when_steps_exceed_max():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1"},
+                {"tool": "core_list_plugins", "why": "w2"},
+            ],
+        }
+    )
+    plan["status"] = "approved"
+    dispatched: list = []
+    events: list[dict] = []
+
+    async def dispatch(tool, args):
+        dispatched.append(tool)
+        return {"content": [], "data": {}}
+
+    async def emit(event):
+        events.append(event)
+
+    result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit, max_steps=1)
+
+    assert dispatched == []
+    assert result["results"] == []
+    assert result["plan"]["status"] == "failed"
+    failed = [event for event in events if event["phase"] == "failed"]
+    assert len(failed) == 1
+    assert "more than 1 steps" in failed[0]["error"]
+    assert failed[0]["step"]["tool"] == "core_health"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_emits_immutable_step_snapshots():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1"},
+                {"tool": "core_list_plugins", "why": "w2"},
+            ],
+        }
+    )
+    events: list[dict] = []
+
+    async def dispatch(tool, args):
+        return {"content": [], "data": {"tool": tool}}
+
+    async def emit(event):
+        events.append(event)
+
+    await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
+
+    started = [event for event in events if event["phase"] == "started"]
+    assert started[0]["step"]["status"] == "running"
+    assert started[0]["step"] is not plan["steps"][0]
+    assert plan["steps"][0]["status"] == "done"
