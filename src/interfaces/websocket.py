@@ -123,11 +123,13 @@ def _describe_client_message(data) -> str:
     return type(data).__name__
 
 
-async def _execute_tool(tool_name: str, arguments: dict | None = None) -> dict:
+async def _execute_tool(
+    tool_name: str, arguments: dict | None = None, *, approved: bool = False
+) -> dict:
     """Run a core meta-tool or the plugin tool that owns the name."""
     async with span("execute_tool", tool=tool_name):
         if tool_name in CORE_TOOL_NAMES:
-            return await dispatch_core_tool(tool_name, arguments)
+            return await dispatch_core_tool(tool_name, arguments, approved=approved)
         return await plugin_manager.execute_tool_by_name(tool_name, arguments)
 
 

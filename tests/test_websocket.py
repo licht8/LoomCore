@@ -92,7 +92,7 @@ def _patch_plan_runtime(
     saved_plans = saved_plans if saved_plans is not None else []
     known = known or {"core_health", "core_disable_plugin", "wg_interface_status"}
 
-    async def fake_execute(tool_name, arguments=None):
+    async def fake_execute(tool_name, arguments=None, *, approved=False):
         return {
             "content": [{"type": "text", "text": f"{tool_name} ok"}],
             "data": {},
@@ -138,7 +138,7 @@ def _collector():
 async def test_execute_tool_routes_core_names_to_dispatch(monkeypatch):
     captured = {}
 
-    async def fake_dispatch(name, arguments):
+    async def fake_dispatch(name, arguments, *, approved=False):
         captured["args"] = (name, arguments)
         return {"ok": True}
 
@@ -147,6 +147,22 @@ async def test_execute_tool_routes_core_names_to_dispatch(monkeypatch):
     result = await ws_module._execute_tool("core_health", {})
 
     assert captured["args"] == ("core_health", {})
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_forwards_approval(monkeypatch):
+    captured = {}
+
+    async def fake_dispatch(name, arguments, *, approved=False):
+        captured["approved"] = approved
+        return {"ok": True}
+
+    monkeypatch.setattr(ws_module, "dispatch_core_tool", fake_dispatch)
+
+    result = await ws_module._execute_tool("core_enable_plugin", {}, approved=True)
+
+    assert captured["approved"] is True
     assert result == {"ok": True}
 
 
@@ -293,7 +309,7 @@ async def test_summary_replaces_a_raw_table(monkeypatch):
     async def fake_route(user_text, session_id):
         return {"type": "plan", "plan": plan}
 
-    async def fake_execute(tool_name, arguments=None):
+    async def fake_execute(tool_name, arguments=None, *, approved=False):
         return {"content": [{"type": "text", "text": table}], "data": {}}
 
     async def fake_summary(user_text, plan, observations):
@@ -325,7 +341,7 @@ async def test_explicit_raw_output_request_returns_the_table(monkeypatch):
     async def fake_route(user_text, session_id):
         return {"type": "plan", "plan": plan}
 
-    async def fake_execute(tool_name, arguments=None):
+    async def fake_execute(tool_name, arguments=None, *, approved=False):
         return {"content": [{"type": "text", "text": table}], "data": {}}
 
     async def boom_summary(user_text, plan, observations):
@@ -404,7 +420,7 @@ async def test_process_user_message_reports_step_failure(monkeypatch):
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
     saved_tools, _ = _patch_plan_runtime(monkeypatch)
 
-    async def boom(tool_name, arguments=None):
+    async def boom(tool_name, arguments=None, *, approved=False):
         raise RuntimeError("nope")
 
     monkeypatch.setattr(ws_module, "_execute_tool", boom)
@@ -675,7 +691,7 @@ async def test_websocket_cancel_during_plan(monkeypatch):
     monkeypatch.setattr(ws_module, "_save_tool_message", fake_save_tool)
     monkeypatch.setattr(ws_module, "_save_plan_message", fake_save_plan)
 
-    async def slow_execute(tool_name, arguments=None):
+    async def slow_execute(tool_name, arguments=None, *, approved=False):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(ws_module, "_execute_tool", slow_execute)
@@ -993,7 +1009,7 @@ async def test_plan_failure_emits_plan_done_failed(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     plan = _safe_two_step_plan()
 
-    async def boom(tool_name, arguments=None):
+    async def boom(tool_name, arguments=None, *, approved=False):
         raise RuntimeError("nope")
 
     monkeypatch.setattr(ws_module, "_execute_tool", boom)

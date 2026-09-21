@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Protocol
 from uuid import uuid4
 
 from src.core.contracts import ToolContractError, validate_tool_args
@@ -25,7 +26,15 @@ MAX_PLAN_STEPS = 12
 PLANNER_REASK_LIMIT = 1
 VALID_PLAN_MODES = {"direct", "plan"}
 
-_SafeDispatch = Callable[[str, dict], Awaitable[dict]]
+
+class _SafeDispatch(Protocol):
+    """Runs one tool call, gated by the plan's approval state."""
+
+    async def __call__(
+        self, tool: str, args: dict, *, approved: bool = False
+    ) -> dict: ...
+
+
 _PlanEmit = Callable[[dict], Awaitable[None]]
 
 AGENT_PLAN_SCHEMA: dict = {
@@ -265,7 +274,7 @@ async def execute_plan(
         plan["status"] = "running"
         await emit({"type": "plan_step", "phase": "started", "step": dict(step)})
         try:
-            raw = await dispatch(step["tool"], step["args"])
+            raw = await dispatch(step["tool"], step["args"], approved=approved)
         except Exception as exc:  # noqa: BLE001 - surface any tool failure
             logger.warning(f"Plan step {step.get('id')} failed: {exc}")
             step["status"] = "failed"

@@ -226,11 +226,17 @@ async def _core_list_tools(arguments: dict) -> dict:
             continue
         try:
             tools = await plugin_manager.get_tools(name)
+            if not isinstance(tools, list):
+                raise ValueError(f"plugin '{name}' returned a non-list tool catalog")
         except Exception as exc:  # noqa: BLE001 - best-effort catalog
             logger.warning(f"Cannot list tools of plugin '{name}': {exc}")
             lines.append(f"{name} (unavailable)")
             continue
-        names = [tool["name"] for tool in tools]
+        names = [
+            tool["name"]
+            for tool in tools
+            if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+        ]
         plugin_tools.extend(
             {"name": tool_name, "plugin": name} for tool_name in names
         )
@@ -301,10 +307,17 @@ _HANDLERS: dict[str, Callable[[dict], Awaitable[dict]]] = {
 }
 
 
-async def dispatch_core_tool(name: str, arguments: dict | None = None) -> dict:
-    """Execute a core meta-tool and return an MCP-shaped result."""
+async def dispatch_core_tool(
+    name: str, arguments: dict | None = None, *, approved: bool = False
+) -> dict:
+    """Execute a core meta-tool and return an MCP-shaped result.
+
+    A dangerous tool is refused unless the caller passes ``approved=True``.
+    """
     handler = _HANDLERS.get(name)
     if handler is None:
         raise ValueError(f"Unknown core tool '{name}'")
+    if resolve_tool_risk(name) == "dangerous" and not approved:
+        raise PermissionError(f"Core tool '{name}' requires approval")
     validate_tool_args(name, arguments, CORE_TOOL_SCHEMAS.get(name))
     return await handler(arguments or {})

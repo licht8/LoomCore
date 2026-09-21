@@ -181,13 +181,13 @@ async def test_core_capabilities_reports_runtime(monkeypatch, fake_manager):
 @pytest.mark.asyncio
 async def test_core_lifecycle_tools_call_manager(fake_manager):
     enabled = await core_tools.dispatch_core_tool(
-        "core_enable_plugin", {"plugin": "LoomOps"}
+        "core_enable_plugin", {"plugin": "LoomOps"}, approved=True
     )
     disabled = await core_tools.dispatch_core_tool(
-        "core_disable_plugin", {"plugin": "LoomOps"}
+        "core_disable_plugin", {"plugin": "LoomOps"}, approved=True
     )
     reloaded = await core_tools.dispatch_core_tool(
-        "core_reload_plugin", {"plugin": "LoomOps"}
+        "core_reload_plugin", {"plugin": "LoomOps"}, approved=True
     )
 
     assert enabled["data"]["enabled"] is True
@@ -208,5 +208,32 @@ async def test_core_lifecycle_failure_raises(monkeypatch, fake_manager):
     monkeypatch.setattr(fake_manager, "enable_plugin", boom)
     with pytest.raises(RuntimeError):
         await core_tools.dispatch_core_tool(
+            "core_enable_plugin", {"plugin": "LoomOps"}, approved=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_requires_approval_for_dangerous_core_tool(fake_manager):
+    with pytest.raises(PermissionError):
+        await core_tools.dispatch_core_tool(
             "core_enable_plugin", {"plugin": "LoomOps"}
         )
+    assert fake_manager.calls == []
+
+
+@pytest.mark.asyncio
+async def test_core_list_tools_ignores_malformed_plugin_tools(monkeypatch, fake_manager):
+    async def malformed(name):
+        return [{"name": "ok"}, "junk", {"no_name": 1}, {"name": 2}]
+
+    monkeypatch.setattr(fake_manager, "get_tools", malformed)
+    result = await core_tools.dispatch_core_tool("core_list_tools", {})
+    assert result["data"]["plugin_tools"] == [{"name": "ok", "plugin": "LoomOps"}]
+
+    async def non_list(name):
+        return {"name": "ok"}
+
+    monkeypatch.setattr(fake_manager, "get_tools", non_list)
+    result = await core_tools.dispatch_core_tool("core_list_tools", {})
+    assert result["data"]["plugin_tools"] == []
+    assert "LoomOps (unavailable)" in result["content"][0]["text"]

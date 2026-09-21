@@ -53,3 +53,12 @@ task report (RULES 14).
   and catches `OverflowError`.
 - Security events newline-escape the event name, guard field rendering against a
   hostile `__repr__`, and redact known-sensitive keys (password/token/secret/...).
+- `CORE_VERSION` now warns when package metadata is missing (source checkout),
+  `get_db` is typed as an async generator, and timing fields have CR/LF
+  neutralised.
+- Startup probes the revocation store's writability (creating a missing file) and
+  reports `cannot be persisted to`; `classify_tool_risk` hoists its sets to
+  module-level frozensets and adds destructive/moderate stems.
+- `core_list_tools` tolerates malformed plugin catalogs, and `dispatch_core_tool`
+  refuses a dangerous core tool unless `approved=True` (threaded through the agent
+  dispatcher and the websocket `_execute_tool`).

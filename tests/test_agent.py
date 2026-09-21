@@ -183,7 +183,7 @@ async def test_execute_plan_replays_verbatim():
     dispatched: list[tuple] = []
     events: list[dict] = []
 
-    async def dispatch(tool, args):
+    async def dispatch(tool, args, *, approved=False):
         dispatched.append((tool, args))
         return {"content": [], "data": {"tool": tool}}
 
@@ -205,7 +205,7 @@ async def test_execute_plan_blocks_unapproved_risky_step():
     )
     dispatched: list = []
 
-    async def dispatch(tool, args):
+    async def dispatch(tool, args, *, approved=False):
         dispatched.append(tool)
         return {"content": [], "data": {}}
 
@@ -226,9 +226,11 @@ async def test_execute_plan_runs_approved_risky_step():
     )
     plan["status"] = "approved"
     dispatched: list = []
+    approvals: list = []
 
-    async def dispatch(tool, args):
+    async def dispatch(tool, args, *, approved=False):
         dispatched.append(tool)
+        approvals.append(approved)
         return {"content": [], "data": {}}
 
     async def emit(event):
@@ -237,6 +239,7 @@ async def test_execute_plan_runs_approved_risky_step():
     result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
 
     assert dispatched == ["ops_run_command"]
+    assert approvals == [True]
     assert result["plan"]["status"] == "done"
 
 
@@ -253,7 +256,7 @@ async def test_execute_plan_stops_on_failure():
     )
     dispatched: list = []
 
-    async def dispatch(tool, args):
+    async def dispatch(tool, args, *, approved=False):
         dispatched.append(tool)
         raise RuntimeError("boom")
 
@@ -283,7 +286,7 @@ async def test_execute_plan_fails_when_steps_exceed_max():
     dispatched: list = []
     events: list[dict] = []
 
-    async def dispatch(tool, args):
+    async def dispatch(tool, args, *, approved=False):
         dispatched.append(tool)
         return {"content": [], "data": {}}
 
@@ -314,7 +317,7 @@ async def test_execute_plan_emits_immutable_step_snapshots():
     )
     events: list[dict] = []
 
-    async def dispatch(tool, args):
+    async def dispatch(tool, args, *, approved=False):
         return {"content": [], "data": {"tool": tool}}
 
     async def emit(event):
