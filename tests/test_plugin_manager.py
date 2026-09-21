@@ -953,6 +953,40 @@ async def test_reload_disabled_plugin_returns_false():
     assert await manager.reload_plugin("demo") is False
 
 
+@pytest.mark.asyncio
+async def test_lifecycle_mutations_are_serialized(monkeypatch):
+    manager = PluginManager()
+    plugin = _add_plugin(manager, state=PluginState.STOPPED, enabled=False)
+    killed: list[str] = []
+    init_started = asyncio.Event()
+    release_init = asyncio.Event()
+
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def fake_init(name):
+        init_started.set()
+        await release_init.wait()
+
+    async def fake_tools(name):
+        return []
+
+    monkeypatch.setattr(manager, "_initialize_plugin", fake_init)
+    monkeypatch.setattr(manager, "get_tools", fake_tools)
+    monkeypatch.setattr(manager, "_rebuild_tool_cache", lambda *a, **k: None)
+    monkeypatch.setattr(manager, "_kill_and_stop", lambda name: killed.append(name))
+
+    enable = asyncio.create_task(manager.enable_plugin("demo"))
+    await init_started.wait()
+    disable = asyncio.create_task(manager.disable_plugin("demo"))
+    await asyncio.sleep(0)
+    assert killed == []
+
+    release_init.set()
+    assert await asyncio.gather(enable, disable) == [True, True]
+    assert killed == ["demo"]
+    assert plugin.enabled is False
+
+
 # === disabled behaviour ===
 
 

@@ -375,16 +375,18 @@ class PluginManager:
         if plugin is None:
             logger.error(f"Plugin '{plugin_name}' is not registered; cannot disable")
             return False
-        if not plugin.enabled:
-            return True
 
-        self._kill_and_stop(plugin_name)
-        plugin.enabled = False
-        self._rebuild_tool_cache(plugin_name, [])
-        self._disabled.add(plugin_name)
-        self._persist_state()
-        logger.info(f"Plugin '{plugin_name}' disabled")
-        return True
+        async with plugin.lock:
+            if not plugin.enabled:
+                return True
+
+            self._kill_and_stop(plugin_name)
+            plugin.enabled = False
+            self._rebuild_tool_cache(plugin_name, [])
+            self._disabled.add(plugin_name)
+            self._persist_state()
+            logger.info(f"Plugin '{plugin_name}' disabled")
+            return True
 
     async def enable_plugin(self, plugin_name: str) -> bool:
         """Launch a disabled plugin again and persist the change."""
@@ -392,43 +394,47 @@ class PluginManager:
         if plugin is None:
             logger.error(f"Plugin '{plugin_name}' is not registered; cannot enable")
             return False
-        if plugin.enabled:
-            return True
 
-        trusted = allowed_plugins()
-        if trusted and plugin_name not in trusted:
-            log_security_event(
-                "plugin_rejected",
-                plugin=plugin_name,
-                reason="not_in_allowlist",
-                action="enable",
-            )
-            logger.error(
-                f"Plugin '{plugin_name}' is not in LOOMCORE_PLUGINS_ALLOWED; "
-                f"refusing to enable"
-            )
-            return False
+        async with plugin.lock:
+            if plugin.enabled:
+                return True
 
-        self._disabled.discard(plugin_name)
-        plugin.enabled = True
-        plugin.restart_attempt = 0
-        try:
-            self._do_register_inplace(plugin_name, plugin.command, plugin.working_dir)
-            await self._initialize_plugin(plugin_name)
-            tools = await self.get_tools(plugin_name)
-            self._rebuild_tool_cache(plugin_name, tools)
-            plugin.state = PluginState.IDLE
-        except Exception as exc:
-            logger.error(f"Failed to enable plugin '{plugin_name}': {exc}")
-            plugin.enabled = False
-            plugin.state = PluginState.STOPPED
-            self._disabled.add(plugin_name)
+            trusted = allowed_plugins()
+            if trusted and plugin_name not in trusted:
+                log_security_event(
+                    "plugin_rejected",
+                    plugin=plugin_name,
+                    reason="not_in_allowlist",
+                    action="enable",
+                )
+                logger.error(
+                    f"Plugin '{plugin_name}' is not in LOOMCORE_PLUGINS_ALLOWED; "
+                    f"refusing to enable"
+                )
+                return False
+
+            self._disabled.discard(plugin_name)
+            plugin.enabled = True
+            plugin.restart_attempt = 0
+            try:
+                self._do_register_inplace(
+                    plugin_name, plugin.command, plugin.working_dir
+                )
+                await self._initialize_plugin(plugin_name)
+                tools = await self.get_tools(plugin_name)
+                self._rebuild_tool_cache(plugin_name, tools)
+                plugin.state = PluginState.IDLE
+            except Exception as exc:
+                logger.error(f"Failed to enable plugin '{plugin_name}': {exc}")
+                plugin.enabled = False
+                plugin.state = PluginState.STOPPED
+                self._disabled.add(plugin_name)
+                self._persist_state()
+                return False
+
             self._persist_state()
-            return False
-
-        self._persist_state()
-        logger.info(f"Plugin '{plugin_name}' enabled")
-        return True
+            logger.info(f"Plugin '{plugin_name}' enabled")
+            return True
 
     async def reload_plugin(self, plugin_name: str) -> bool:
         """Restart an enabled plugin and refresh its tools."""
@@ -436,25 +442,29 @@ class PluginManager:
         if plugin is None:
             logger.error(f"Plugin '{plugin_name}' is not registered; cannot reload")
             return False
-        if not plugin.enabled:
-            logger.warning(f"Plugin '{plugin_name}' is disabled; cannot reload")
-            return False
 
-        self._kill_and_stop(plugin_name)
-        plugin.restart_attempt = 0
-        try:
-            self._do_register_inplace(plugin_name, plugin.command, plugin.working_dir)
-            await self._initialize_plugin(plugin_name)
-            tools = await self.get_tools(plugin_name)
-            self._rebuild_tool_cache(plugin_name, tools)
-            plugin.state = PluginState.IDLE
-        except Exception as exc:
-            logger.error(f"Failed to reload plugin '{plugin_name}': {exc}")
-            plugin.state = PluginState.STOPPED
-            return False
+        async with plugin.lock:
+            if not plugin.enabled:
+                logger.warning(f"Plugin '{plugin_name}' is disabled; cannot reload")
+                return False
 
-        logger.info(f"Plugin '{plugin_name}' reloaded")
-        return True
+            self._kill_and_stop(plugin_name)
+            plugin.restart_attempt = 0
+            try:
+                self._do_register_inplace(
+                    plugin_name, plugin.command, plugin.working_dir
+                )
+                await self._initialize_plugin(plugin_name)
+                tools = await self.get_tools(plugin_name)
+                self._rebuild_tool_cache(plugin_name, tools)
+                plugin.state = PluginState.IDLE
+            except Exception as exc:
+                logger.error(f"Failed to reload plugin '{plugin_name}': {exc}")
+                plugin.state = PluginState.STOPPED
+                return False
+
+            logger.info(f"Plugin '{plugin_name}' reloaded")
+            return True
 
     def _persist_state(self) -> None:
         if self._state_path is None:

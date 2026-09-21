@@ -27,3 +27,6 @@ task report (RULES 14).
 - Fixed a file-descriptor leak in LoomWG `validate_config_text`: dropped the
   redundant `os.chmod` before wrapping the `mkstemp` descriptor, so a failing
   `chmod` can no longer leak the fd.
+- Hardened the plugin surface: `/api/tools` now logs and returns a 500 instead
+  of a 200 `{"error": ...}` body, and per-plugin enable/disable/reload are
+  serialized under the existing per-plugin lock.
