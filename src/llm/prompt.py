@@ -1,4 +1,10 @@
+from functools import lru_cache
 from pathlib import Path
+
+_MAX_RESULT_CHARS = 2000
+_MAX_USER_CHARS = 8000
+_MAX_HISTORY_CHARS = 12000
+_MAX_PLAN_BODY_CHARS = 16000
 
 SYSTEM_PROMPT = (
     "You are the LoomCore AI administrator. You manage server infrastructure through JSON tools (MCP).\n"
@@ -90,13 +96,57 @@ DEFAULT_SOUL = (
 _SOUL_PATH = Path(__file__).with_name("SOUL.md")
 
 
-def load_soul(path: str | Path | None = None) -> str:
-    """Load the voice document; fall back to a minimal default if missing."""
-    target = Path(path) if path else _SOUL_PATH
+@lru_cache(maxsize=8)
+def _read_soul(path: Path) -> str:
+    """Read a SOUL document, returning the default when it is unusable.
+
+    A missing, unreadable, non-UTF-8, or blank document yields ``DEFAULT_SOUL``.
+    Successful reads are memoised per path.
+    """
     try:
-        return target.read_text(encoding="utf-8")
-    except OSError:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return DEFAULT_SOUL
+    return text.strip() or DEFAULT_SOUL
+
+
+def load_soul(path: str | Path | None = None) -> str:
+    """Load the voice document, falling back to a minimal default when unusable.
+
+    Missing, unreadable, non-UTF-8, or blank documents return ``DEFAULT_SOUL``.
+    Reads are memoised per path via ``_read_soul``.
+    """
+    return _read_soul(Path(path) if path else _SOUL_PATH)
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Return ``text`` unchanged, or head and tail joined by a marker."""
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    tail = limit - head
+    return f"{text[:head]}\n… (truncated {len(text) - limit} chars) …\n{text[-tail:]}"
+
+
+def _trim_history(history: list[dict], max_chars: int) -> list[dict]:
+    """Drop the oldest messages while the content budget is exceeded.
+
+    The most recent message is always kept; it is truncated when it alone is
+    larger than the budget.
+    """
+    if not history:
+        return history
+    trimmed = list(history)
+    total = sum(len(str(message.get("content") or "")) for message in trimmed)
+    while len(trimmed) > 1 and total > max_chars:
+        removed = trimmed.pop(0)
+        total -= len(str(removed.get("content") or ""))
+    last = trimmed[-1]
+    last_content = str(last.get("content") or "")
+    bounded = _truncate(last_content, max_chars)
+    if bounded != last_content:
+        trimmed[-1] = {**last, "content": bounded}
+    return trimmed
 
 
 def build_planner_messages(
@@ -111,23 +161,32 @@ def build_planner_messages(
         "current state or a request to act, call `agent_plan`; otherwise call `reply`."
     )
     messages: list[dict] = [{"role": "system", "content": system}]
-    messages.extend(history)
-    messages.append({"role": "user", "content": user_text})
+    messages.extend(_trim_history(history, _MAX_HISTORY_CHARS))
+    messages.append({"role": "user", "content": _truncate(user_text, _MAX_USER_CHARS)})
     return messages
 
 
 def _render_plan(plan: dict, observations: list[dict]) -> str:
     lines = [f"Goal: {plan.get('goal', '')}", "Steps:"]
-    result_by_id = {
-        str(item.get("step", {}).get("id")): item.get("result")
-        for item in observations
-    }
-    for step in plan.get("steps", []):
+    result_by_id: dict[str, str] = {}
+    for index, item in enumerate(observations):
+        if not isinstance(item, dict):
+            continue
+        step = item.get("step")
+        if not isinstance(step, dict):
+            continue
+        result = item.get("result")
+        if result is None:
+            continue
+        key = str(step.get("id") or f"s{index}")
+        if key not in result_by_id:
+            result_by_id[key] = _truncate(str(result), _MAX_RESULT_CHARS)
+    for index, step in enumerate(plan.get("steps", [])):
         lines.append(
             f"- [{step.get('status')}] {step.get('tool')} "
             f"args={step.get('args')} why={step.get('why')}"
         )
-        result = result_by_id.get(str(step.get("id")))
+        result = result_by_id.get(str(step.get("id") or f"s{index}"))
         if result is not None:
             lines.append(f"    result: {result}")
     return "\n".join(lines)
@@ -141,10 +200,10 @@ def build_summary_messages(
     """Build the summary call messages using the SOUL voice document."""
     system = f"{load_soul()}\n\n{SUMMARY_INSTRUCTION}"
     body = (
-        f"User request: {user_text}\n\n"
+        f"User request: {_truncate(user_text, _MAX_USER_CHARS)}\n\n"
         f"Plan and results:\n{_render_plan(plan, observations)}"
     )
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": body},
+        {"role": "user", "content": _truncate(body, _MAX_PLAN_BODY_CHARS)},
     ]

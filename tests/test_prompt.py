@@ -131,3 +131,90 @@ def test_planner_prompt_forbids_bare_tool_names():
     lowered = PLANNER_PROMPT.lower()
     assert "never output a tool name by itself" in lowered
     assert "call the tool instead" in lowered
+
+
+def test_load_soul_falls_back_on_invalid_utf8(tmp_path):
+    path = tmp_path / "SOUL.md"
+    path.write_bytes(b"\xff\xfe\x00")
+
+    assert load_soul(path) == DEFAULT_SOUL
+
+
+def test_load_soul_uses_default_for_blank_file(tmp_path):
+    path = tmp_path / "SOUL.md"
+    path.write_text("  \n\t", encoding="utf-8")
+
+    assert load_soul(path) == DEFAULT_SOUL
+
+
+def test_render_plan_ignores_non_dict_and_none_step_entries():
+    plan = {
+        "goal": "g",
+        "steps": [
+            {
+                "id": "a",
+                "tool": "core_health",
+                "status": "done",
+                "args": {},
+                "why": "w",
+            }
+        ],
+    }
+    observations = [
+        None,
+        {},
+        {"step": None, "result": "ignored-result"},
+        {"step": {"id": "a"}, "result": "kept-result"},
+    ]
+
+    body = build_summary_messages("q", plan, observations)[1]["content"]
+
+    assert "kept-result" in body
+    assert "ignored-result" not in body
+    assert "None" not in body
+
+
+def test_render_plan_prefers_first_result_for_duplicate_ids():
+    plan = {"goal": "g", "steps": [{"id": "a", "tool": "core_health"}]}
+    observations = [
+        {"step": {"id": "a"}, "result": "first-result"},
+        {"step": {"id": "a"}, "result": "second-result"},
+    ]
+
+    body = build_summary_messages("q", plan, observations)[1]["content"]
+
+    assert "first-result" in body
+    assert "second-result" not in body
+
+
+def test_render_plan_truncates_long_result():
+    plan = {"goal": "g", "steps": [{"id": "a", "tool": "core_health"}]}
+    long_result = "x" * (5 * 2000)
+    observations = [{"step": {"id": "a"}, "result": long_result}]
+
+    body = build_summary_messages("q", plan, observations)[1]["content"]
+
+    assert "truncated" in body
+    assert body.count("x") < len(long_result)
+
+
+def test_build_summary_messages_truncates_long_user_text():
+    plan = {"goal": "g", "steps": [{"id": "a", "tool": "core_health"}]}
+    long_user_text = "y" * 20000
+
+    body = build_summary_messages(long_user_text, plan, [])[1]["content"]
+
+    assert "truncated" in body
+    assert body.count("y") < len(long_user_text)
+
+
+def test_build_planner_messages_trims_long_history():
+    history = [{"role": "user", "content": "z" * 10000} for _ in range(3)]
+    history.append({"role": "user", "content": "latest"})
+
+    messages = build_planner_messages("now", history, "- core_health: check")
+
+    contents = [message["content"] for message in messages[1:]]
+    assert contents[-1] == "now"
+    assert contents[-2] == "latest"
+    assert len(messages) < 6
