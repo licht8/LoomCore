@@ -87,3 +87,12 @@ task report (RULES 14).
 - WebSocket inbound frames are shape-validated (non-string `message` or non-dict
   frames are ignored) and malformed JSON frames are reported and skipped instead
   of closing the connection; bad frames still consume the per-identity throttle.
+- Test plugin loaders are disambiguated: LoomOps logical names are namespaced
+  (`loomops.*`), each loader asserts the resolved module's root package, and the
+  package is purged once per test (modules are cached for module identity).
+- The plugin manager kills a spawned child when enable/reload/restart fails,
+  never auto-restarts a `BUSY` plugin from `get_all_tools`, rejects a duplicate
+  tool name with a warning, and drops tools a plugin stops advertising.
+- Hardened plugin tests: manifest lookups guard `None`, LoomWG capability
+  masks derive from `_CAPABILITIES`, JSON-RPC responses correlate by `id`, and
+  the e2e teardown picks a unique interface/free port and reports failures.

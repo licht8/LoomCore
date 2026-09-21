@@ -5,6 +5,14 @@ from __future__ import annotations
 import json
 
 
+def _cap_mask(manifest_module, *names: str) -> int:
+    """Build a capability bitmask from the module's own capability map."""
+    mask = 0
+    for name in names:
+        mask |= 1 << manifest_module._CAPABILITIES[name]
+    return mask
+
+
 def test_manifest_loads_from_plugin_dir(load_loomwg):
     manifest_module = load_loomwg("manifest")["manifest"]
 
@@ -85,7 +93,7 @@ def test_optional_capability_is_a_note_not_a_warning(load_loomwg, monkeypatch):
     monkeypatch.setattr(
         manifest_module,
         "_effective_capabilities",
-        lambda: (1 << 12) | (1 << 13),
+        lambda: _cap_mask(manifest_module, "NET_ADMIN", "NET_RAW"),
     )
     manifest = {
         "permissions": {
@@ -110,7 +118,11 @@ def test_runtime_report_exposes_optional_notes(load_loomwg):
 
 def test_check_permissions_warns_when_cap_missing(load_loomwg, monkeypatch):
     manifest_module = load_loomwg("manifest")["manifest"]
-    monkeypatch.setattr(manifest_module, "_effective_capabilities", lambda: 1 << 13)
+    monkeypatch.setattr(
+        manifest_module,
+        "_effective_capabilities",
+        lambda: _cap_mask(manifest_module, "NET_RAW"),
+    )
     monkeypatch.setattr(manifest_module.Path, "exists", lambda self: True)
     monkeypatch.setattr(manifest_module.os, "access", lambda path, mode: True)
     manifest = {
@@ -131,7 +143,7 @@ def test_check_permissions_clean_when_all_present(load_loomwg, monkeypatch):
     monkeypatch.setattr(
         manifest_module,
         "_effective_capabilities",
-        lambda: (1 << 12) | (1 << 13) | (1 << 16),
+        lambda: _cap_mask(manifest_module, "NET_ADMIN", "NET_RAW", "SYS_MODULE"),
     )
     monkeypatch.setattr(manifest_module.Path, "exists", lambda self: True)
     monkeypatch.setattr(manifest_module.os, "access", lambda path, mode: True)

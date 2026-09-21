@@ -19,6 +19,7 @@ def test_manifest_is_valid():
 
 def test_manifest_declares_expected_env():
     data = load_manifest(LOOMOPS_DIR)
+    assert data is not None
     env_names = {item["name"] for item in data["env"]}
     assert {
         "LOOMOPS_ALLOWED_COMMANDS",
@@ -35,6 +36,7 @@ def test_manifest_declares_expected_env():
 
 def test_manifest_declares_host_observability():
     data = load_manifest(LOOMOPS_DIR)
+    assert data is not None
     permissions = data["permissions"]
     assert permissions["pid"] == "host"
     assert "SYSLOG" in permissions["cap_add"]
@@ -47,4 +49,5 @@ def test_manifest_declares_host_observability():
 
 def test_manifest_permissions_check_returns_list():
     data = load_manifest(LOOMOPS_DIR)
+    assert data is not None
     assert isinstance(check_permissions(data), list)

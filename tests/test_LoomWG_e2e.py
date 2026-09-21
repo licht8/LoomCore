@@ -6,6 +6,7 @@ Skipped by default. Run with:
 
 import os
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -25,8 +26,17 @@ pytestmark = [
     ),
 ]
 
-INTERFACE = "wgloomtest"
-PORT = 51899
+
+def _interface_name() -> str:
+    """A per-run WireGuard interface name (at most 15 characters)."""
+    return f"wgloom{os.getpid() % 10_000_000:07d}"
+
+
+def _free_udp_port() -> int:
+    """Pick a free UDP port for the test interface."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def _genkey() -> str:
@@ -36,23 +46,47 @@ def _genkey() -> str:
     return result.stdout.strip()
 
 
+def _bring_down(config, interface: str) -> None:
+    """Tear the interface down without masking the original failure."""
+    try:
+        result = subprocess.run(
+            ["wg-quick", "down", str(config)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"warning: 'wg-quick down' timed out for {interface}", file=sys.stderr)
+        return
+    if result.returncode != 0:
+        print(
+            f"warning: 'wg-quick down' failed for {interface} "
+            f"(rc={result.returncode}): {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+
+
 def test_wg_interface_lifecycle(load_loomwg, monkeypatch, tmp_path):
+    interface = _interface_name()
+    port = _free_udp_port()
     monkeypatch.setenv("LOOMWG_CONFIG_DIR", str(tmp_path))
     wg = load_loomwg("wireguard")["wireguard"]
 
-    config = tmp_path / f"{INTERFACE}.conf"
+    config = tmp_path / f"{interface}.conf"
     config.write_text(
         "[Interface]\n"
         f"PrivateKey = {_genkey()}\n"
         "Address = 10.211.99.1/24\n"
-        f"ListenPort = {PORT}\n",
+        f"ListenPort = {port}\n",
         encoding="utf-8",
     )
 
+    assert interface not in wg.active_interfaces()
     try:
         subprocess.run(["wg-quick", "up", str(config)], check=True, timeout=60)
-        assert INTERFACE in wg.active_interfaces()
-        details = wg.read_interface(INTERFACE)
-        assert details["listen_port"] == PORT
+        assert interface in wg.active_interfaces()
+        details = wg.read_interface(interface)
+        assert details["listen_port"] == port
     finally:
-        subprocess.run(["wg-quick", "down", str(config)], check=False, timeout=60)
+        _bring_down(config, interface)

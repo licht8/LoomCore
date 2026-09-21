@@ -25,15 +25,24 @@ def _run_requests(*requests: dict) -> list[dict]:
     return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
 
 
+def _by_id(responses: list[dict], *expected_ids: int) -> dict:
+    """Index responses by id, failing loudly when any expected id is missing."""
+    indexed = {response.get("id"): response for response in responses}
+    missing = [request_id for request_id in expected_ids if request_id not in indexed]
+    assert not missing, f"missing responses for ids {missing}: {responses}"
+    return indexed
+
+
 def test_initialize_and_tools_list():
     responses = _run_requests(
         {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     )
+    by_id = _by_id(responses, 1, 2)
 
-    assert responses[0]["result"]["protocolVersion"] == "2024-11-05"
+    assert by_id[1]["result"]["protocolVersion"] == "2024-11-05"
 
-    tools = responses[1]["result"]["tools"]
+    tools = by_id[2]["result"]["tools"]
     names = {tool["name"] for tool in tools}
     assert {"wg_interface_status", "wg_list_peers", "wg_export_existing_clients"} <= names
     assert {
@@ -53,7 +62,7 @@ def test_initialize_and_tools_list():
 
 def test_unknown_method_returns_error():
     responses = _run_requests({"jsonrpc": "2.0", "id": 1, "method": "does/not/exist"})
-    assert responses[0]["error"]["code"] == -32601
+    assert _by_id(responses, 1)[1]["error"]["code"] == -32601
 
 
 def test_unknown_tool_returns_error():
@@ -65,4 +74,4 @@ def test_unknown_tool_returns_error():
             "params": {"name": "nope"},
         }
     )
-    assert responses[0]["error"]["code"] == -32601
+    assert _by_id(responses, 1)[1]["error"]["code"] == -32601
