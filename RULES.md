@@ -295,7 +295,7 @@ Each plugin is a separate project in `plugins/<id>/`. Main file: `main.py`.
 
 - `src/api/` — routes.
 - `src/core/` — logic (agent, contracts, security, audit, rate limit).
-- `src/llm/` — LLM provider client/config and prompts.
+- `src/llm/` — LLM providers (Hetzner) and prompts.
 - `src/plugins/` — plugin process management, manifests, state, health.
 - `src/interfaces/` — WebSocket and event definitions.
 - `src/db/` — models and session helpers.
@@ -336,9 +336,8 @@ management.
 - **Rate limiting:** REST limits are enforced with slowapi (chat 30/min, auth
   5/min, etc.); plugin calls are bounded by timeouts. Do not remove limits to
   make a test pass.
-- **API keys:** the LLM provider key lives only in the runtime config store
-  (`/data/llm.json`, mode 0600) or `.env`; the Telegram bot key lives only in
-  `.env` (or Docker secrets). Never in code, logs, audit, or commits.
+- **API keys:** keys for Hetzner/LLM and the Telegram bot live only in `.env`
+  (or Docker secrets), never in code or commits.
 - **TLS:** `REQUIRE_TLS=true` refuses every admin auth path over plain HTTP;
   `SECURE_COOKIES=true` marks the session cookie Secure. Do not weaken these on
   a deployment.

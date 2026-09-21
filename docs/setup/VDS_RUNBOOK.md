@@ -35,6 +35,7 @@ Required values:
 | Key | Value |
 |---|---|
 | `POSTGRES_PASSWORD` | the random password above |
+| `HETZNER_API_KEY` | your Hetzner inference key |
 | `LOOMWG_ENDPOINT` | public IP or domain of the VDS |
 | `LOOMWG_SKIP_FIREWALL` | `1` (Rocky uses firewalld) |
 | `SESSION_SECRET` | the random session secret above (JWT login) |

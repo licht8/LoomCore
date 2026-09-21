@@ -51,20 +51,13 @@ services:
       - no-new-privileges:true
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loomuser}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@127.0.0.1:5432/${POSTGRES_DB:-loomcore}
-      # Optional LLM bootstrap. Empty by default: the provider is chosen at
-      # runtime in the app's Settings tab and persisted on the volume below.
-      LLM_PROVIDER: ${LLM_PROVIDER:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-}
-      LLM_MODEL: ${LLM_MODEL:-}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_CONNECT_TIMEOUT: ${LLM_CONNECT_TIMEOUT:-15}
-      LLM_READ_TIMEOUT: ${LLM_READ_TIMEOUT:-90}
-      LLM_WRITE_TIMEOUT: ${LLM_WRITE_TIMEOUT:-30}
-      LLM_POOL_TIMEOUT: ${LLM_POOL_TIMEOUT:-15}
-      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
-      LLM_ENABLE_THINKING: ${LLM_ENABLE_THINKING:-0}
-      # Runtime provider config on the loomdata volume (settings tab writes here).
-      LLM_SETTINGS_FILE: ${LLM_SETTINGS_FILE:-/data/llm.json}
+      HETZNER_API_KEY: ${HETZNER_API_KEY:-}
+      HETZNER_CONNECT_TIMEOUT: ${HETZNER_CONNECT_TIMEOUT:-15}
+      HETZNER_READ_TIMEOUT: ${HETZNER_READ_TIMEOUT:-90}
+      HETZNER_WRITE_TIMEOUT: ${HETZNER_WRITE_TIMEOUT:-30}
+      HETZNER_POOL_TIMEOUT: ${HETZNER_POOL_TIMEOUT:-15}
+      HETZNER_MAX_RETRIES: ${HETZNER_MAX_RETRIES:-2}
+      HETZNER_ENABLE_THINKING: ${HETZNER_ENABLE_THINKING:-0}
       DEBUG: ${DEBUG:-false}
       # Gated agent latency timings (0=off). See src/core/timing.py.
       LOOMCORE_TIMING: ${LOOMCORE_TIMING:-0}

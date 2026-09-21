@@ -20,11 +20,9 @@ chmod 600 .env
 nano .env
 ```
 
-Fill in at least `POSTGRES_PASSWORD`. The LLM provider is **not** set in `.env`
-by default: after the stack is up, open the app's **Settings** tab and pick a
-provider (OpenAI, OpenRouter, Groq, DeepSeek, or a custom OpenAI-compatible
-endpoint). For admin access prefer **JWT-only** (leave `ADMIN_TOKEN` empty and
-set `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET`, `SESSION_SECRET`) — see
+Fill in at least `POSTGRES_PASSWORD` and `HETZNER_API_KEY`. For admin access
+prefer **JWT-only** (leave `ADMIN_TOKEN` empty and set `ADMIN_PASSWORD_HASH`,
+`ADMIN_TOTP_SECRET`, `SESSION_SECRET`) — see
 [Admin authentication](#admin-authentication).
 
 ### Step 1: Start the stack
@@ -128,25 +126,18 @@ the container** (which shares the host network namespace). For firewalld hosts
 the plugin cannot drive the host firewall, so use `LOOMWG_SKIP_FIREWALL=1` and
 open UDP/NAT manually.
 
-## LLM provider settings
-
-The provider is chosen at runtime in the app's **Settings** tab and persisted to
-`/data/llm.json` (override with `LLM_SETTINGS_FILE`) on the `loomdata` volume, so
-it survives restarts and takes effect on the next turn without a restart. The API
-key is write-only: the UI shows only a short preview, and it never appears in
-responses, logs, or the audit log. Optional `LLM_*` environment variables
-pre-seed the first start; leave them unset to boot unconfigured.
+## LLM request timeouts
 
 A non-streaming LLM request can take a while; the client retries transport/timeout
 errors and then returns a clear message. Tune via `.env` (seconds / count):
 
 | Variable | Default |
 |---|---|
-| `LLM_CONNECT_TIMEOUT` | `15` |
-| `LLM_READ_TIMEOUT` | `90` |
-| `LLM_WRITE_TIMEOUT` | `30` |
-| `LLM_POOL_TIMEOUT` | `15` |
-| `LLM_MAX_RETRIES` | `2` |
+| `HETZNER_CONNECT_TIMEOUT` | `15` |
+| `HETZNER_READ_TIMEOUT` | `90` |
+| `HETZNER_WRITE_TIMEOUT` | `30` |
+| `HETZNER_POOL_TIMEOUT` | `15` |
+| `HETZNER_MAX_RETRIES` | `2` |
 | `LLM_DAILY_CALL_LIMIT` | `1000` |
 
 `LLM_DAILY_CALL_LIMIT` is a process-wide daily ceiling on LLM HTTP calls (`0`

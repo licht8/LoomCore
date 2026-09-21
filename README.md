@@ -7,14 +7,14 @@
 - Python / FastAPI
 - PostgreSQL (Docker)
 - MCP (Model Context Protocol) for plugins
-- OpenAI-compatible LLM providers, chosen at runtime in **Settings**
+- Hetzner Inference API (Qwen3.6-35B)
 
 ## Self-hosted on a Linux VDS
 
 ```bash
 cp .env.example .env
 chmod 600 .env
-# Fill in POSTGRES_PASSWORD and ADMIN_TOKEN, then pick an LLM provider in Settings
+# Fill in POSTGRES_PASSWORD, ADMIN_TOKEN, HETZNER_API_KEY
 nano .env
 sudo bash deploy/install.sh          # or: docker compose up -d --build
 docker compose exec hub alembic upgrade head
