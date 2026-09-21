@@ -6,6 +6,9 @@ Each entry commits to its predecessor's hash, so removing or editing an entry
 breaks the chain and ``verify_chain`` detects it. This is not a signature — a
 process with database access could rewrite the whole chain — but any partial
 edit is detectable, and the log is central rather than a per-plugin local file.
+Note that *truncation* (dropping trailing rows) leaves an internally consistent
+chain, so it is only detected when the caller passes an independently known
+anchor (``expected_count`` / ``expected_head``) to ``verify_chain``.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ logger = logging.getLogger("loomcore.audit")
 GENESIS_HASH = "0" * 64
 
 # Transaction-scoped advisory lock that serializes appends to the chain (see
-# record_mutation). It is released automatically at commit/rollback.
+# _record_mutation). It is released automatically at commit/rollback.
 _AUDIT_LOCK_STATEMENT = text("SELECT pg_advisory_xact_lock(hashtext('loomcore.audit'))")
 
 
@@ -69,7 +72,7 @@ def compute_entry_hash(prev_hash: str, payload: dict[str, Any]) -> str:
     return hashlib.sha256(digest.encode("utf-8")).hexdigest()
 
 
-async def record_mutation(
+async def _record_mutation(
     session_db: Any,
     *,
     tool: str,
@@ -82,7 +85,13 @@ async def record_mutation(
     revision: int | None = None,
     error: str | None = None,
 ) -> AuditEntry | None:
-    """Append one hash-chained audit row. Best-effort: never raises."""
+    """Append one hash-chained audit row on the passed session. Never raises.
+
+    Private on purpose: this helper **commits or rolls back the passed
+    session**, so it must only be called with a session dedicated to the audit
+    append (no other work may share it). Callers that do not own such a session
+    should use :func:`record_mutation_isolated`.
+    """
     try:
         # Serialize the read+insert so two concurrent writers cannot both chain
         # to the same predecessor and fork the chain. SELECT ... FOR UPDATE is
@@ -141,7 +150,7 @@ async def record_mutation_isolated(**kwargs: Any) -> AuditEntry | None:
     """Record a mutation on a dedicated session so it never blocks the caller."""
     try:
         async with async_session_factory() as session_db:
-            return await record_mutation(session_db, **kwargs)
+            return await _record_mutation(session_db, **kwargs)
     except Exception as exc:
         logger.warning(
             "audit: isolated record failed for %s: %s", kwargs.get("tool"), exc
@@ -149,8 +158,25 @@ async def record_mutation_isolated(**kwargs: Any) -> AuditEntry | None:
         return None
 
 
-def verify_chain(entries: list[AuditEntry]) -> bool:
-    """Return True when every entry links correctly to the previous one."""
+def verify_chain(
+    entries: list[AuditEntry],
+    *,
+    expected_count: int | None = None,
+    expected_head: str | None = None,
+) -> bool:
+    """Return True when every entry links correctly to the previous one.
+
+    The chain alone cannot prove completeness: a truncated log is still
+    internally consistent, so an empty list passes when no anchor is given. Pass
+    an independently known ``expected_count`` (number of rows) and/or
+    ``expected_head`` (the last ``entry_hash``) to detect truncation.
+    """
+    if expected_count is not None and len(entries) != expected_count:
+        return False
+    if expected_head is not None and (
+        not entries or entries[-1].entry_hash != expected_head
+    ):
+        return False
     prev = GENESIS_HASH
     for entry in entries:
         payload = entry_payload(

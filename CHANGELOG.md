@@ -33,3 +33,13 @@ task report (RULES 14).
 - Made the CORS allow-list a `cors_origins` setting (comma-separated
   `CORS_ORIGINS`, localhost defaults) and replaced the startup `print()` calls
   in `src/app.py` with `loomcore.app` INFO logs.
+- Removed embedded credentials from the `database_url` default (now a
+  credential-free placeholder; set `DATABASE_URL` explicitly).
+- Confirmation phrases longer than 3 words are dropped with a warning, and a
+  failed phrase-file load is no longer cached (retried on the next call;
+  `clear_phrase_cache()` after an edit).
+- `validate_tool_args` now reports the failing subschema's required names
+  instead of re-reading the top-level schema.
+- Audit: the session-taking append helper is private and documents that it
+  commits the passed session; `verify_chain` accepts `expected_count` /
+  `expected_head` anchors to detect truncation.

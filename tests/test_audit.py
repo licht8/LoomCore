@@ -7,9 +7,9 @@ from sqlalchemy import UniqueConstraint
 
 from src.core.audit import (
     GENESIS_HASH,
+    _record_mutation,
     compute_entry_hash,
     entry_payload,
-    record_mutation,
     verify_chain,
 )
 from src.db.models import AuditEntry
@@ -75,6 +75,27 @@ def test_verify_chain_detects_broken_link():
     assert verify_chain([first, second]) is False
 
 
+def test_verify_chain_detects_truncation_with_expected_count():
+    first = _entry(GENESIS_HASH)
+    second = _entry(first.entry_hash, tool="wg_interface_restart")
+
+    assert verify_chain([first, second], expected_count=2) is True
+    assert verify_chain([first], expected_count=2) is False
+
+
+def test_verify_chain_detects_truncation_with_expected_head():
+    first = _entry(GENESIS_HASH)
+    second = _entry(first.entry_hash, tool="wg_interface_restart")
+
+    assert verify_chain([first, second], expected_head=second.entry_hash) is True
+    assert verify_chain([first], expected_head=second.entry_hash) is False
+
+
+def test_verify_chain_empty_is_true_without_anchor_and_false_with_expected_head():
+    assert verify_chain([]) is True
+    assert verify_chain([], expected_head="f" * 64) is False
+
+
 def test_audit_log_prev_hash_is_unique():
     unique = [
         constraint
@@ -129,7 +150,7 @@ async def test_record_mutation_chains_to_previous():
     prior = _entry(GENESIS_HASH)
     session = _FakeSession(last=prior)
 
-    entry = await record_mutation(
+    entry = await _record_mutation(
         session,
         tool="wg_remove_peer",
         arguments={"interface": "wg0"},
@@ -162,7 +183,7 @@ async def test_record_mutation_chains_to_previous():
 async def test_record_mutation_uses_genesis_as_first_entry():
     session = _FakeSession(last=None)
 
-    entry = await record_mutation(session, tool="core_reload_plugin", status="success")
+    entry = await _record_mutation(session, tool="core_reload_plugin", status="success")
 
     assert entry is not None
     assert entry.prev_hash == GENESIS_HASH
@@ -172,7 +193,7 @@ async def test_record_mutation_uses_genesis_as_first_entry():
 async def test_record_mutation_serializes_appends_with_a_chain_lock():
     session = _FakeSession(last=None)
 
-    entry = await record_mutation(session, tool="ops_write_file", status="success")
+    entry = await _record_mutation(session, tool="ops_write_file", status="success")
 
     assert entry is not None
     assert len(session.statements) == 2
@@ -189,4 +210,4 @@ async def test_record_mutation_swallows_failures():
         async def rollback(self):
             return None
 
-    assert await record_mutation(_Boom(), tool="ops_write_file", status="success") is None
+    assert await _record_mutation(_Boom(), tool="ops_write_file", status="success") is None
