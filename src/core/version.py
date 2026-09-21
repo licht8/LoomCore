@@ -7,11 +7,25 @@ fallback so a checkout that is not pip-installed still reports a version.
 
 from __future__ import annotations
 
+import logging
 from importlib.metadata import PackageNotFoundError, version
+
+logger = logging.getLogger("loomcore.version")
 
 _FALLBACK_VERSION = "0.0.1"
 
-try:
-    CORE_VERSION = version("loomcore")
-except PackageNotFoundError:  # pragma: no cover - only when run from source
-    CORE_VERSION = _FALLBACK_VERSION
+
+def _resolve_version() -> str:
+    """Return the installed core version, warning when metadata is missing."""
+    try:
+        return version("loomcore")
+    except PackageNotFoundError:
+        logger.warning(
+            "Core package metadata not found (source checkout or broken install); "
+            "using fallback version %s. Plugin compatibility checks use this value.",
+            _FALLBACK_VERSION,
+        )
+        return _FALLBACK_VERSION
+
+
+CORE_VERSION = _resolve_version()

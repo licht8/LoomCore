@@ -20,11 +20,17 @@ def enabled() -> bool:
     return settings.timing_enabled
 
 
+def _render_field(key: str, value: object) -> str:
+    """Render one ``key=value`` pair with CR/LF neutralised to spaces."""
+    sanitized = str(value).replace(chr(13), " ").replace(chr(10), " ")
+    return f"{key}={sanitized}"
+
+
 def log_stage(name: str, dur: float, **fields) -> None:
     """Emit one structured timing line (no-op when disabled)."""
     if not enabled():
         return
-    extra = " ".join(f"{key}={value}" for key, value in fields.items())
+    extra = " ".join(_render_field(key, value) for key, value in fields.items())
     line = f"[timing] stage={name} dur={dur:.3f}s"
     if extra:
         line = f"{line} {extra}"
