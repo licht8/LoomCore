@@ -38,21 +38,22 @@ _MODULE_PATHS = {
 }
 
 # Logical module names used by LoomOps tests -> dotted paths inside the package.
+# Every key is namespaced with the plugin id so the two maps stay disjoint.
 _LOOMOPS_MODULE_PATHS = {
-    "ops": "LoomOps.ops",
-    "commands": "LoomOps.ops.commands",
-    "files": "LoomOps.ops.files",
-    "processes": "LoomOps.ops.processes",
-    "services": "LoomOps.ops.services",
-    "system_info": "LoomOps.ops.system_info",
-    "monitoring": "LoomOps.ops.monitoring",
-    "logs": "LoomOps.ops.logs",
-    "diagnostics": "LoomOps.ops.diagnostics",
-    "tools": "LoomOps.tools",
-    "schemas": "LoomOps.schemas",
-    "protocol": "LoomOps.protocol",
-    "server": "LoomOps.server",
-    "results": "LoomOps.results",
+    "loomops.ops": "LoomOps.ops",
+    "loomops.commands": "LoomOps.ops.commands",
+    "loomops.files": "LoomOps.ops.files",
+    "loomops.processes": "LoomOps.ops.processes",
+    "loomops.services": "LoomOps.ops.services",
+    "loomops.system_info": "LoomOps.ops.system_info",
+    "loomops.monitoring": "LoomOps.ops.monitoring",
+    "loomops.logs": "LoomOps.ops.logs",
+    "loomops.diagnostics": "LoomOps.ops.diagnostics",
+    "loomops.tools": "LoomOps.tools",
+    "loomops.schemas": "LoomOps.schemas",
+    "loomops.protocol": "LoomOps.protocol",
+    "loomops.server": "LoomOps.server",
+    "loomops.results": "LoomOps.results",
 }
 
 
@@ -62,21 +63,42 @@ def _purge_package(name: str = "LoomWG") -> None:
             sys.modules.pop(module_name, None)
 
 
+def _make_loader(package: str, paths: dict[str, str]):
+    """Build a loader that imports ``package`` modules and caches them.
+
+    The package is purged once before the first load and once at teardown, so
+    module-level state (env-derived paths) is recomputed per test while repeated
+    calls inside one test keep module identity.
+    """
+    loaded: dict = {}
+
+    def _load(*names: str) -> dict:
+        for name in names:
+            if name not in loaded:
+                module = importlib.import_module(paths[name])
+                root = module.__name__.split(".", 1)[0]
+                assert root == package, (
+                    f"logical name {name!r} resolved to {module.__name__!r}, "
+                    f"which does not belong to the {package} loader"
+                )
+                loaded[name] = module
+        return {name: loaded[name] for name in names}
+
+    return _load
+
+
 @pytest.fixture
 def load_loomwg(monkeypatch):
     """Return a loader that imports LoomWG plugin modules into the current process.
 
     Prepends the plugin directory to sys.path so `import LoomWG` resolves, and
-    purges the package between loads so module-level state (env-derived paths)
-    is recomputed.
+    purges the package once per fixture so module-level state (env-derived paths)
+    is recomputed while module identity survives repeated loads within a test.
     """
     monkeypatch.syspath_prepend(str(PLUGIN_DIR))
+    _purge_package()
 
-    def _load(*names: str) -> dict:
-        _purge_package()
-        return {name: importlib.import_module(_MODULE_PATHS[name]) for name in names}
-
-    yield _load
+    yield _make_loader("LoomWG", _MODULE_PATHS)
 
     _purge_package()
 
@@ -85,12 +107,9 @@ def load_loomwg(monkeypatch):
 def load_loomops(monkeypatch):
     """Return a loader that imports LoomOps plugin modules into the current process."""
     monkeypatch.syspath_prepend(str(LOOMOPS_DIR))
+    _purge_package("LoomOps")
 
-    def _load(*names: str) -> dict:
-        _purge_package("LoomOps")
-        return {name: importlib.import_module(_LOOMOPS_MODULE_PATHS[name]) for name in names}
-
-    yield _load
+    yield _make_loader("LoomOps", _LOOMOPS_MODULE_PATHS)
 
     _purge_package("LoomOps")
 

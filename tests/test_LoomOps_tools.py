@@ -81,7 +81,7 @@ def _symlink_or_skip(target: Path, link: Path) -> None:
 # === schemas / handlers ===
 
 def test_schema_and_handlers_match(load_loomops):
-    tools = load_loomops("tools")["tools"]
+    tools = load_loomops("loomops.tools")["loomops.tools"]
     names = {tool["name"] for tool in tools.TOOLS_SCHEMA}
     assert names == EXPECTED_TOOLS
     assert set(tools.HANDLERS) == EXPECTED_TOOLS
@@ -89,7 +89,7 @@ def test_schema_and_handlers_match(load_loomops):
 
 
 def test_every_tool_declares_an_explicit_risk(load_loomops):
-    schemas = load_loomops("schemas")["schemas"]
+    schemas = load_loomops("loomops.schemas")["loomops.schemas"]
     assert {tool["name"] for tool in schemas.TOOLS_SCHEMA} == set(schemas._TOOL_RISK)
     assert {tool["risk"] for tool in schemas.TOOLS_SCHEMA} <= {
         "safe",
@@ -99,7 +99,7 @@ def test_every_tool_declares_an_explicit_risk(load_loomops):
 
 
 def test_risk_declaration_fails_closed(load_loomops):
-    schemas = load_loomops("schemas")["schemas"]
+    schemas = load_loomops("loomops.schemas")["loomops.schemas"]
     with pytest.raises(RuntimeError, match=r"missing=\['ghost'\]"):
         schemas._declare_risk([{"name": "ghost"}], {})
     with pytest.raises(RuntimeError, match=r"unknown=\['stale'\]"):
@@ -109,14 +109,14 @@ def test_risk_declaration_fails_closed(load_loomops):
 
 
 def test_handler_returns_mcp_shape(load_loomops, tmp_path):
-    tools = load_loomops("tools")["tools"]
+    tools = load_loomops("loomops.tools")["loomops.tools"]
     result = tools.HANDLERS["ops_disk_usage"]({"path": str(tmp_path)})
     assert result["content"][0]["type"] == "text"
     assert result["data"]["total_bytes"] > 0
 
 
 def test_tool_wrapper_rejects_reserved_content_key(load_loomops):
-    tools = load_loomops("tools")["tools"]
+    tools = load_loomops("loomops.tools")["loomops.tools"]
 
     def collide(_arguments):
         return {"output": "ok", "content": "collision"}
@@ -128,7 +128,7 @@ def test_tool_wrapper_rejects_reserved_content_key(load_loomops):
 # === commands ===
 
 def test_allowed_commands_parses_commas_and_spaces(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime, df ip")
     assert commands.allowed_commands() == {"uptime", "df", "ip"}
 
@@ -137,7 +137,7 @@ def test_allowed_commands_parses_commas_and_spaces(load_loomops, monkeypatch):
 
 
 def test_command_timeout_clamps_and_defaults(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_COMMAND_TIMEOUT", "5")
     assert commands.command_timeout() == 5
     monkeypatch.setenv("LOOMOPS_COMMAND_TIMEOUT", "99999")
@@ -147,21 +147,21 @@ def test_command_timeout_clamps_and_defaults(load_loomops, monkeypatch):
 
 
 def test_run_command_denies_when_allowlist_empty(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.delenv("LOOMOPS_ALLOWED_COMMANDS", raising=False)
     with pytest.raises(ValueError, match="No commands are allowed"):
         commands.run_command({"command": "uptime"})
 
 
 def test_run_command_denies_unlisted_executable(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "df")
     with pytest.raises(ValueError, match="not allowed"):
         commands.run_command({"command": "uptime -p"})
 
 
 def test_run_command_rejects_missing_binary(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setattr(commands.shutil, "which", lambda name: None)
     with pytest.raises(ValueError, match="not installed"):
@@ -169,7 +169,7 @@ def test_run_command_rejects_missing_binary(load_loomops, monkeypatch):
 
 
 def test_run_command_rejects_path_qualified_name(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "ls")
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/bin/{name}")
     calls = []
@@ -185,7 +185,7 @@ def test_run_command_rejects_path_qualified_name(load_loomops, monkeypatch):
 
 
 def test_run_command_executes_resolved_absolute_path(load_loomops, monkeypatch, tmp_path):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -204,7 +204,7 @@ def test_run_command_executes_resolved_absolute_path(load_loomops, monkeypatch, 
 
 
 def test_run_command_denies_allowlisted_interpreter(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "sh")
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/bin/{name}")
 
@@ -213,7 +213,7 @@ def test_run_command_denies_allowlisted_interpreter(load_loomops, monkeypatch):
 
 
 def test_run_command_denies_allowlisted_python_list_form(load_loomops, monkeypatch):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "python3")
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
 
@@ -222,13 +222,13 @@ def test_run_command_denies_allowlisted_python_list_form(load_loomops, monkeypat
 
 
 def test_denied_commands_include_common_shell_escapes(load_loomops):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     for name in ("bash", "env", "xargs", "sudo", "find", "timeout"):
         assert name in commands.DENIED_COMMANDS
 
 
 def test_run_command_runs_allowed_and_audits(load_loomops, monkeypatch, tmp_path):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -252,7 +252,7 @@ def test_run_command_runs_allowed_and_audits(load_loomops, monkeypatch, tmp_path
 
 
 def test_run_command_accepts_list_form(load_loomops, monkeypatch, tmp_path):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "ip")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/sbin/{name}")
@@ -270,7 +270,7 @@ def test_run_command_accepts_list_form(load_loomops, monkeypatch, tmp_path):
 
 
 def test_run_command_timeout_is_reported(load_loomops, monkeypatch, tmp_path):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -297,7 +297,7 @@ def test_run_command_timeout_is_reported(load_loomops, monkeypatch, tmp_path):
 
 
 def test_run_command_truncates_large_output(load_loomops, monkeypatch, tmp_path):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -329,7 +329,7 @@ class _BlockingStream:
 
 
 def test_run_command_reports_incomplete_when_a_reader_stalls(load_loomops, monkeypatch, tmp_path):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_COMMANDS", "uptime")
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(commands.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -352,7 +352,7 @@ def test_run_command_reports_incomplete_when_a_reader_stalls(load_loomops, monke
 
 
 def test_truncate_limited_reports_exact_dropped_count(load_loomops):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     chunks = ["a" * commands.MAX_OUTPUT_CHARS]
 
     text, truncated = commands._truncate_limited(chunks, dropped=5000)
@@ -362,7 +362,7 @@ def test_truncate_limited_reports_exact_dropped_count(load_loomops):
 
 
 def test_truncate_limited_flags_truncation_when_the_cap_was_hit_exactly(load_loomops):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
 
     text, truncated = commands._truncate_limited([], dropped=10)
 
@@ -371,7 +371,7 @@ def test_truncate_limited_flags_truncation_when_the_cap_was_hit_exactly(load_loo
 
 
 def test_read_limited_counts_chars_dropped_past_the_cap(load_loomops):
-    commands = load_loomops("commands")["commands"]
+    commands = load_loomops("loomops.commands")["loomops.commands"]
     sink: list[str] = []
     dropped = [0]
 
@@ -389,7 +389,7 @@ def test_read_limited_counts_chars_dropped_past_the_cap(load_loomops):
 # === files ===
 
 def test_allowed_paths_parses_separators(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     other = tmp_path / "other"
     other.mkdir()
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", os.pathsep.join([str(tmp_path), str(other)]))
@@ -401,21 +401,21 @@ def test_allowed_paths_parses_separators(load_loomops, monkeypatch, tmp_path):
 
 
 def test_resolve_path_denies_when_unconfigured(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.delenv("LOOMOPS_ALLOWED_PATHS", raising=False)
     with pytest.raises(ValueError, match="No paths are allowed"):
         files.resolve_path(str(tmp_path))
 
 
 def test_resolve_path_rejects_outside_roots(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     with pytest.raises(ValueError, match="outside the allowed paths"):
         files.resolve_path(str(tmp_path.parent / "elsewhere"))
 
 
 def test_resolve_path_rejects_traversal(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     allowed = tmp_path / "allowed"
     allowed.mkdir()
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(allowed))
@@ -424,7 +424,7 @@ def test_resolve_path_rejects_traversal(load_loomops, monkeypatch, tmp_path):
 
 
 def test_write_then_read_roundtrip(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     target = tmp_path / "a.txt"
@@ -442,7 +442,7 @@ def test_write_then_read_roundtrip(load_loomops, monkeypatch, tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
 def test_write_file_preserves_existing_mode(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     target = tmp_path / "a.txt"
@@ -455,7 +455,7 @@ def test_write_file_preserves_existing_mode(load_loomops, monkeypatch, tmp_path)
 
 
 def test_read_file_truncates_large_files(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     target = tmp_path / "big.txt"
     target.write_text("x" * (files.MAX_READ_BYTES + 10), encoding="utf-8")
@@ -467,7 +467,7 @@ def test_read_file_truncates_large_files(load_loomops, monkeypatch, tmp_path):
 
 
 def test_write_file_rejects_directory(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     target = tmp_path / "adir"
     target.mkdir()
@@ -476,7 +476,7 @@ def test_write_file_rejects_directory(load_loomops, monkeypatch, tmp_path):
 
 
 def test_write_file_creates_missing_parents(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     target = tmp_path / "nested" / "deep" / "a.txt"
@@ -488,7 +488,7 @@ def test_write_file_creates_missing_parents(load_loomops, monkeypatch, tmp_path)
 
 
 def test_read_file_follows_symlink_inside_root(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
     real = tmp_path / "real.txt"
     real.write_text("ok", encoding="utf-8")
@@ -498,7 +498,7 @@ def test_read_file_follows_symlink_inside_root(load_loomops, monkeypatch, tmp_pa
 
 
 def test_read_file_refuses_symlinked_component(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     root = tmp_path / "root"
     outside = tmp_path / "outside"
     root.mkdir()
@@ -516,7 +516,7 @@ def test_read_file_refuses_symlinked_component(load_loomops, monkeypatch, tmp_pa
 
 
 def test_write_file_refuses_symlinked_component(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     root = tmp_path / "root"
     outside = tmp_path / "outside"
     root.mkdir()
@@ -535,7 +535,7 @@ def test_write_file_refuses_symlinked_component(load_loomops, monkeypatch, tmp_p
 
 
 def test_read_file_on_allowed_root_reports_not_found(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
 
     with pytest.raises(ValueError, match="File not found"):
@@ -543,7 +543,7 @@ def test_read_file_on_allowed_root_reports_not_found(load_loomops, monkeypatch, 
 
 
 def test_write_file_on_allowed_root_rejects_directory(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
 
     with pytest.raises(ValueError, match="Path is a directory"):
@@ -551,7 +551,7 @@ def test_write_file_on_allowed_root_rejects_directory(load_loomops, monkeypatch,
 
 
 def test_write_file_rejects_missing_allowed_root(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     root = tmp_path / "missing"
     monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(root))
 
@@ -560,7 +560,7 @@ def test_write_file_rejects_missing_allowed_root(load_loomops, monkeypatch, tmp_
 
 
 def test_parent_verification_rejects_symlinked_parent(load_loomops, monkeypatch, tmp_path):
-    confine = load_loomops("files")["files"].confine
+    confine = load_loomops("loomops.files")["loomops.files"].confine
     root = tmp_path / "root"
     outside = tmp_path / "outside"
     root.mkdir()
@@ -572,7 +572,7 @@ def test_parent_verification_rejects_symlinked_parent(load_loomops, monkeypatch,
 
 
 def test_open_fd_closes_descriptor_when_wrapping_fails(load_loomops, monkeypatch, tmp_path):
-    confine = load_loomops("files")["files"].confine
+    confine = load_loomops("loomops.files")["loomops.files"].confine
     fd = os.open(tmp_path / "data.bin", os.O_CREAT | os.O_RDWR)
 
     def boom(*args, **kwargs):
@@ -587,7 +587,7 @@ def test_open_fd_closes_descriptor_when_wrapping_fails(load_loomops, monkeypatch
 
 
 def test_allowed_paths_rejects_unresolvable_root(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     good = tmp_path / "good"
     good.mkdir()
     bad = tmp_path / "loop"
@@ -606,7 +606,7 @@ def test_allowed_paths_rejects_unresolvable_root(load_loomops, monkeypatch, tmp_
 
 
 def test_resolve_path_reports_unresolvable_path(load_loomops, monkeypatch, tmp_path):
-    files = load_loomops("files")["files"]
+    files = load_loomops("loomops.files")["loomops.files"]
     original = Path.resolve
 
     def fake_resolve(self, *args, **kwargs):
@@ -622,7 +622,7 @@ def test_resolve_path_reports_unresolvable_path(load_loomops, monkeypatch, tmp_p
 
 
 def test_parent_verification_rejects_unresolvable_parent(load_loomops, monkeypatch, tmp_path):
-    confine = load_loomops("files")["files"].confine
+    confine = load_loomops("loomops.files")["loomops.files"].confine
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("Symlink loop")
@@ -645,7 +645,7 @@ def _fake_proc(root, pid, name, state, cmdline):
 
 
 def test_list_processes_sorted_by_pid(load_loomops, monkeypatch, tmp_path):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     _fake_proc(tmp_path, 20, "nginx", "S (sleeping)", "nginx -g daemon off")
     _fake_proc(tmp_path, 3, "bash", "R (running)", "bash -l")
     monkeypatch.setattr(processes, "PROC_ROOT", tmp_path)
@@ -659,7 +659,7 @@ def test_list_processes_sorted_by_pid(load_loomops, monkeypatch, tmp_path):
 
 
 def test_list_processes_respects_limit(load_loomops, monkeypatch, tmp_path):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     _fake_proc(tmp_path, 1, "one", "S", "one")
     _fake_proc(tmp_path, 2, "two", "S", "two")
     monkeypatch.setattr(processes, "PROC_ROOT", tmp_path)
@@ -671,7 +671,7 @@ def test_list_processes_respects_limit(load_loomops, monkeypatch, tmp_path):
 
 
 def test_list_processes_skips_vanished_processes(load_loomops, monkeypatch, tmp_path):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     _fake_proc(tmp_path, 7, "live", "S", "live")
     (tmp_path / "9").mkdir()  # pid directory exists but status vanished mid-scan
     monkeypatch.setattr(processes, "PROC_ROOT", tmp_path)
@@ -682,7 +682,7 @@ def test_list_processes_skips_vanished_processes(load_loomops, monkeypatch, tmp_
 
 
 def test_start_time_parses_stat_with_spaces_in_comm(load_loomops, monkeypatch, tmp_path):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     base = tmp_path / "42"
     base.mkdir()
     fields = ["S"] + ["0"] * 18 + ["98765"] + ["0"] * 20
@@ -693,7 +693,7 @@ def test_start_time_parses_stat_with_spaces_in_comm(load_loomops, monkeypatch, t
 
 
 def test_kill_process_rejects_unsafe_targets(load_loomops):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     with pytest.raises(ValueError, match="integer"):
         processes.kill_process({"pid": "1"})
     with pytest.raises(ValueError, match="pid <= 1"):
@@ -705,7 +705,7 @@ def test_kill_process_rejects_unsafe_targets(load_loomops):
 
 
 def test_kill_process_signals_and_audits(load_loomops, monkeypatch, tmp_path):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     monkeypatch.setattr(processes, "_start_time", lambda pid: "100")
     killed = []
@@ -719,7 +719,7 @@ def test_kill_process_signals_and_audits(load_loomops, monkeypatch, tmp_path):
 
 
 def test_kill_process_reports_missing_pid(load_loomops, monkeypatch):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     monkeypatch.setattr(processes, "_start_time", lambda pid: "100")
 
     def fake_kill(pid, sig):
@@ -731,7 +731,7 @@ def test_kill_process_reports_missing_pid(load_loomops, monkeypatch):
 
 
 def test_kill_process_refuses_a_recycled_pid(load_loomops, monkeypatch):
-    processes = load_loomops("processes")["processes"]
+    processes = load_loomops("loomops.processes")["loomops.processes"]
     times = iter(["100", "200"])
     monkeypatch.setattr(processes, "_start_time", lambda pid: next(times))
     killed = []
@@ -754,7 +754,7 @@ def _patch_systemd(services, monkeypatch, tmp_path, fake_run):
 
 
 def test_systemctl_status_reports_active(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
 
     def fake_run(command, **kwargs):
         if "is-active" in command:
@@ -770,14 +770,14 @@ def test_systemctl_status_reports_active(load_loomops, monkeypatch, tmp_path):
 
 
 def test_systemctl_unavailable_is_actionable(load_loomops, monkeypatch):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     monkeypatch.setattr(services.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match="systemd is not available"):
         services.systemctl_status({"service": "nginx"})
 
 
 def test_systemctl_restart_success_and_audit(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     _patch_systemd(services, monkeypatch, tmp_path, lambda *a, **k: _Completed())
 
@@ -788,7 +788,7 @@ def test_systemctl_restart_success_and_audit(load_loomops, monkeypatch, tmp_path
 
 
 def test_systemctl_restart_failure_raises(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
     _patch_systemd(
         services,
@@ -802,7 +802,7 @@ def test_systemctl_restart_failure_raises(load_loomops, monkeypatch, tmp_path):
 
 
 def test_systemctl_restart_uses_a_longer_timeout(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     timeouts = []
 
     def fake_run(command, **kwargs):
@@ -827,7 +827,7 @@ def _restart_failure_audit(services, monkeypatch, tmp_path, failure):
 
 
 def test_systemctl_restart_timeout_is_audited(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
 
     def fake_run(command, **kwargs):
         raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout"))
@@ -841,7 +841,7 @@ def test_systemctl_restart_timeout_is_audited(load_loomops, monkeypatch, tmp_pat
 
 
 def test_systemctl_restart_exec_error_is_audited(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
 
     def fake_run(command, **kwargs):
         raise OSError("systemctl disappeared")
@@ -853,7 +853,7 @@ def test_systemctl_restart_exec_error_is_audited(load_loomops, monkeypatch, tmp_
 
 
 def test_failed_units_reports_systemctl_failure(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     _patch_systemd(
         services,
         monkeypatch,
@@ -868,7 +868,7 @@ def test_failed_units_reports_systemctl_failure(load_loomops, monkeypatch, tmp_p
 
 
 def test_failed_units_handler_surfaces_failure(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     _patch_systemd(
         services, monkeypatch, tmp_path, lambda *a, **k: _Completed(returncode=1)
     )
@@ -878,32 +878,32 @@ def test_failed_units_handler_surfaces_failure(load_loomops, monkeypatch, tmp_pa
 
 
 def test_service_name_validation(load_loomops):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     with pytest.raises(ValueError, match="service"):
         services._service({"service": "bad name"})
 
 
 def test_service_name_rejects_option_like_value(load_loomops):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     with pytest.raises(ValueError, match="option"):
         services._service({"service": "--all"})
 
 
 def test_service_name_rejects_shell_metacharacters(load_loomops):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     with pytest.raises(ValueError, match="invalid characters"):
         services._service({"service": "nginx;malicious"})
 
 
 def test_service_name_accepts_instanced_unit(load_loomops):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     assert services._service({"service": "nginx@foo.service"}) == "nginx@foo.service"
 
 
 # === system_info ===
 
 def test_disk_usage_reports_bytes(load_loomops, tmp_path):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     result = system_info.disk_usage({"path": str(tmp_path)})
     assert result["total_bytes"] > 0
     assert result["free_bytes"] >= 0
@@ -911,13 +911,13 @@ def test_disk_usage_reports_bytes(load_loomops, tmp_path):
 
 
 def test_disk_usage_missing_path(load_loomops, tmp_path):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     with pytest.raises(ValueError, match="not found"):
         system_info.disk_usage({"path": str(tmp_path / "nope")})
 
 
 def test_network_status_parses_proc(load_loomops, monkeypatch, tmp_path):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     proc = tmp_path / "dev"
     proc.write_text(
         "Interfaces: 1\n face |bytes    packets\n"
@@ -937,7 +937,7 @@ def test_network_status_parses_proc(load_loomops, monkeypatch, tmp_path):
 
 
 def test_network_status_handles_missing_proc(load_loomops, monkeypatch, tmp_path):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     monkeypatch.setattr(system_info, "PROC_NET_DEV", tmp_path / "missing")
     monkeypatch.setattr(system_info.shutil, "which", lambda name: None)
 
@@ -948,7 +948,7 @@ def test_network_status_handles_missing_proc(load_loomops, monkeypatch, tmp_path
 
 
 def test_ip_addresses_parses_json(load_loomops, monkeypatch):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     monkeypatch.setattr(system_info.shutil, "which", lambda name: "/sbin/ip")
     monkeypatch.setattr(
         system_info.subprocess,
@@ -962,7 +962,7 @@ def test_ip_addresses_parses_json(load_loomops, monkeypatch):
 
 
 def test_network_status_skips_non_numeric_counters(load_loomops, monkeypatch, tmp_path):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     proc = tmp_path / "dev"
     proc.write_text(
         "Interfaces: 1\n face |bytes    packets\n"
@@ -979,7 +979,7 @@ def test_network_status_skips_non_numeric_counters(load_loomops, monkeypatch, tm
 
 
 def test_ip_addresses_tolerates_unexpected_shapes(load_loomops, monkeypatch):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     monkeypatch.setattr(system_info.shutil, "which", lambda name: "/sbin/ip")
 
     monkeypatch.setattr(
@@ -1012,7 +1012,7 @@ def test_ip_addresses_tolerates_unexpected_shapes(load_loomops, monkeypatch):
 
 
 def test_ip_addresses_logs_lookup_failures(load_loomops, monkeypatch, caplog):
-    system_info = load_loomops("system_info")["system_info"]
+    system_info = load_loomops("loomops.system_info")["loomops.system_info"]
     monkeypatch.setattr(system_info.shutil, "which", lambda name: "/sbin/ip")
 
     def boom(*args, **kwargs):
@@ -1034,21 +1034,21 @@ def _fake_host_proc(root, init_name="systemd"):
 
 
 def test_host_pid_active(load_loomops, monkeypatch, tmp_path):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     _fake_host_proc(tmp_path)
     monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
     assert monitoring.host_pid_active() is True
 
 
 def test_host_pid_inactive(load_loomops, monkeypatch, tmp_path):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     _fake_host_proc(tmp_path, "uvicorn")
     monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
     assert monitoring.host_pid_active() is False
 
 
 def test_system_metrics_shape(load_loomops, monkeypatch, tmp_path):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     (tmp_path / "loadavg").write_text("0.50 0.40 0.30 1/100 1234\n", encoding="utf-8")
     (tmp_path / "uptime").write_text("12345.6 999.0\n", encoding="utf-8")
     (tmp_path / "meminfo").write_text(
@@ -1069,7 +1069,7 @@ def test_system_metrics_shape(load_loomops, monkeypatch, tmp_path):
 
 
 def test_system_metrics_without_meminfo_reports_unavailable(load_loomops, monkeypatch, tmp_path):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring, "PROC_ROOT", tmp_path)
     monkeypatch.setattr(monitoring, "cpu_percent", lambda: None)
 
@@ -1084,7 +1084,7 @@ def test_system_metrics_without_meminfo_reports_unavailable(load_loomops, monkey
 
 
 def test_dmesg_truncates(load_loomops, monkeypatch):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
     monkeypatch.setattr(
         monitoring.subprocess, "run", lambda *a, **k: _Completed(stdout="a\nb\nc\n")
@@ -1097,14 +1097,14 @@ def test_dmesg_truncates(load_loomops, monkeypatch):
 
 
 def test_dmesg_missing_binary(load_loomops, monkeypatch):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match="not installed"):
         monitoring.dmesg({})
 
 
 def test_dmesg_falls_back_when_ctime_is_unsupported(load_loomops, monkeypatch):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
     calls = []
 
@@ -1123,7 +1123,7 @@ def test_dmesg_falls_back_when_ctime_is_unsupported(load_loomops, monkeypatch):
 
 
 def test_dmesg_permission_error_mentions_dmesg_restrict(load_loomops, monkeypatch):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
     monkeypatch.setattr(
         monitoring.subprocess,
@@ -1138,7 +1138,7 @@ def test_dmesg_permission_error_mentions_dmesg_restrict(load_loomops, monkeypatc
 
 
 def test_dmesg_generic_error_omits_dmesg_restrict(load_loomops, monkeypatch):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/bin/dmesg")
     monkeypatch.setattr(
         monitoring.subprocess, "run", lambda *a, **k: _Completed(returncode=1, stderr="boom")
@@ -1151,7 +1151,7 @@ def test_dmesg_generic_error_omits_dmesg_restrict(load_loomops, monkeypatch):
 
 
 def test_network_connections_shape(load_loomops, monkeypatch):
-    monitoring = load_loomops("monitoring")["monitoring"]
+    monitoring = load_loomops("loomops.monitoring")["loomops.monitoring"]
     monkeypatch.setattr(monitoring.shutil, "which", lambda name: "/usr/bin/ss")
     monkeypatch.setattr(
         monitoring.subprocess,
@@ -1168,7 +1168,7 @@ def test_network_connections_shape(load_loomops, monkeypatch):
 # === logs ===
 
 def test_log_search_files_fallback(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     (tmp_path / "syslog").write_text("hello\nERROR boom\n", encoding="utf-8")
     monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(tmp_path))
     monkeypatch.setattr(logs, "journal_available", lambda: False)
@@ -1181,7 +1181,7 @@ def test_log_search_files_fallback(load_loomops, monkeypatch, tmp_path):
 
 
 def test_log_search_journal(load_loomops, monkeypatch):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs, "journal_available", lambda: True)
     monkeypatch.setattr(logs, "_run_journal", lambda args: "line one\nline two\n")
 
@@ -1192,14 +1192,14 @@ def test_log_search_journal(load_loomops, monkeypatch):
 
 
 def test_log_search_journal_unavailable_raises(load_loomops, monkeypatch):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs, "journal_available", lambda: False)
     with pytest.raises(RuntimeError, match="journald is not available"):
         logs.log_search({"source": "journal"})
 
 
 def test_log_search_journal_escapes_the_query(load_loomops, monkeypatch):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     captured: list[str] = []
     monkeypatch.setattr(logs, "journal_available", lambda: True)
     monkeypatch.setattr(logs, "_run_journal", lambda args: captured.extend(args) or "")
@@ -1210,7 +1210,7 @@ def test_log_search_journal_escapes_the_query(load_loomops, monkeypatch):
 
 
 def test_log_search_files_rejects_time_filters(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(tmp_path))
     monkeypatch.setattr(logs, "journal_available", lambda: False)
     with pytest.raises(RuntimeError, match="since/unit"):
@@ -1220,7 +1220,7 @@ def test_log_search_files_rejects_time_filters(load_loomops, monkeypatch, tmp_pa
 
 
 def test_journal_errors_files_fallback(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     (tmp_path / "app.log").write_text("all good\ncritical failure\n", encoding="utf-8")
     monkeypatch.setenv("LOOMOPS_LOG_ROOTS", str(tmp_path))
     monkeypatch.setattr(logs, "journal_available", lambda: False)
@@ -1232,13 +1232,13 @@ def test_journal_errors_files_fallback(load_loomops, monkeypatch, tmp_path):
 
 
 def test_max_log_lines_clamps(load_loomops, monkeypatch):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setenv("LOOMOPS_MAX_LOG_LINES", "99999")
     assert logs.max_log_lines() == logs.MAX_LINES
 
 
 def test_journal_available_with_mounted_directory(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
     machine = tmp_path / "machine-id"
     machine.mkdir()
@@ -1251,7 +1251,7 @@ def test_journal_available_with_mounted_directory(load_loomops, monkeypatch, tmp
 def test_journal_available_false_when_directory_empty(
     load_loomops, monkeypatch, tmp_path
 ):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
     monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path))
 
@@ -1259,14 +1259,14 @@ def test_journal_available_false_when_directory_empty(
 
 
 def test_journal_lines_ignores_no_entries_marker(load_loomops):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
 
     assert logs._journal_lines("-- No entries --\n\n") == []
     assert logs._journal_lines("real line\n") == ["real line"]
 
 
 def test_journal_errors_ignores_no_entries(load_loomops, monkeypatch):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs, "journal_available", lambda: True)
     monkeypatch.setattr(logs, "_run_journal", lambda args: "-- No entries --\n")
 
@@ -1277,7 +1277,7 @@ def test_journal_errors_ignores_no_entries(load_loomops, monkeypatch):
 
 
 def test_run_journal_reads_the_mounted_directory(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
     (tmp_path / "system.journal").write_text("", encoding="utf-8")
     monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path))
@@ -1301,7 +1301,7 @@ def test_run_journal_reads_the_mounted_directory(load_loomops, monkeypatch, tmp_
 
 
 def test_run_journal_without_journal_files_raises(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
     monkeypatch.setenv("LOOMOPS_JOURNAL_DIRS", str(tmp_path / "absent"))
 
@@ -1310,7 +1310,7 @@ def test_run_journal_without_journal_files_raises(load_loomops, monkeypatch, tmp
 
 
 def test_log_search_skips_symlinked_files(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     root = tmp_path / "logs"
     root.mkdir()
     (root / "app.log").write_text("ERROR real\n", encoding="utf-8")
@@ -1328,7 +1328,7 @@ def test_log_search_skips_symlinked_files(load_loomops, monkeypatch, tmp_path):
 
 
 def test_log_search_ignores_symlinked_directories(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     root = tmp_path / "logs"
     outside = tmp_path / "outside"
     root.mkdir()
@@ -1345,7 +1345,7 @@ def test_log_search_ignores_symlinked_directories(load_loomops, monkeypatch, tmp
 
 
 def test_journal_directory_ignores_symlinked_journal(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs.shutil, "which", lambda name: "/usr/bin/journalctl")
     outside = tmp_path / "outside.journal"
     outside.write_text("", encoding="utf-8")
@@ -1358,7 +1358,7 @@ def test_journal_directory_ignores_symlinked_journal(load_loomops, monkeypatch, 
 
 
 def test_iter_log_files_caps_each_root(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
@@ -1374,7 +1374,7 @@ def test_iter_log_files_caps_each_root(load_loomops, monkeypatch, tmp_path):
 
 
 def test_iter_log_files_keeps_only_the_smallest_limit(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
     root = tmp_path / "logs"
     root.mkdir()
     for name in ("e.log", "a.log", "c.log", "b.log", "d.log"):
@@ -1387,7 +1387,7 @@ def test_iter_log_files_keeps_only_the_smallest_limit(load_loomops, monkeypatch,
 
 
 def test_resolved_root_returns_none_on_symlink_loop(load_loomops, monkeypatch, tmp_path):
-    logs = load_loomops("logs")["logs"]
+    logs = load_loomops("loomops.logs")["loomops.logs"]
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("Symlink loop")
@@ -1418,7 +1418,7 @@ def _patch_quiet_health(diagnostics, monkeypatch, tmp_path):
 
 
 def test_scan_health_healthy_report(load_loomops, monkeypatch, tmp_path):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     _patch_quiet_health(diagnostics, monkeypatch, tmp_path)
 
     result = diagnostics.scan_health({})
@@ -1430,7 +1430,7 @@ def test_scan_health_healthy_report(load_loomops, monkeypatch, tmp_path):
 
 
 def test_scan_health_reports_missing_access(load_loomops, monkeypatch, tmp_path):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monitoring = diagnostics.monitoring
     monkeypatch.setattr(diagnostics, "failed_units", lambda: ["nginx.service"])
     monkeypatch.setattr(monitoring, "host_pid_active", lambda: False)
@@ -1458,7 +1458,7 @@ def test_scan_health_reports_missing_access(load_loomops, monkeypatch, tmp_path)
 
 
 def test_scan_health_reports_systemd_failure(load_loomops, monkeypatch, tmp_path):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     _patch_quiet_health(diagnostics, monkeypatch, tmp_path)
 
     def boom():
@@ -1474,7 +1474,7 @@ def test_scan_health_reports_systemd_failure(load_loomops, monkeypatch, tmp_path
 
 
 def test_number_rejects_non_finite_values(load_loomops):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
 
     assert diagnostics._number({"x": float("nan")}, "x", "LOOMOPS_X", 80.0) == 80.0
     assert diagnostics._number({"x": float("inf")}, "x", "LOOMOPS_X", 80.0) == 80.0
@@ -1484,7 +1484,7 @@ def test_number_rejects_non_finite_values(load_loomops):
 
 
 def test_oom_scan_falls_back_to_dmesg_when_journal_has_no_matches(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: True)
     monkeypatch.setattr(diagnostics.logs, "_run_journal", lambda args: "-- No entries --\n")
     monkeypatch.setattr(
@@ -1501,7 +1501,7 @@ def test_oom_scan_falls_back_to_dmesg_when_journal_has_no_matches(load_loomops, 
 
 
 def test_oom_scan_falls_back_to_dmesg_when_journal_unavailable(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monkeypatch.setattr(diagnostics.logs, "journal_available", lambda: False)
     monkeypatch.setattr(
         diagnostics.monitoring,
@@ -1516,7 +1516,7 @@ def test_oom_scan_falls_back_to_dmesg_when_journal_unavailable(load_loomops, mon
 
 
 def test_oom_scan_falls_back_to_dmesg_when_journal_errors(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
 
     def boom(args):
         raise RuntimeError("journalctl failed")
@@ -1546,7 +1546,7 @@ class _Stat:
 
 
 def test_disk_findings_include_overlay_mounts(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monkeypatch.setattr(diagnostics, "_read_mounts", lambda: [("/", "overlay")])
     monkeypatch.setattr(diagnostics, "_stat", lambda path: _Stat(1))
     monkeypatch.setattr(diagnostics.shutil, "disk_usage", lambda path: _Usage(100, 97))
@@ -1560,7 +1560,7 @@ def test_disk_findings_include_overlay_mounts(load_loomops, monkeypatch):
 
 
 def test_disk_findings_deduplicate_by_device(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monkeypatch.setattr(
         diagnostics,
         "_read_mounts",
@@ -1580,7 +1580,7 @@ def test_disk_findings_deduplicate_by_device(load_loomops, monkeypatch):
 
 
 def test_disk_findings_report_unmeasured_mounts(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monkeypatch.setattr(
         diagnostics,
         "_read_mounts",
@@ -1602,7 +1602,7 @@ def test_disk_findings_report_unmeasured_mounts(load_loomops, monkeypatch):
 
 
 def test_disk_findings_do_not_swallow_a_readable_mount_on_a_failed_device(load_loomops, monkeypatch):
-    diagnostics = load_loomops("diagnostics")["diagnostics"]
+    diagnostics = load_loomops("loomops.diagnostics")["loomops.diagnostics"]
     monkeypatch.setattr(
         diagnostics,
         "_read_mounts",
@@ -1624,7 +1624,7 @@ def test_disk_findings_do_not_swallow_a_readable_mount_on_a_failed_device(load_l
 
 
 def test_failed_units_handler(load_loomops, monkeypatch, tmp_path):
-    services = load_loomops("services")["services"]
+    services = load_loomops("loomops.services")["loomops.services"]
     _patch_systemd(
         services,
         monkeypatch,
@@ -1650,7 +1650,7 @@ def _run_protocol(protocol, monkeypatch, handlers, *lines: str) -> list[dict]:
 
 
 def test_protocol_answers_unexpected_tool_exception(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
 
     def boom(arguments):
         raise KeyError("boom")
@@ -1677,7 +1677,7 @@ def test_protocol_answers_unexpected_tool_exception(load_loomops, monkeypatch):
 
 
 def test_protocol_answers_unserializable_result(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1698,7 +1698,7 @@ def test_protocol_answers_unserializable_result(load_loomops, monkeypatch):
 
 
 def test_protocol_non_object_payload_is_invalid_request(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1724,7 +1724,7 @@ def _deep_structure(depth: int = 10000) -> dict:
 
 
 def test_protocol_deeply_nested_line_is_parse_error(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1739,7 +1739,7 @@ def test_protocol_deeply_nested_line_is_parse_error(load_loomops, monkeypatch):
 
 
 def test_protocol_deeply_nested_result_is_answered(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1761,7 +1761,7 @@ def test_protocol_deeply_nested_result_is_answered(load_loomops, monkeypatch):
 
 
 def test_protocol_parse_error_and_unknown_method(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1777,7 +1777,7 @@ def test_protocol_parse_error_and_unknown_method(load_loomops, monkeypatch):
 
 
 def test_protocol_serialize_falls_back_to_constant_payload(load_loomops):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     payload = {"jsonrpc": "2.0", "id": _deep_structure(10000), "result": None}
 
     response = json.loads(protocol._serialize(payload))
@@ -1788,7 +1788,7 @@ def test_protocol_serialize_falls_back_to_constant_payload(load_loomops):
 
 
 def test_protocol_non_object_params_is_invalid_params(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1810,7 +1810,7 @@ def test_protocol_non_object_params_is_invalid_params(load_loomops, monkeypatch)
 
 
 def test_protocol_non_object_arguments_is_invalid_arguments(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
     responses = _run_protocol(
         protocol,
         monkeypatch,
@@ -1832,7 +1832,7 @@ def test_protocol_non_object_arguments_is_invalid_arguments(load_loomops, monkey
 
 
 def test_protocol_id_less_request_error_uses_null_id(load_loomops, monkeypatch):
-    protocol = load_loomops("protocol")["protocol"]
+    protocol = load_loomops("loomops.protocol")["loomops.protocol"]
 
     def boom(arguments):
         raise TypeError("boom")
@@ -1870,7 +1870,7 @@ def restore_loomops_logger():
 def test_configure_logging_targets_the_plugin_logger(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     root = logging.getLogger()
     monkeypatch.setattr(root, "handlers", [logging.NullHandler()], raising=False)
     stream = io.StringIO()
@@ -1889,7 +1889,7 @@ def test_configure_logging_targets_the_plugin_logger(
 def test_configure_logging_is_idempotent_and_keeps_foreign_handlers(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setattr(server.sys, "stderr", io.StringIO())
     plugin_logger = logging.getLogger("LoomOps")
     plugin_logger.handlers = []
@@ -1912,7 +1912,7 @@ def test_configure_logging_is_idempotent_and_keeps_foreign_handlers(
 def test_configure_logging_keeps_a_foreign_stderr_handler(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setattr(server.sys, "stderr", io.StringIO())
     plugin_logger = logging.getLogger("LoomOps")
     plugin_logger.handlers = []
@@ -1927,7 +1927,7 @@ def test_configure_logging_keeps_a_foreign_stderr_handler(
 def test_configure_logging_replaces_its_handler_when_stderr_changes(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     plugin_logger = logging.getLogger("LoomOps")
     plugin_logger.handlers = []
     monkeypatch.setattr(server.sys, "stderr", io.StringIO())
@@ -1949,7 +1949,7 @@ def test_configure_logging_replaces_its_handler_when_stderr_changes(
 def test_configure_logging_applies_the_requested_level(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setenv("LOOMOPS_LOG_LEVEL", "debug")
     monkeypatch.setattr(server.sys, "stderr", io.StringIO())
 
@@ -1961,7 +1961,7 @@ def test_configure_logging_applies_the_requested_level(
 def test_configure_logging_warns_on_unknown_level(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setenv("LOOMOPS_LOG_LEVEL", "chatty")
     stream = io.StringIO()
     monkeypatch.setattr(server.sys, "stderr", stream)
@@ -1975,7 +1975,7 @@ def test_configure_logging_warns_on_unknown_level(
 
 
 def test_configure_logging_rejects_notset(load_loomops, monkeypatch, restore_loomops_logger):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setenv("LOOMOPS_LOG_LEVEL", "notset")
     stream = io.StringIO()
     monkeypatch.setattr(server.sys, "stderr", stream)
@@ -1989,7 +1989,7 @@ def test_configure_logging_rejects_notset(load_loomops, monkeypatch, restore_loo
 def test_configure_logging_strips_padded_level(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setenv("LOOMOPS_LOG_LEVEL", " debug ")
     stream = io.StringIO()
     monkeypatch.setattr(server.sys, "stderr", stream)
@@ -2003,7 +2003,7 @@ def test_configure_logging_strips_padded_level(
 def test_configure_logging_warns_with_the_raw_input(
     load_loomops, monkeypatch, restore_loomops_logger
 ):
-    server = load_loomops("server")["server"]
+    server = load_loomops("loomops.server")["loomops.server"]
     monkeypatch.setenv("LOOMOPS_LOG_LEVEL", " Chatty ")
     stream = io.StringIO()
     monkeypatch.setattr(server.sys, "stderr", stream)
