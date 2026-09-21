@@ -63,11 +63,20 @@ def validate_tool_args(tool_name: str, args: Any, schema: Any) -> None:
 
     error = errors[0]
     if error.validator == "required":
-        required = schema.get("required") if isinstance(schema, dict) else None
-        missing = [name for name in (required or []) if name not in args]
-        raise ToolContractError(
-            f"{tool_name} is missing required argument(s): {', '.join(missing)}"
+        # ``validator_value`` is the *failing subschema's* own required list, so
+        # a nested violation names the nested property instead of re-reading the
+        # top-level schema (which would report an empty list).
+        required = error.validator_value
+        missing = (
+            [name for name in required if name not in args]
+            if isinstance(required, list)
+            else []
         )
+        if missing:
+            raise ToolContractError(
+                f"{tool_name} is missing required argument(s): {', '.join(missing)}"
+            )
+        raise ToolContractError(f"{tool_name}: {error.message}")
 
     location = ".".join(str(part) for part in error.path)
     detail = f"{location}: {error.message}" if location else error.message

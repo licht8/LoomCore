@@ -16,6 +16,18 @@ _PLUGIN_SCHEMA = {
     "additionalProperties": False,
 }
 
+_NESTED_REQUIRED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "peer": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+    },
+    "required": ["peer"],
+}
+
 
 # === validate_tool_args ===
 
@@ -50,6 +62,36 @@ def test_validate_tool_args_missing_required_lists_names():
     with pytest.raises(ToolContractError) as excinfo:
         validate_tool_args("core_enable_plugin", {}, _PLUGIN_SCHEMA)
     assert "missing required argument(s): plugin" in str(excinfo.value)
+
+
+def test_validate_tool_args_nested_required_lists_names():
+    with pytest.raises(ToolContractError) as excinfo:
+        validate_tool_args("demo_tool", {"peer": {}}, _NESTED_REQUIRED_SCHEMA)
+    assert "missing required argument(s): name" in str(excinfo.value)
+
+
+def test_validate_tool_args_required_without_names_falls_back(monkeypatch):
+    class _FakeError:
+        validator = "required"
+        validator_value = None
+        message = "is a required property"
+        path = ()
+
+    class _FakeValidator:
+        @staticmethod
+        def check_schema(schema):
+            return None
+
+        def __init__(self, schema):
+            pass
+
+        def iter_errors(self, args):
+            return iter([_FakeError()])
+
+    monkeypatch.setattr(contracts, "Draft202012Validator", _FakeValidator)
+    with pytest.raises(ToolContractError) as excinfo:
+        validate_tool_args("demo_tool", {}, {"type": "object"})
+    assert str(excinfo.value) == "demo_tool: is a required property"
 
 
 def test_validate_tool_args_type_error_names_path():
