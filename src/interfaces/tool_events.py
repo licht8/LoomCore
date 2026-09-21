@@ -19,15 +19,26 @@ from src.interfaces.events import (
 )
 
 
-def extract_text(raw_result: dict) -> str:
-    """Extract text from an MCP result ({"content": [{"type": "text", ...}]})."""
+def extract_text(raw_result: object) -> str:
+    """Extract text from an MCP result, tolerating malformed payloads.
+
+    A well-formed MCP result is ``{"content": [{"type": "text", "text": ...}]}``.
+    Anything else is degraded gracefully: a non-list ``content`` is stringified,
+    non-dict elements and missing/``None`` text values are ignored (non-string
+    text is coerced with ``str``), and ``None`` yields an empty string.
+    """
     if isinstance(raw_result, dict) and "content" in raw_result:
-        return "".join(
-            item.get("text", "")
-            for item in raw_result["content"]
-            if item.get("type") == "text"
-        )
-    return str(raw_result)
+        content = raw_result["content"]
+        if isinstance(content, list):
+            return "".join(
+                str(item.get("text"))
+                for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and item.get("text") is not None
+            )
+        return str(content)
+    return "" if raw_result is None else str(raw_result)
 
 
 def build_artifacts(raw_result: dict) -> list[dict] | None:
@@ -126,7 +137,6 @@ def tool_success_payload(
         ToolResponseEvent(
             tool=tool_name,
             content=content,
-            result=content,
             status="success",
             summary="Done",
             artifacts=artifacts,
@@ -143,7 +153,6 @@ def tool_error_payload(
         ToolResponseEvent(
             tool=tool_name,
             content=message,
-            result=message,
             status="error",
             summary="Error",
             risk=risk,

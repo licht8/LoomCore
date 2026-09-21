@@ -8,7 +8,7 @@ only sends payloads the registry knows about. The union mirrors
 
 The contract is additive-only: a new optional field may be added, but a
 ``type`` is never removed or repurposed without bumping ``WS_SCHEMA_VERSION``.
-Extra fields the frontend does not declare (``tool``, ``result``, ``risk``,
+Extra fields the frontend does not declare (``tool``, ``risk``,
 ``schema_version``) are ignored by TypeScript and safe to send.
 """
 
@@ -60,7 +60,6 @@ class ToolResponseEvent(_Event):
     code: str | None = None
     artifacts: list[dict[str, Any]] | None = None
     tool: str | None = None
-    result: Any = None
     risk: str | None = None
 
 
@@ -129,11 +128,12 @@ EVENT_MODELS: dict[str, type[_Event]] = {
 
 
 def event_payload(model: _Event) -> dict:
-    """Serialize an event model to a wire dict, dropping unset fields.
+    """Serialize an event model to a wire dict, dropping ``None`` fields.
 
-    ``exclude_none`` is deliberate: unset optional fields (for example
-    ``artifacts`` on a success) are omitted rather than sent as ``null``. The TS
-    union marks these fields optional, so the payload stays additive.
+    ``exclude_none`` is deliberate: **every** field whose value is ``None`` is
+    omitted rather than sent as ``null``, whether the caller passed it or left the
+    model default. No registry field treats an explicit ``null`` as meaningful,
+    and the TS union marks these fields optional, so the payload stays additive.
     """
     return model.model_dump(exclude_none=True)
 

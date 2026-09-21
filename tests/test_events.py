@@ -1,7 +1,12 @@
 """Unit tests for the versioned WebSocket event registry."""
 
 from src.interfaces import events as events_module
-from src.interfaces.events import EVENT_MODELS, WS_SCHEMA_VERSION, event_payload
+from src.interfaces.events import (
+    EVENT_MODELS,
+    WS_SCHEMA_VERSION,
+    ResponseEvent,
+    event_payload,
+)
 from src.interfaces.tool_events import (
     plan_done_payload,
     plan_proposed_payload,
@@ -50,6 +55,12 @@ def test_payload_drops_unset_fields():
         "content": "hello",
         "schema_version": 1,
     }
+
+
+def test_explicit_none_is_omitted_from_payload():
+    payload = event_payload(ResponseEvent(content="x", text=None))
+    assert payload == {"type": "response", "content": "x", "schema_version": 1}
+    assert "text" not in payload
 
 
 # === module builders ===
@@ -110,6 +121,7 @@ def test_tool_success_payload_is_registered():
     assert payload["status"] == "success"
     assert payload["schema_version"] == 1
     assert "artifacts" not in payload
+    assert "result" not in payload
 
 
 def test_tool_error_payload_is_registered():
