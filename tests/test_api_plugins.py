@@ -1,5 +1,7 @@
 """Tests for the plugin status and tools routes."""
 
+import logging
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -58,7 +60,7 @@ async def test_tools_endpoint_returns_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tools_endpoint_reports_error(monkeypatch):
+async def test_tools_endpoint_returns_500_on_failure(monkeypatch, caplog):
     _auth(monkeypatch)
 
     async def boom():
@@ -66,11 +68,14 @@ async def test_tools_endpoint_reports_error(monkeypatch):
 
     monkeypatch.setattr(plugins_api.plugin_manager, "get_all_tools", boom)
 
-    async with _client() as client:
-        response = await client.get("/api/tools", headers=_AUTH)
+    with caplog.at_level(logging.ERROR, logger="loomcore.api.plugins"):
+        async with _client() as client:
+            response = await client.get("/api/tools", headers=_AUTH)
 
-    assert response.status_code == 200
-    assert response.json() == {"error": "plugin down"}
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to collect tool schemas"}
+    assert "plugin down" not in response.text
+    assert "Failed to collect plugin tool schemas" in caplog.text
 
 
 def _patch_lifecycle(monkeypatch, plugin_id="LoomOps", *, ok=True):

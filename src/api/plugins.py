@@ -1,6 +1,7 @@
 """Routes for plugin and tool status."""
 
 import contextlib
+import logging
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
@@ -12,6 +13,8 @@ from src.core.security import require_admin_token
 from src.plugins import plugin_manager
 
 router = APIRouter(prefix="/api", tags=["plugins"])
+
+logger = logging.getLogger("loomcore.api.plugins")
 
 
 @router.get("/plugins/status")
@@ -38,12 +41,14 @@ async def list_plugins_tools(
 ):
     """Return the tool schemas of all plugins (for Swagger/UI)."""
     require_admin_token(extract_admin_token(request, authorization), request)
-    result: dict = {}
     try:
-        result["tools"] = list(CORE_TOOLS_SCHEMA) + await plugin_manager.get_all_tools()
+        tools = list(CORE_TOOLS_SCHEMA) + await plugin_manager.get_all_tools()
     except Exception as exc:
-        result["error"] = str(exc)
-    return result
+        logger.exception("Failed to collect plugin tool schemas")
+        raise HTTPException(
+            status_code=500, detail="Failed to collect tool schemas"
+        ) from exc
+    return {"tools": tools}
 
 
 def _require_plugin(plugin_id: str) -> None:
