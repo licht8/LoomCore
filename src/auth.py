@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -9,6 +10,8 @@ import os
 import secrets
 import struct
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +25,11 @@ SESSION_COOKIE = "loomcore_session"
 # Simple blocklist for revoked tokens (token_id → revoke timestamp).
 _revoked: dict[str, float] = {}
 _revoked_loaded = False
+_revoked_signature: tuple[int, int] | None = None
+_revoked_lock = threading.RLock()
+# Well above the 310_000 rounds used by generate_password_hash; anything larger
+# is treated as an attack on the verifier rather than a real hash.
+_MAX_PBKDF2_ROUNDS = 10_000_000
 
 
 def _revoked_path() -> Path | None:
@@ -40,28 +48,68 @@ def revocation_store_path() -> Path | None:
     return _revoked_path()
 
 
-def _load_revoked() -> None:
-    """Load revocations from disk once, if a store path is configured."""
-    global _revoked, _revoked_loaded
-    if _revoked_loaded:
-        return
-    _revoked_loaded = True
-    path = _revoked_path()
-    if path is None:
-        return
+def _revoked_file_signature(path: Path) -> tuple[int, int] | None:
+    """Return ``(st_mtime_ns, st_size)`` for the store, or ``None`` if unreadable."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _parse_revoked(data: object) -> dict[str, float]:
+    """Extract ``{token_id: timestamp}`` pairs from a decoded store payload.
+
+    An entry whose timestamp cannot be converted is skipped rather than aborting
+    the whole parse, so one tampered value cannot disable the store.
+    """
+    if not isinstance(data, dict):
+        return {}
+    parsed: dict[str, float] = {}
+    for token_id, timestamp in data.items():
+        if not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool):
+            continue
+        try:
+            parsed[str(token_id)] = float(timestamp)
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return parsed
+
+
+def _read_revoked_file(path: Path) -> dict[str, float] | None:
+    """Read and parse the store; ``None`` means missing, unreadable or corrupt."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return
+        return None
     except (OSError, ValueError) as exc:
         logger.warning(f"Cannot read revoked-session store '{path}': {exc}")
+        return None
+    return _parse_revoked(data)
+
+
+def _load_revoked() -> None:
+    """(Re)load revocations from disk when the configured store changes.
+
+    The store is read at most once per distinct ``(st_mtime_ns, st_size)``
+    signature. The signature is captured *before* the read and the loaded state
+    is latched only after a successful parse, so a missing, corrupt or unreadable
+    file never disables a later reload attempt.
+    """
+    global _revoked_loaded, _revoked_signature
+    path = _revoked_path()
+    if path is None:
         return
-    if isinstance(data, dict):
-        _revoked = {
-            str(token_id): float(timestamp)
-            for token_id, timestamp in data.items()
-            if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool)
-        }
+    with _revoked_lock:
+        signature = _revoked_file_signature(path)
+        if _revoked_loaded and signature is not None and signature == _revoked_signature:
+            return
+        parsed = _read_revoked_file(path)
+        if parsed is None:
+            return
+        _revoked.update(parsed)
+        _revoked_loaded = True
+        _revoked_signature = signature
 
 
 def _save_revoked() -> None:
@@ -69,13 +117,39 @@ def _save_revoked() -> None:
     path = _revoked_path()
     if path is None:
         return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.tmp")
-        temporary.write_text(json.dumps(_revoked), encoding="utf-8")
-        os.replace(temporary, path)
-    except OSError as exc:
-        logger.warning(f"Cannot persist revoked sessions to '{path}': {exc}")
+    with _revoked_lock:
+        on_disk = _read_revoked_file(path)
+        if on_disk is not None:
+            _revoked.update(on_disk)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temp_name = tempfile.mkstemp(
+                dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+            )
+        except OSError as exc:
+            logger.warning(f"Cannot persist revoked sessions to '{path}': {exc}")
+            return
+        temporary = Path(temp_name)
+        try:
+            try:
+                handle = os.fdopen(descriptor, "w", encoding="utf-8")
+            except OSError:
+                # fdopen did not take ownership of the descriptor; close it so
+                # the failing call cannot leak the raw file descriptor.
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
+                raise
+            with handle:
+                handle.write(json.dumps(_revoked))
+            os.replace(temporary, path)
+        except OSError as exc:
+            logger.warning(f"Cannot persist revoked sessions to '{path}': {exc}")
+        finally:
+            # Always drop the staging file: on success os.replace moved it away
+            # (unlink is then a no-op on a missing path), on any failure it is
+            # garbage. Runs even for non-OSError escapes (e.g. KeyboardInterrupt).
+            with contextlib.suppress(OSError):
+                temporary.unlink()
 
 
 def verify_password(password: str, encoded: str) -> bool:
@@ -83,10 +157,13 @@ def verify_password(password: str, encoded: str) -> bool:
         algorithm, rounds_text, salt_text, digest_text = encoded.split("$", 3)
         if algorithm != "pbkdf2_sha256":
             return False
+        rounds = int(rounds_text)
+        if rounds <= 0 or rounds > _MAX_PBKDF2_ROUNDS:
+            return False
         salt = base64.urlsafe_b64decode(salt_text + "===")
         expected = base64.urlsafe_b64decode(digest_text + "===")
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, int(rounds_text))
-    except (ValueError, TypeError):
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
+    except (ValueError, TypeError, OverflowError):
         return False
     return hmac.compare_digest(actual, expected)
 
@@ -141,9 +218,10 @@ def decode_jwt_token(token: str | None, secret: str, max_age: int = 28800) -> di
 def revoke_jwt_token(token_id: str | None) -> None:
     """Revoke a token by id (persisted when LOOMCORE_REVOKED_FILE is set)."""
     if token_id:
-        _load_revoked()
-        _revoked[token_id] = int(time.time())
-        _save_revoked()
+        with _revoked_lock:
+            _load_revoked()
+            _revoked[token_id] = int(time.time())
+            _save_revoked()
 
 
 def generate_password_hash(password: str) -> str:

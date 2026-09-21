@@ -3,7 +3,9 @@
 import base64
 import hashlib
 import hmac
+import json
 import struct
+import threading
 import time
 
 import pytest
@@ -29,6 +31,7 @@ def _isolated_revocation(monkeypatch):
     monkeypatch.setattr(settings, "loomcore_revoked_file", "")
     monkeypatch.setattr(auth, "_revoked", {})
     monkeypatch.setattr(auth, "_revoked_loaded", False)
+    monkeypatch.setattr(auth, "_revoked_signature", None)
 
 
 def _totp_code(secret: str, counter: int) -> str:
@@ -155,3 +158,95 @@ def test_revocation_without_store_stays_in_memory(monkeypatch):
 
     assert decode_jwt_token(token, SECRET) is None
     assert auth._revoked_path() is None
+
+
+def test_revocation_store_rereads_changed_file(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+    store.write_text(json.dumps({"a": 1}), encoding="utf-8")
+
+    token_a = create_jwt_token({"username": "admin", "jti": "a"}, SECRET)
+    assert decode_jwt_token(token_a, SECRET) is None
+
+    # A different-length payload adds a new revocation, so the signature differs.
+    store.write_text(json.dumps({"a": 1, "b": 2}), encoding="utf-8")
+    token_b = create_jwt_token({"username": "admin", "jti": "b"}, SECRET)
+    assert decode_jwt_token(token_b, SECRET) is None
+
+
+def test_revocation_load_failure_is_retried(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+    store.write_text("{not json", encoding="utf-8")
+
+    token = create_jwt_token({"username": "admin", "jti": "retry-me"}, SECRET)
+    assert decode_jwt_token(token, SECRET) is not None
+    assert auth._revoked_loaded is False
+
+    store.write_text(json.dumps({"retry-me": 1}), encoding="utf-8")
+    assert decode_jwt_token(token, SECRET) is None
+
+
+def test_revocation_store_survives_huge_timestamp(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+    store.write_text(json.dumps({"a": 10**400, "ok": 1}), encoding="utf-8")
+
+    unrelated = create_jwt_token({"username": "admin", "jti": "unrelated"}, SECRET)
+    assert decode_jwt_token(unrelated, SECRET) is not None
+
+    huge = create_jwt_token({"username": "admin", "jti": "a"}, SECRET)
+    assert decode_jwt_token(huge, SECRET) is not None
+
+    revoked = create_jwt_token({"username": "admin", "jti": "ok"}, SECRET)
+    assert decode_jwt_token(revoked, SECRET) is None
+
+
+def test_save_revoked_cleans_temp_on_unexpected_error(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("serialize failed")
+
+    monkeypatch.setattr(auth.json, "dumps", boom)
+
+    with pytest.raises(RuntimeError):
+        auth._save_revoked()
+
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_verify_password_rejects_absurd_rounds(monkeypatch):
+    encoded = generate_password_hash("pw")
+    _, _, salt_text, digest_text = encoded.split("$", 3)
+
+    def with_rounds(rounds: int) -> str:
+        return f"pbkdf2_sha256${rounds}${salt_text}${digest_text}"
+
+    assert verify_password("pw", with_rounds(0)) is False
+    assert verify_password("pw", with_rounds(10**20)) is False
+
+    def boom(*args, **kwargs):
+        raise OverflowError("too many rounds")
+
+    monkeypatch.setattr(auth.hashlib, "pbkdf2_hmac", boom)
+    assert verify_password("pw", encoded) is False
+
+
+def test_concurrent_revocations_are_not_lost(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+    ids = [f"jti-{index}" for index in range(8)]
+
+    threads = [
+        threading.Thread(target=revoke_jwt_token, args=(token_id,)) for token_id in ids
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    persisted = json.loads(store.read_text(encoding="utf-8"))
+    assert set(ids) <= set(persisted)
+    assert list(tmp_path.glob("*.tmp")) == []
