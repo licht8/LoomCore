@@ -2,8 +2,9 @@
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.engine import make_url
 
-from src.config import Settings
+from src.config import DEFAULT_DATABASE_URL, Settings
 
 
 def _settings(**overrides):
@@ -96,3 +97,13 @@ def test_cors_origins_parsed_from_comma_separated_env(monkeypatch):
 def test_cors_origins_accepts_a_list_directly():
     config = _settings(cors_origins=["https://hub.example.com"])
     assert config.cors_origins == ["https://hub.example.com"]
+
+
+def test_database_url_default_has_no_embedded_credentials():
+    url = make_url(_settings().database_url)
+    assert url.username is None
+    assert url.password is None
+
+
+def test_database_url_default_is_the_placeholder():
+    assert _settings().database_url == DEFAULT_DATABASE_URL

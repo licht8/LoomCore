@@ -4,9 +4,14 @@ from typing import Annotated
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode
 
+# Deliberate credential-free placeholder. Deployments must set DATABASE_URL
+# (compose derives it from POSTGRES_*); a forgotten override then fails at
+# connect time instead of silently using well-known credentials.
+DEFAULT_DATABASE_URL = "postgresql+asyncpg://localhost:5432/loomcore"
+
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://loomuser:secret_password@localhost:5432/loomcore"
+    database_url: str = DEFAULT_DATABASE_URL
     hetzner_api_key: str = ""
     hetzner_base_url: str = "https://inference.hetzner.com/api/v1"
     hetzner_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
