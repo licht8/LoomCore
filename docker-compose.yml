@@ -75,6 +75,8 @@ services:
       # for plain-HTTP deployments (login refuses non-TLS requests otherwise).
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
       REQUIRE_TLS: ${REQUIRE_TLS:-true}
+      # Browser origins allowed by CORS (comma/space separated).
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       # Persistent revoked-JWT store lives on the loomdata volume.
       LOOMCORE_REVOKED_FILE: ${LOOMCORE_REVOKED_FILE:-/data/revoked.json}
       # LoomOps is deny-by-default; empty command/path allowlists allow nothing.

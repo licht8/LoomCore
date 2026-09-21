@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
@@ -28,12 +29,30 @@ class Settings(BaseSettings):
     require_tls: bool = False
     loomcore_revoked_file: str = "/data/revoked.json"
     trusted_proxies: str = "127.0.0.1,::1"
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
     llm_daily_call_limit: int = 1000
     plugins_dir: str = "/app/plugins"
     plugins_state_file: str = ""
     confirmations_file: str = ""
     timing_enabled: bool = Field(default=False, validation_alias="LOOMCORE_TIMING")
     model_config = {"env_file": ".env"}
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        """Accept a comma/space-separated env string or an explicit list.
+
+        ``CORS_ORIGINS`` is a list setting but Docker compose passes it as a
+        single ``${VAR:-default}`` string, so split a raw string on commas and
+        whitespace (matching the ``TRUSTED_PROXIES`` convention) and pass an
+        already-parsed list through unchanged.
+        """
+        if isinstance(value, str):
+            return [item for item in value.replace(",", " ").split() if item]
+        return value
 
     @model_validator(mode="after")
     def _require_session_secret_for_jwt(self) -> "Settings":

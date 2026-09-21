@@ -59,18 +59,18 @@ def _log_healthcheck_failure(task: asyncio.Task[None]) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Discover plugins and run the background healthcheck for the app lifetime."""
-    print("🚀 LoomCore starting up...")
+    logger.info("LoomCore starting up")
 
     check_security_posture()
 
     discovered = plugin_manager.discover_plugins(settings.plugins_dir)
-    print(f"🔌 Plugins loaded: {', '.join(discovered) or 'none'}")
+    logger.info("Plugins loaded: %s", ", ".join(discovered) or "none")
 
     # Prime the tool cache so plugin tool counts and schemas are available
     # immediately (discover_plugins only spawns the subprocesses).
     try:
         tools = await plugin_manager.get_all_tools()
-        print(f"🛠️  Tools indexed: {len(tools)}")
+        logger.info("Tools indexed: %d", len(tools))
     except Exception as exc:  # pragma: no cover - defensive startup guard
         logger.warning(f"Failed to prime plugin tools at startup: {exc}")
 
@@ -104,10 +104,7 @@ def create_app() -> FastAPI:
     # --- CORS for the frontend (Vite/Next.js) ---
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

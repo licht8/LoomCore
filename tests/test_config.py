@@ -74,3 +74,25 @@ def test_explicit_token_mode_with_password_totp_is_accepted():
 def test_partial_credentials_without_session_secret_are_accepted():
     config = _settings(admin_password_hash="hash")
     assert config.admin_password_hash == "hash"
+
+
+def test_cors_origins_default_to_localhost():
+    assert _settings().cors_origins == [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+
+def test_cors_origins_parsed_from_comma_separated_env(monkeypatch):
+    monkeypatch.setenv(
+        "CORS_ORIGINS", "https://hub.example.com, https://alt.example.com"
+    )
+    assert _settings().cors_origins == [
+        "https://hub.example.com",
+        "https://alt.example.com",
+    ]
+
+
+def test_cors_origins_accepts_a_list_directly():
+    config = _settings(cors_origins=["https://hub.example.com"])
+    assert config.cors_origins == ["https://hub.example.com"]

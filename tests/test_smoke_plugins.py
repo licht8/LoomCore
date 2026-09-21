@@ -69,6 +69,40 @@ async def test_lifespan_primes_plugin_tool_cache(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_lifespan_emits_startup_progress_through_logger(
+    monkeypatch, tmp_path, caplog, capsys
+):
+    """Startup progress goes through the loomcore logger, not stdout."""
+    from src import app as app_module
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+
+    monkeypatch.setattr(settings, "plugins_dir", str(plugins_dir))
+    monkeypatch.setattr(
+        app_module.plugin_manager, "discover_plugins", lambda _dir: ["demo"]
+    )
+
+    async def fake_get_all_tools():
+        return [{"name": "demo_tool"}]
+
+    monkeypatch.setattr(app_module.plugin_manager, "get_all_tools", fake_get_all_tools)
+
+    with caplog.at_level(logging.INFO, logger="loomcore.app"):
+        async with app_module.lifespan(app):
+            pass
+
+    assert "LoomCore starting up" in caplog.text
+    assert "Plugins loaded: demo" in caplog.text
+    assert "Tools indexed: 1" in caplog.text
+
+    stdout = capsys.readouterr().out
+    assert "LoomCore starting up" not in stdout
+    assert "Plugins loaded: demo" not in stdout
+    assert "Tools indexed: 1" not in stdout
+
+
+@pytest.mark.asyncio
 async def test_lifespan_logs_and_swallows_a_healthcheck_crash(
     monkeypatch, tmp_path, caplog
 ):

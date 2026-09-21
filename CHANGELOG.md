@@ -30,3 +30,6 @@ task report (RULES 14).
 - Hardened the plugin surface: `/api/tools` now logs and returns a 500 instead
   of a 200 `{"error": ...}` body, and per-plugin enable/disable/reload are
   serialized under the existing per-plugin lock.
+- Made the CORS allow-list a `cors_origins` setting (comma-separated
+  `CORS_ORIGINS`, localhost defaults) and replaced the startup `print()` calls
+  in `src/app.py` with `loomcore.app` INFO logs.
