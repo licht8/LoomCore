@@ -765,3 +765,42 @@ def test_api_history_drops_bare_tool_names():
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "Alright."},
     ]
+
+
+@pytest.mark.asyncio
+async def test_route_unwrapped_invalid_json_body_not_executed(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("core_list_tools {oops}")]
+
+    result = await router.route("show tools", "sess-1")
+
+    assert result["type"] == "text"
+    assert state["calls"] == 1
+    assert state["plans_saved"] == []
+
+
+@pytest.mark.asyncio
+async def test_route_prose_with_known_name_and_brace_not_executed(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("I could call core_health { maybe }")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert state["calls"] == 1
+    assert "core_health" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_route_reask_skips_empty_assistant_content(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response(""), _reply_response("Hi there!")]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["content"] == "Hi there!"
+    assert state["calls"] == 2
+    assert not any(
+        message["role"] == "assistant" and not message.get("content")
+        for message in state["last_messages"]
+    )

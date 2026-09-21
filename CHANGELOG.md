@@ -75,3 +75,9 @@ task report (RULES 14).
 - The plugin health loop logs a warning when a restart fails instead of always
   reporting success, and the shared `PluginManager` is built lazily
   (`get_plugin_manager()`, PEP 562) instead of at import.
+- `load_soul` falls back to the default for a blank or non-UTF-8 `SOUL.md` and
+  memoises reads; `_render_plan` no longer mis-keys id-less or duplicate steps and
+  truncates oversized tool results, the request, history and the summary body.
+- The router only recovers a textual `name {json}` tool call when the name is
+  known and the body parses, and no longer appends an empty assistant turn when
+  re-asking.

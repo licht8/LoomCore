@@ -298,7 +298,8 @@ class AIRouter:
                     errors = [f"unexpected tool: {tool_name}"]
 
                 if attempt < PLANNER_REASK_LIMIT:
-                    messages.append({"role": "assistant", "content": content or ""})
+                    if content:
+                        messages.append({"role": "assistant", "content": content})
                     messages.append(
                         {
                             "role": "user",
@@ -440,9 +441,18 @@ class AIRouter:
         for match in _TEXTUAL_CALL_RE.finditer(content):
             candidates.append((match.group("name"), _balanced_json(content, match.end()) or ""))
         for match in _NAME_BRACED_JSON_RE.finditer(content):
-            candidates.append(
-                (match.group("name"), _balanced_json(content, match.start("body")) or "")
-            )
+            name = match.group("name")
+            if name not in known_tools and name not in _BARE_TOOL_NAMES:
+                continue
+            raw = _balanced_json(content, match.start("body"))
+            if raw is None:
+                continue
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                candidates.append((name, parsed))
         for match in _TEXTUAL_RESULT_RE.finditer(content):
             candidates.append((match.group("name"), ""))
         for match in _FENCED_JSON_RE.finditer(content):
