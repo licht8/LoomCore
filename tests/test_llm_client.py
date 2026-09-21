@@ -8,14 +8,8 @@ import pytest
 from src.config import settings
 from src.llm import budget
 from src.llm import client as client_module
-from src.llm.client import OpenAICompatClient
-from src.llm.config import LlmConfig
-from src.llm.exceptions import (
-    LlmBudgetExceeded,
-    LlmError,
-    LlmNotConfigured,
-    LlmTimeoutError,
-)
+from src.llm.client import HetznerClient, LlmError, LlmTimeoutError
+from src.llm.exceptions import LlmBudgetExceeded
 
 
 class _FakeResponse:
@@ -67,16 +61,8 @@ class _FakeClient:
         self._outcomes = outcomes
         self.calls = 0
         self.closed = 0
-        self.requests = []
 
-    async def post(self, url, **kwargs):
-        self.requests.append(
-            {
-                "url": url,
-                "headers": kwargs.get("headers") or {},
-                "json": kwargs.get("json"),
-            }
-        )
+    async def post(self, *args, **kwargs):
         outcome = self._outcomes[self.calls]
         self.calls += 1
         if isinstance(outcome, Exception):
@@ -87,25 +73,10 @@ class _FakeClient:
         self.closed += 1
 
 
-def _config(**overrides):
-    base = {
-        "provider": "custom",
-        "base_url": "https://llm.test/v1",
-        "model": "test-model",
-        "api_key": "k",
-    }
-    base.update(overrides)
-    return LlmConfig(**base)
-
-
 def _install(monkeypatch, outcomes):
     fake = _FakeClient(outcomes)
     monkeypatch.setattr(client_module.httpx, "AsyncClient", lambda **kwargs: fake)
     return fake
-
-
-def _patch_active(monkeypatch, config):
-    monkeypatch.setattr(client_module, "get_active", lambda: config)
 
 
 def _record_sleeps(monkeypatch):
@@ -120,21 +91,24 @@ def _record_sleeps(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_timeout_raises_after_retries(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 0)
+    monkeypatch.setattr(settings, "hetzner_read_timeout", 300.0)
     fake = _install(monkeypatch, [httpx.ReadTimeout("t")])
 
     with pytest.raises(LlmTimeoutError):
-        await OpenAICompatClient(
-            config=_config(max_retries=0, read_timeout=300.0)
-        ).chat_completion([{"role": "user", "content": "hi"}])
+        await HetznerClient(api_key="k").chat_completion(
+            [{"role": "user", "content": "hi"}]
+        )
 
     assert fake.calls == 1
 
 
 @pytest.mark.asyncio
 async def test_retries_transport_error_then_succeeds(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 1)
     fake = _install(monkeypatch, [httpx.ConnectError("boom"), _FakeResponse()])
 
-    result = await OpenAICompatClient(config=_config(max_retries=1)).chat_completion(
+    result = await HetznerClient(api_key="k").chat_completion(
         [{"role": "user", "content": "hi"}]
     )
 
@@ -144,10 +118,11 @@ async def test_retries_transport_error_then_succeeds(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_retryable_status_fails_fast(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 3)
     fake = _install(monkeypatch, [_ErrorResponse(status_code=400)])
 
     with pytest.raises(LlmError):
-        await OpenAICompatClient(config=_config(max_retries=3)).chat_completion(
+        await HetznerClient(api_key="k").chat_completion(
             [{"role": "user", "content": "hi"}]
         )
 
@@ -156,10 +131,11 @@ async def test_non_retryable_status_fails_fast(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retries_transient_status_then_succeeds(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 3)
     sleeps = _record_sleeps(monkeypatch)
     fake = _install(monkeypatch, [_ErrorResponse(status_code=503), _FakeResponse()])
 
-    result = await OpenAICompatClient(config=_config(max_retries=3)).chat_completion(
+    result = await HetznerClient(api_key="k").chat_completion(
         [{"role": "user", "content": "hi"}]
     )
 
@@ -170,6 +146,7 @@ async def test_retries_transient_status_then_succeeds(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retries_transient_status_then_exhausts(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 2)
     sleeps = _record_sleeps(monkeypatch)
     fake = _install(
         monkeypatch,
@@ -181,7 +158,7 @@ async def test_retries_transient_status_then_exhausts(monkeypatch):
     )
 
     with pytest.raises(LlmError):
-        await OpenAICompatClient(config=_config(max_retries=2)).chat_completion(
+        await HetznerClient(api_key="k").chat_completion(
             [{"role": "user", "content": "hi"}]
         )
 
@@ -191,6 +168,7 @@ async def test_retries_transient_status_then_exhausts(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retry_after_header_sets_delay(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 1)
     sleeps = _record_sleeps(monkeypatch)
     fake = _install(
         monkeypatch,
@@ -200,7 +178,7 @@ async def test_retry_after_header_sets_delay(monkeypatch):
         ],
     )
 
-    await OpenAICompatClient(config=_config(max_retries=1)).chat_completion(
+    await HetznerClient(api_key="k").chat_completion(
         [{"role": "user", "content": "hi"}]
     )
 
@@ -218,7 +196,7 @@ async def test_client_is_reused_across_calls(monkeypatch):
         return fake
 
     monkeypatch.setattr(client_module.httpx, "AsyncClient", _factory)
-    client = OpenAICompatClient(config=_config())
+    client = HetznerClient(api_key="k")
 
     await client.chat_completion([{"role": "user", "content": "hi"}])
     await client.chat_completion([{"role": "user", "content": "hi"}])
@@ -238,7 +216,7 @@ async def test_aclose_closes_and_rebuilds_client(monkeypatch):
         return first if len(created) == 1 else second
 
     monkeypatch.setattr(client_module.httpx, "AsyncClient", _factory)
-    client = OpenAICompatClient(config=_config())
+    client = HetznerClient(api_key="k")
 
     await client.chat_completion([{"role": "user", "content": "hi"}])
     assert client._client is first
@@ -254,10 +232,11 @@ async def test_aclose_closes_and_rebuilds_client(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invalid_json_body_raises_llm_error(monkeypatch):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 3)
     fake = _install(monkeypatch, [_BadJsonResponse()])
 
     with pytest.raises(LlmError, match="invalid JSON"):
-        await OpenAICompatClient(config=_config(max_retries=3)).chat_completion(
+        await HetznerClient(api_key="k").chat_completion(
             [{"role": "user", "content": "hi"}]
         )
 
@@ -266,11 +245,12 @@ async def test_invalid_json_body_raises_llm_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_daily_budget_blocks_and_logs_security_event(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "hetzner_max_retries", 0)
     monkeypatch.setattr(settings, "llm_daily_call_limit", 1)
     budget.reset_llm_budget()
     try:
         _install(monkeypatch, [_FakeResponse(), _FakeResponse()])
-        client = OpenAICompatClient(config=_config(max_retries=0))
+        client = HetznerClient(api_key="k")
         await client.chat_completion([{"role": "user", "content": "hi"}])
 
         with (
@@ -282,89 +262,3 @@ async def test_daily_budget_blocks_and_logs_security_event(monkeypatch, caplog):
         budget.reset_llm_budget()
 
     assert "llm_budget_exceeded" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_request_uses_active_config(monkeypatch):
-    fake = _install(monkeypatch, [_FakeResponse()])
-    _patch_active(
-        monkeypatch,
-        _config(
-            base_url="https://api.example.com/v1",
-            model="m1",
-            api_key="secret",
-        ),
-    )
-
-    await OpenAICompatClient().chat_completion([{"role": "user", "content": "hi"}])
-
-    request = fake.requests[0]
-    assert request["url"] == "https://api.example.com/v1/chat/completions"
-    assert request["headers"]["Authorization"] == "Bearer secret"
-    assert request["json"]["model"] == "m1"
-
-
-@pytest.mark.asyncio
-async def test_active_config_switch_changes_payload(monkeypatch):
-    fake = _install(monkeypatch, [_FakeResponse(), _FakeResponse()])
-    holder = {"config": _config()}
-    monkeypatch.setattr(client_module, "get_active", lambda: holder["config"])
-
-    client = OpenAICompatClient()
-    await client.chat_completion([{"role": "user", "content": "hi"}])
-    holder["config"] = _config(
-        base_url="https://second.test/v1", model="m2", api_key="other"
-    )
-    await client.chat_completion([{"role": "user", "content": "hi"}])
-
-    assert fake.requests[0]["url"] == "https://llm.test/v1/chat/completions"
-    assert fake.requests[0]["json"]["model"] == "test-model"
-    assert fake.requests[1]["url"] == "https://second.test/v1/chat/completions"
-    assert fake.requests[1]["json"]["model"] == "m2"
-    assert fake.requests[1]["headers"]["Authorization"] == "Bearer other"
-
-
-@pytest.mark.asyncio
-async def test_model_argument_overrides_config(monkeypatch):
-    fake = _install(monkeypatch, [_FakeResponse()])
-
-    await OpenAICompatClient(config=_config(model="base-model")).chat_completion(
-        [{"role": "user", "content": "hi"}], model="summary-model"
-    )
-
-    assert fake.requests[0]["json"]["model"] == "summary-model"
-
-
-@pytest.mark.asyncio
-async def test_thinking_template_is_opt_in(monkeypatch):
-    fake = _install(monkeypatch, [_FakeResponse(), _FakeResponse()])
-
-    await OpenAICompatClient(
-        config=_config(thinking_template=False, enable_thinking=True)
-    ).chat_completion([{"role": "user", "content": "hi"}])
-    await OpenAICompatClient(
-        config=_config(thinking_template=True, enable_thinking=True)
-    ).chat_completion([{"role": "user", "content": "hi"}])
-
-    assert "chat_template_kwargs" not in fake.requests[0]["json"]
-    assert fake.requests[1]["json"]["chat_template_kwargs"] == {
-        "enable_thinking": True
-    }
-
-
-@pytest.mark.asyncio
-async def test_unconfigured_raises_not_configured(monkeypatch):
-    created = []
-
-    def _factory(**kwargs):
-        created.append(kwargs)
-        return _FakeClient([_FakeResponse()])
-
-    monkeypatch.setattr(client_module.httpx, "AsyncClient", _factory)
-
-    with pytest.raises(LlmNotConfigured):
-        await OpenAICompatClient(
-            config=_config(base_url="", model="")
-        ).chat_completion([{"role": "user", "content": "hi"}])
-
-    assert created == []
