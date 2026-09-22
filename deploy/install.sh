@@ -36,12 +36,17 @@ fi
 
 # === Build and start containers ===
 
-echo "=== Building and starting LoomCore ==="
-docker compose up -d --build --wait
-docker compose ps
+echo "=== Building and starting the database ==="
+docker compose build
+docker compose stop hub 2>/dev/null || true
+docker compose up -d --wait db
 
 echo "=== Applying database migrations ==="
-docker compose exec -T hub alembic upgrade head
+docker compose run --rm -T hub alembic upgrade head
+
+echo "=== Starting LoomCore ==="
+docker compose up -d --wait
+docker compose ps
 
 echo "LoomCore stack is running. Access it at https://<your-domain> once the"
 echo "nginx 443 block is enabled (REQUIRE_TLS=true; login refuses plain HTTP)."
