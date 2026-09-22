@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { MessageSquare, Puzzle, Settings } from "lucide-react"
+import { BarChart3, MessageSquare, Puzzle, Settings } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 
@@ -23,6 +23,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { label: "AI Assistant", href: "/", icon: MessageSquare },
   { label: "Plugins", href: "/plugins", icon: Puzzle },
+  { label: "Usage", href: "/usage", icon: BarChart3 },
 ]
 
 const settingsItem: NavItem = {
