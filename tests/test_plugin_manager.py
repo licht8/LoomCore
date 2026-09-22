@@ -875,6 +875,92 @@ async def test_get_all_tools_does_not_restart_busy_plugin(monkeypatch):
     assert restarted == []
 
 
+# === indexed tool catalog (per-turn routing cache) ===
+
+
+@pytest.mark.asyncio
+async def test_get_all_tools_marks_indexed(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "demo")
+
+    async def fake_get_tools(plugin_name):
+        return [{"name": "wg_ok"}, {"name": "wg_internal", "internal": True}]
+
+    monkeypatch.setattr(manager, "get_tools", fake_get_tools)
+
+    await manager.get_all_tools()
+
+    assert manager.tools_indexed() is True
+    assert [tool["name"] for tool in manager.get_cached_tools()] == ["wg_ok"]
+
+
+def test_get_cached_tools_excludes_internal_and_disabled():
+    manager = PluginManager()
+    _add_plugin(manager, "on")
+    off = _add_plugin(manager, "off")
+    off.enabled = False
+    manager._rebuild_tool_cache(
+        "on",
+        [
+            {"name": "wg_ok"},
+            {"name": "wg_internal", "internal": True},
+        ],
+    )
+    manager._rebuild_tool_cache("off", [{"name": "off_tool"}])
+    manager._tools_indexed = True
+
+    cached = [tool["name"] for tool in manager.get_cached_tools()]
+
+    assert cached == ["wg_ok"]
+
+
+def test_get_cached_tools_empty_before_indexing():
+    manager = PluginManager()
+    _add_plugin(manager, "demo")
+    manager._rebuild_tool_cache("demo", [{"name": "wg_ok"}])
+
+    assert manager.tools_indexed() is False
+    assert manager.get_cached_tools() == []
+
+
+@pytest.mark.asyncio
+async def test_get_tools_for_routing_uses_cache_when_indexed(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "demo")
+
+    async def fake_get_tools(plugin_name):
+        return [{"name": "wg_ok"}]
+
+    monkeypatch.setattr(manager, "get_tools", fake_get_tools)
+    await manager.get_all_tools()
+
+    async def boom():
+        raise AssertionError("get_all_tools must not be called once indexed")
+
+    monkeypatch.setattr(manager, "get_all_tools", boom)
+
+    tools = await manager.get_tools_for_routing()
+
+    assert [tool["name"] for tool in tools] == ["wg_ok"]
+
+
+@pytest.mark.asyncio
+async def test_get_tools_for_routing_fetches_when_not_indexed(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "demo")
+
+    async def fake_get_tools(plugin_name):
+        return [{"name": "wg_ok"}]
+
+    monkeypatch.setattr(manager, "get_tools", fake_get_tools)
+
+    assert manager.tools_indexed() is False
+    tools = await manager.get_tools_for_routing()
+
+    assert [tool["name"] for tool in tools] == ["wg_ok"]
+    assert manager.tools_indexed() is True
+
+
 # === manifest-aware discovery ===
 
 

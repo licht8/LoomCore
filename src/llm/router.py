@@ -546,7 +546,7 @@ class AIRouter:
         unavailable_plugins: list[str] = []
         if self.plugin_manager:
             try:
-                tools_schema.extend(await self.plugin_manager.get_all_tools())
+                tools_schema.extend(await self.plugin_manager.get_tools_for_routing())
             except Exception as exc:
                 logger.warning(f"Failed to fetch plugin tools: {exc}")
                 unavailable_plugins.append("all plugins")

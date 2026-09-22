@@ -18,11 +18,12 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
     llm_api_key: str = ""
+    llm_summary_model: str = ""
     llm_connect_timeout: float = 15.0
-    llm_read_timeout: float = 90.0
+    llm_read_timeout: float = 30.0
     llm_write_timeout: float = 30.0
     llm_pool_timeout: float = 15.0
-    llm_max_retries: int = 2
+    llm_max_retries: int = 1
     llm_enable_thinking: bool = False
     llm_thinking_template: bool = False
     llm_settings_file: str = ""

@@ -142,6 +142,8 @@ class PluginManager:
         self._tool_schemas: dict[str, dict] = {}
         # Per-tool risk declared by the plugin (name -> safe/moderate/dangerous).
         self._tool_risk: dict[str, str] = {}
+        # True once the external tool catalog has been indexed at least once.
+        self._tools_indexed: bool = False
 
         # Persisted enable/disable state (in-memory only when no path is given)
         self._state_path = state_path
@@ -955,7 +957,40 @@ class PluginManager:
             tools=len(all_tools),
             failed=len(failed_plugins),
         )
+        self._tools_indexed = True
         return all_tools
+
+    def tools_indexed(self) -> bool:
+        """True once the external tool catalog has been indexed at least once."""
+        return self._tools_indexed
+
+    def get_cached_tools(self) -> list[dict]:
+        """Return indexed external tool schemas without a JSON-RPC round trip.
+
+        Internal tools and disabled plugins are excluded. Returns [] when the
+        catalog has not been indexed yet.
+        """
+        if not self._tools_indexed:
+            return []
+        result: list[dict] = []
+        for name in self.plugin_names():
+            plugin = self._plugins.get(name)
+            if plugin is None or not plugin.enabled:
+                continue
+            for tool in plugin.tools:
+                tool_name = tool.get("name")
+                if not tool_name:
+                    continue
+                if self._tool_plugins.get(tool_name) != name:
+                    continue
+                result.append(tool)
+        return result
+
+    async def get_tools_for_routing(self) -> list[dict]:
+        """Tool schemas for the LLM catalog: cached when indexed, else live."""
+        if self._tools_indexed:
+            return self.get_cached_tools()
+        return await self.get_all_tools()
 
     def plugin_for_tool(self, tool_name: str) -> str:
         plugin_name = self._tool_plugins.get(tool_name)

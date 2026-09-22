@@ -44,10 +44,10 @@ class LlmConfig:
     enable_thinking: bool = False
     thinking_template: bool = False
     connect_timeout: float = 15.0
-    read_timeout: float = 90.0
+    read_timeout: float = 30.0
     write_timeout: float = 30.0
     pool_timeout: float = 15.0
-    max_retries: int = 2
+    max_retries: int = 1
 
     @property
     def configured(self) -> bool:
@@ -69,6 +69,7 @@ def default_config() -> LlmConfig:
         base_url=settings.llm_base_url.strip(),
         model=settings.llm_model.strip(),
         api_key=settings.llm_api_key,
+        summary_model=settings.llm_summary_model,
         enable_thinking=settings.llm_enable_thinking,
         thinking_template=settings.llm_thinking_template,
         connect_timeout=settings.llm_connect_timeout,
@@ -145,7 +146,11 @@ def load_config(path: Path) -> LlmConfig:
         base_url=_as_str(data.get("base_url")),
         model=_as_str(data.get("model")),
         api_key=_as_str(data.get("api_key")),
-        summary_model=_as_str(data.get("summary_model")),
+        summary_model=(
+            _as_str(data.get("summary_model"))
+            if "summary_model" in data
+            else base.summary_model
+        ),
         enable_thinking=_as_bool(data.get("enable_thinking")),
         thinking_template=_as_bool(data.get("thinking_template")),
         connect_timeout=_as_float(data.get("connect_timeout"), base.connect_timeout),

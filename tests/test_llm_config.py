@@ -64,6 +64,34 @@ def test_default_config_maps_env_values(monkeypatch):
     assert config.configured is True
 
 
+def test_default_config_summary_model_from_env(monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_model", "small-model")
+
+    assert default_config().summary_model == "small-model"
+
+
+def test_load_config_summary_model_falls_back_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_model", "seed-model")
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m"}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_model == "seed-model"
+
+
+def test_load_config_summary_model_explicit_empty_clears(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_model", "seed-model")
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m", "summary_model": ""}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_model == ""
+
+
 def test_load_missing_file_returns_default(tmp_path):
     assert load_config(tmp_path / "missing.json") == default_config()
 

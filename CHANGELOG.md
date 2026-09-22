@@ -5,6 +5,11 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Assistant latency quick wins: the planner tool catalog is served from the
+  indexed cache (`PluginManager.get_tools_for_routing`) instead of a per-turn
+  `tools/list` round trip, the summary LLM call is skipped for direct plans,
+  `LLM_SUMMARY_MODEL` bootstraps a cheaper summary model, and the default LLM
+  `read_timeout`/`max_retries` drop to 30s/1.
 - Hardened the DB layer against `InvalidCachedStatementError`: the async engine
   now disables both asyncpg and SQLAlchemy prepared-statement caches
   (`statement_cache_size` / `prepared_statement_cache_size` = 0), so DDL applied

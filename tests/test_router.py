@@ -376,6 +376,9 @@ async def test_route_warns_when_plugin_tools_unavailable(patched_router):
         async def get_all_tools(self):
             raise RuntimeError("plugin manager down")
 
+        async def get_tools_for_routing(self):
+            raise RuntimeError("plugin manager down")
+
     router.plugin_manager = _BrokenManager()  # type: ignore[assignment]
     state["queue"] = [_text_response("ok")]
 
@@ -399,12 +402,54 @@ async def test_route_includes_plugin_tools_in_catalog(patched_router):
                 }
             ]
 
+        async def get_tools_for_routing(self):
+            return await self.get_all_tools()
+
     router.plugin_manager = _Manager()  # type: ignore[assignment]
     state["queue"] = [_text_response("ok")]
 
     await router.route("hi", "sess-1")
 
     assert "wg_interface_status" in state["last_messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_route_uses_cached_tools_without_refetch(patched_router):
+    router, state = patched_router
+
+    class _CachedManager:
+        def __init__(self):
+            self.refetched = False
+
+        def tools_indexed(self):
+            return True
+
+        def get_cached_tools(self):
+            return [
+                {
+                    "name": "wg_interface_status",
+                    "description": "status",
+                    "inputSchema": {"type": "object", "properties": {"interface": {}}},
+                }
+            ]
+
+        async def get_all_tools(self):
+            self.refetched = True
+            raise AssertionError("get_all_tools must not be awaited when indexed")
+
+        async def get_tools_for_routing(self):
+            if self.tools_indexed():
+                return self.get_cached_tools()
+            return await self.get_all_tools()
+
+    manager = _CachedManager()
+    router.plugin_manager = manager  # type: ignore[assignment]
+    state["queue"] = [_text_response("ok")]
+
+    await router.route("hi", "sess-1")
+
+    assert "wg_interface_status" in state["last_messages"][0]["content"]
+    assert manager.refetched is False
 
 
 @pytest.mark.asyncio

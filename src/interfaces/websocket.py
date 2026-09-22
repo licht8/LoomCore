@@ -333,6 +333,8 @@ async def _summarize(
         return _raw_summary(plan, observations)
     if not observations:
         return _fallback_summary(plan)
+    if plan_is_direct(plan):
+        return _raw_summary(plan, observations)
     try:
         summary = await airouter_with_plugins.summarize_plan(
             user_text, plan, observations

@@ -101,10 +101,16 @@ def _check_revocation_store() -> None:
 
 def _check_llm_provider() -> None:
     """Warn when no LLM provider is configured yet (chat replies with a hint)."""
-    if not get_active().configured:
+    active = get_active()
+    if not active.configured:
         logger.warning(
             "No LLM provider is configured; chat will reply with a setup hint "
             "until an admin chooses one in Settings."
+        )
+    if active.enable_thinking:
+        logger.warning(
+            "LLM thinking/reasoning is enabled; this can roughly double turn "
+            "latency. Disable it in Settings unless you need it."
         )
 
 

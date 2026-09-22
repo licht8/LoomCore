@@ -258,7 +258,8 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
     assert types.count("tool_call") == 1
     assert "tool_response" in types
     assert types[-1] == "response"
-    assert sent[-1]["content"] == "Summary"
+    # A direct plan returns the raw tool output; no second LLM generation.
+    assert sent[-1]["content"] == "core_health ok"
     assert saved_tools[0]["status"] == "success"
     assert saved_plans == []
     assert pending["plan"] is None
@@ -266,7 +267,7 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_direct_action_uses_llm_summary(monkeypatch):
+async def test_direct_action_skips_llm_summary(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
@@ -291,13 +292,14 @@ async def test_direct_action_uses_llm_summary(monkeypatch):
     pending = {"plan": None, "user_text": ""}
     await ws_module._process_user_message(send, "sess", "check", tracker, pending)
 
-    assert calls and calls[0][0] == "check"
+    assert calls == []
     assert sent[-1]["type"] == "response"
-    assert sent[-1]["content"] == "All good — the core is healthy."
+    assert sent[-1]["content"] == "core_health ok"
 
 
 @pytest.mark.asyncio
 async def test_summary_replaces_a_raw_table(monkeypatch):
+    _patch_db(monkeypatch)
     sent, send = _collector()
     table = (
         "interface  peer        endpoint              latest\n"
@@ -308,12 +310,12 @@ async def test_summary_replaces_a_raw_table(monkeypatch):
     plan = build_plan(
         {
             "goal": "list peers",
-            "steps": [{"tool": "wg_list_peers", "args": {}, "why": "peers"}],
+            "steps": [
+                {"tool": "wg_list_peers", "args": {}, "why": "peers"},
+                {"tool": "wg_interface_status", "args": {}, "why": "interfaces"},
+            ],
         }
     )
-
-    async def fake_route(user_text, session_id):
-        return {"type": "plan", "plan": plan}
 
     async def fake_execute(tool_name, arguments=None, *, approved=False):
         return {"content": [{"type": "text", "text": table}], "data": {}}
@@ -321,16 +323,17 @@ async def test_summary_replaces_a_raw_table(monkeypatch):
     async def fake_summary(user_text, plan, observations):
         return "3 peers on wg0; one is online and two are offline."
 
-    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
     _patch_plan_runtime(monkeypatch)
     monkeypatch.setattr(ws_module, "_execute_tool", fake_execute)
     monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", fake_summary)
 
-    await ws_module._process_user_message(send, "sess", "list peers", {}, {})
+    await ws_module._run_plan(
+        send, "sess", "list peers", plan, {"tool": None, "plan": None}
+    )
 
-    assert sent[-1]["type"] == "response"
-    assert sent[-1]["content"] == "3 peers on wg0; one is online and two are offline."
-    assert "interface  peer" not in sent[-1]["content"]
+    response = next(p for p in sent if p["type"] == "response")
+    assert response["content"] == "3 peers on wg0; one is online and two are offline."
+    assert "interface  peer" not in response["content"]
 
 
 @pytest.mark.asyncio
@@ -1378,6 +1381,26 @@ async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch)
 
     assert "degraded (0 critical, 1 warning, 0 info)" in summary
     assert "0 warnings, 1 info" not in summary
+
+
+@pytest.mark.asyncio
+async def test_summarize_skips_llm_for_direct_plan(monkeypatch):
+    async def boom(*args, **kwargs):
+        raise AssertionError("summarize_plan must not be called for a direct plan")
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom)
+    plan = build_plan(
+        {
+            "mode": "direct",
+            "goal": "disk usage",
+            "steps": [{"tool": "ops_disk_usage", "args": {}, "why": "x"}],
+        }
+    )
+    observations = _health_observation("disk 42% used")
+
+    summary = await ws_module._summarize("disk usage", plan, observations)
+
+    assert "disk 42% used" in summary
 
 
 # --------------------------------------------------------------------------- #
