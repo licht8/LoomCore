@@ -9,7 +9,7 @@ import logging
 from dataclasses import asdict, replace
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from src.api.deps import extract_admin_token
@@ -24,6 +24,7 @@ from src.llm.config import (
     set_active,
 )
 from src.llm.providers import PROVIDER_PRESETS
+from src.llm.usage import llm_usage_summary
 
 router = APIRouter(prefix="/api", tags=["llm"])
 
@@ -168,6 +169,18 @@ async def list_llm_providers(
     """Return the available OpenAI-compatible provider presets."""
     require_admin_token(extract_admin_token(request, authorization), request)
     return {"providers": [asdict(preset) for preset in PROVIDER_PRESETS.values()]}
+
+
+@router.get("/llm/usage")
+@limiter.limit("60 per 60 seconds")
+async def get_llm_usage(
+    request: Request,
+    days: int = Query(default=7, ge=1, le=90),
+    authorization: str | None = Header(default=None),
+):
+    """Return aggregated LLM usage for the last ``days`` days (admin only)."""
+    require_admin_token(extract_admin_token(request, authorization), request)
+    return await llm_usage_summary(days)
 
 
 @router.get("/llm/settings")

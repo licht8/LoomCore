@@ -380,3 +380,74 @@ async def test_test_connection_reports_http_failure(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"ok": False, "status": 500, "error": "HTTP 500"}
+
+
+@pytest.mark.asyncio
+async def test_usage_requires_admin(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        response = await client.get(
+            "/api/llm/usage", headers={"Authorization": "Bearer wrong"}
+        )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_usage_rejects_out_of_range_days(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        for days in (0, 91):
+            response = await client.get(
+                f"/api/llm/usage?days={days}", headers=_AUTH
+            )
+            assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_usage_returns_summary_shape(monkeypatch):
+    _auth(monkeypatch)
+    seen: list[int] = []
+
+    async def fake_summary(days):
+        seen.append(days)
+        return {
+            "days": days,
+            "since": "2026-08-23T00:00:00+00:00",
+            "until": "2026-09-22T00:00:00+00:00",
+            "totals": {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "avg_latency_ms": 0,
+            },
+            "by_model": [],
+            "by_day": [],
+            "budget": {
+                "day": "2026-09-22",
+                "used": 0,
+                "limit": 1000,
+                "remaining": 1000,
+            },
+        }
+
+    monkeypatch.setattr(llm_api, "llm_usage_summary", fake_summary)
+
+    async with _client() as client:
+        response = await client.get("/api/llm/usage?days=30", headers=_AUTH)
+
+    assert response.status_code == 200
+    assert seen == [30]
+    body = response.json()
+    assert set(body) == {
+        "days",
+        "since",
+        "until",
+        "totals",
+        "by_model",
+        "by_day",
+        "budget",
+    }
+    assert body["days"] == 30
+    assert body["by_model"] == []
