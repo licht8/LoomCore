@@ -291,13 +291,17 @@ async def _run_plan(
         log_stage("save_plan", time.monotonic() - persist_started)
 
     summary_started = time.monotonic()
-    # Every tool-backed turn is answered in the assistant's own words, direct
-    # actions included; raw tool text is surfaced only when the user asked for it.
+    # Multi-step plans are answered in the assistant's own words; a direct
+    # single-step action, an explicit raw-output request, or an empty result is
+    # answered with the raw tool output.
     raw_requested = _wants_raw_output(user_text)
+    uses_llm_summary = _uses_llm_summary(
+        final_plan, observations, raw_requested=raw_requested
+    )
     summary = await _summarize(
         user_text, final_plan, observations, raw_requested=raw_requested
     )
-    log_stage("summary", time.monotonic() - summary_started, llm=not raw_requested)
+    log_stage("summary", time.monotonic() - summary_started, llm=uses_llm_summary)
     if summary:
         with contextlib.suppress(Exception):
             async with async_session_factory() as db:
@@ -316,6 +320,13 @@ async def _run_plan(
     log_stage("plan_total", time.monotonic() - plan_started, show_plan=show_plan)
 
 
+def _uses_llm_summary(
+    plan: dict, observations: list[dict], *, raw_requested: bool
+) -> bool:
+    """True when the turn needs an LLM summary instead of raw tool output."""
+    return bool(observations) and not raw_requested and not plan_is_direct(plan)
+
+
 async def _summarize(
     user_text: str,
     plan: dict,
@@ -325,15 +336,14 @@ async def _summarize(
 ) -> str:
     """Summarize a finished plan in the assistant's own words.
 
-    Raw tool text is surfaced only when the user explicitly asked for it, when
-    the summary call fails, when there is nothing to summarize, or when the
-    summary contradicts the numbers in the observations.
+    Raw tool text is surfaced when the user explicitly asked for it, when there
+    is nothing to summarize, when the plan is a direct single-step action (its
+    raw output already is the answer), or when the summary call fails or
+    contradicts the numbers in the observations.
     """
-    if raw_requested:
-        return _raw_summary(plan, observations)
-    if not observations:
-        return _fallback_summary(plan)
-    if plan_is_direct(plan):
+    if not _uses_llm_summary(plan, observations, raw_requested=raw_requested):
+        if not observations:
+            return _fallback_summary(plan)
         return _raw_summary(plan, observations)
     try:
         summary = await airouter_with_plugins.summarize_plan(

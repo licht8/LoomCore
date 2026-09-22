@@ -149,19 +149,19 @@ errors and then returns a clear message. Tune via `.env` (seconds / count):
 | Variable | Default |
 |---|---|
 | `LLM_CONNECT_TIMEOUT` | `15` |
-| `LLM_READ_TIMEOUT` | `90` |
+| `LLM_READ_TIMEOUT` | `30` |
 | `LLM_WRITE_TIMEOUT` | `30` |
 | `LLM_POOL_TIMEOUT` | `15` |
-| `LLM_MAX_RETRIES` | `2` |
+| `LLM_MAX_RETRIES` | `1` |
 | `LLM_THINKING_TEMPLATE` | `0` |
 | `LLM_DAILY_CALL_LIMIT` | `1000` |
 
 `LLM_DAILY_CALL_LIMIT` is a process-wide daily ceiling on LLM HTTP calls (`0`
-disables it). It counts calls, not turns: a normal turn uses 2 (planner +
-summary), plus 1 per planner re-ask and 1 per transport retry, so expect 2-4
-calls per turn. It resets at UTC midnight.
+disables it). It counts calls, not turns: a multi-step turn uses 2 (planner +
+summary) — a direct single-step action skips the summary and uses 1 — plus 1 per
+planner re-ask and 1 per transport retry. It resets at UTC midnight.
 
-The 90s read timeout is a safety bound: with thinking disabled a full turn is a
+The 30s read timeout is a safety bound: with thinking disabled a full turn is a
 few seconds, so a request that hangs this long is a provider stall, not real work.
 Raise it via `.env` only if you deliberately re-enable long generations.
 

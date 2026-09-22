@@ -975,9 +975,11 @@ class PluginManager:
         result: list[dict] = []
         for name in self.plugin_names():
             plugin = self._plugins.get(name)
-            if plugin is None or not plugin.enabled:
+            if plugin is None or not plugin.enabled or not self.is_healthy(name):
                 continue
             for tool in plugin.tools:
+                if not isinstance(tool, dict):
+                    continue
                 tool_name = tool.get("name")
                 if not tool_name:
                     continue

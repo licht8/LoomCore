@@ -914,6 +914,29 @@ def test_get_cached_tools_excludes_internal_and_disabled():
     assert cached == ["wg_ok"]
 
 
+def test_get_cached_tools_excludes_unhealthy_plugin():
+    manager = PluginManager()
+    dead = _add_plugin(
+        manager, "dead", state=PluginState.STOPPED, proc=_FakeProc(alive=False)
+    )
+    manager._rebuild_tool_cache("dead", [{"name": "dead_tool"}])
+    manager._tools_indexed = True
+
+    assert dead.tools
+
+    assert manager.get_cached_tools() == []
+
+
+def test_get_cached_tools_skips_malformed_entries():
+    manager = PluginManager()
+    plugin = _add_plugin(manager, "demo")
+    manager._rebuild_tool_cache("demo", [{"name": "wg_ok"}])
+    plugin.tools = ["oops", {"name": "wg_ok"}]
+    manager._tools_indexed = True
+
+    assert [tool["name"] for tool in manager.get_cached_tools()] == ["wg_ok"]
+
+
 def test_get_cached_tools_empty_before_indexing():
     manager = PluginManager()
     _add_plugin(manager, "demo")
