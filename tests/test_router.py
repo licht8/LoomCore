@@ -6,7 +6,14 @@ import pytest
 
 from src.core.agent import PLANNER_TOOLS, REPLY_TOOL
 from src.llm import router as router_module
+from src.llm.config import LlmConfig
 from src.llm.router import AIRouter
+
+_TEST_CONFIG = LlmConfig(
+    provider="custom",
+    base_url="https://llm.test/v1",
+    model="test-model",
+)
 
 
 class _FakeSession:
@@ -95,6 +102,7 @@ def patched_router(monkeypatch):
 
     monkeypatch.setattr(router_module, "async_session_factory", lambda: _FakeSession())
     monkeypatch.setattr(router_module, "ensure_session", fake_ensure)
+    monkeypatch.setattr(router_module, "get_active", lambda: _TEST_CONFIG)
     monkeypatch.setattr(router_module.db_session, "get_session_history", fake_history)
     monkeypatch.setattr(router_module.db_session, "add_user_message", fake_add_user)
     monkeypatch.setattr(router_module.db_session, "add_assistant_message", fake_add_assistant)
@@ -103,7 +111,7 @@ def patched_router(monkeypatch):
     router = AIRouter(plugin_manager=None)
 
     async def fake_chat_completion(
-        messages, tools=None, tool_choice=None, temperature=None
+        messages, tools=None, tool_choice=None, temperature=None, model=None
     ):
         state["calls"] += 1
         state["tools"] = tools
