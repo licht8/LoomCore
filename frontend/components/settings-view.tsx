@@ -240,6 +240,19 @@ export function SettingsView() {
     setSaveError(null)
   }
 
+  function matchesSaved(
+    nextForm: FormState | null,
+    nextApiKey: string,
+    nextClearKey: boolean,
+  ): boolean {
+    if (!nextForm || !settings) return false
+    if (nextApiKey || nextClearKey) return false
+    const saved = toForm(settings)
+    return (Object.keys(saved) as (keyof FormState)[]).every(
+      (key) => nextForm[key] === saved[key],
+    )
+  }
+
   function updateForm(patch: Partial<FormState>) {
     if (!form) return
     const next = { ...form, ...patch }
@@ -247,42 +260,44 @@ export function SettingsView() {
       (key) => form[key] !== next[key],
     )
     if (!changed) return
-    setDirty(true)
+    setDirty(!matchesSaved(next, apiKey, clearKey))
     resetTransientState()
     setForm(next)
   }
 
   function handleKeyInput(value: string) {
-    setDirty(true)
+    const nextClearKey = value ? false : clearKey
+    setDirty(!matchesSaved(form, value, nextClearKey))
     resetTransientState()
     setApiKey(value)
     if (value) setClearKey(false)
   }
 
   function handleToggleClear() {
-    setDirty(true)
+    const nextClearKey = !clearKey && settings?.api_key.configured === true
+    setDirty(!matchesSaved(form, "", nextClearKey))
     resetTransientState()
     setApiKey("")
-    setClearKey(!clearKey && settings?.api_key.configured === true)
+    setClearKey(nextClearKey)
   }
 
   function handleProviderChange(id: string) {
     if (id === form?.provider) return
     const preset = providers.find((item) => item.id === id)
-    setDirty(true)
+    const next = form
+      ? {
+          ...form,
+          provider: id,
+          base_url: preset?.default_base_url ?? "",
+          model: preset?.default_model ?? "",
+          summary_model: "",
+        }
+      : form
+    setDirty(!matchesSaved(next, "", false))
     resetTransientState()
     setApiKey("")
     setClearKey(false)
-    setForm((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        provider: id,
-        base_url: preset?.default_base_url ?? "",
-        model: preset?.default_model ?? "",
-        summary_model: "",
-      }
-    })
+    setForm(next)
   }
 
   function handleDiscard() {

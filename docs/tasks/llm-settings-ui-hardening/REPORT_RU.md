@@ -133,3 +133,31 @@ Six further findings (one backend bug, five frontend polish):
   `frontend/components/settings-view.tsx`,
   `frontend/components/llm-setup-banner.tsx`,
   `frontend/components/dashboard-shell.tsx`.
+
+## Review fix round 9
+
+- **`frontend/components/settings-view.tsx` (bug, low)** — round 8's
+  `updateForm` only suppressed patches that were a no-op against the *current*
+  form, so manually reverting a field to its saved value left `dirty === true`
+  (the "Discard changes" button kept showing and the seed effect kept skipping
+  server re-syncs). Added `matchesSaved(nextForm, nextApiKey, nextClearKey)`,
+  which compares the merged form against `toForm(settings)` (and treats a typed
+  key or pending clear as unsaved), and every mutator now sets
+  `dirty = !matchesSaved(...)`:
+  - `updateForm` — revert a field to the saved value and the form is no longer
+    dirty.
+  - `handleKeyInput` / `handleToggleClear` — typing then deleting a key, or
+    Clear then Keep, restores the saved dirty state.
+  - `handleProviderChange` now builds the explicit `next` form and derives dirty
+    from it, instead of unconditionally setting `dirty = true`.
+
+  Secondary note (batching): each mutator runs from a distinct DOM event, and
+  each computes its `next` state locally before the single `setForm`, so there is
+  no path where two updates for the same handler batch against a stale closure.
+
+### Verification (round 9)
+
+- `cd frontend; npx tsc --noEmit` — clean.
+- `cd frontend; npm run build` — compiled successfully
+  (`tmp/frontend_build_round9.log`).
+- No Python file touched in this round, so no new `ruff`/`pytest` run.
