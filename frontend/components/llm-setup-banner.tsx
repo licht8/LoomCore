@@ -11,11 +11,12 @@ export function LlmSetupBanner() {
   const { data } = useLlmSettings()
   const pathname = usePathname()
 
-  if (!data || data.configured || pathname === "/settings") return null
+  if (!data || data.configured || pathname.startsWith("/settings"))
+    return null
 
   return (
     <>
-      <div aria-hidden className="h-8 shrink-0" />
+      <div aria-hidden className="h-[var(--banner-h)] shrink-0" />
       <div className="absolute inset-x-0 top-[var(--header-h)] z-10 px-6 pt-3">
         <div
           role="status"

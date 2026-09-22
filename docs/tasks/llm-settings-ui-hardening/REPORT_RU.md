@@ -86,3 +86,50 @@ None (executor does not commit; the coordinator commits after acceptance).
   (verified by the clean `tsc` and build). No primitive swallowed a prop.
 - No frontend test runner exists, so verification is static + production build;
   no unit tests were added (per the spec's non-goals).
+
+## Review fix round 8
+
+Six further findings (one backend bug, five frontend polish):
+
+- **`src/llm/router.py` (bug, medium)** — the unconfigured early return fired
+  before `_begin_turn`, so neither the user message nor the setup notice was
+  persisted. It now calls `_begin_turn(...)` and `_persist_assistant(...,
+  NOT_CONFIGURED_MESSAGE, None)` before returning, so an unconfigured turn
+  survives reload and is valid context once a provider is configured. Added
+  `tests/test_router.py::test_route_unconfigured_persists_turn`.
+- **`frontend/components/llm-setup-banner.tsx`** — route guard is now
+  `pathname.startsWith("/settings")` (covers a trailing slash and future
+  sub-routes); the spacer uses `h-[var(--banner-h)]` instead of the hard-coded
+  `h-8`.
+- **`frontend/components/dashboard-shell.tsx`** — added `--banner-h: 2rem` next
+  to `--header-h` so both layout constants have a single source.
+- **`frontend/components/settings-view.tsx`**:
+  - `updateForm` compares the patch against the current form and returns early
+    when nothing changed, so reverting a field no longer marks the form dirty or
+    opens a redundant confirm save.
+  - `Field`'s unused `htmlFor` prop was removed; the single-control branch renders
+    a plain `<label>` (the `useId`-based `role="group"` branch is unchanged).
+  - `providerItems` seeds the current `form.provider` when it is missing from the
+    preset catalog (e.g. a non-preset `LLM_PROVIDER` such as `ollama`), so the
+    `Select` shows the saved provider instead of falling back to the placeholder;
+    `handleProviderChange` early-returns for an unchanged id so re-selecting that
+    entry cannot blank `base_url`/`model`.
+  - The API-key placeholder now reads "Will be removed on save" while `clearKey`,
+    removing the contradiction with the red removal note.
+
+### Verification (round 8)
+
+- `uv run ruff check .` — clean.
+- `uv run pytest tests/test_router.py tests/test_api_llm.py tests/test_llm_config.py tests/test_llm_client.py -q` — 90 passed, 1 skipped.
+- `uv run pytest -m "not integration and not e2e" -q` — 1041 passed, 12 skipped,
+  5 deselected (`tmp/tests_llm_round8_full.log`).
+- `cd frontend; npx tsc --noEmit` — clean.
+- `cd frontend; npm run build` — compiled successfully
+  (`tmp/frontend_build_round8.log`).
+
+### Changed files (round 8)
+
+- `src/llm/router.py`, `tests/test_router.py`,
+  `frontend/components/settings-view.tsx`,
+  `frontend/components/llm-setup-banner.tsx`,
+  `frontend/components/dashboard-shell.tsx`.

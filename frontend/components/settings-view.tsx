@@ -98,13 +98,11 @@ function Field({
   label,
   hint,
   children,
-  htmlFor,
   group = false,
 }: {
   label: string
   hint?: string
   children: React.ReactNode
-  htmlFor?: string
   group?: boolean
 }) {
   const id = useId()
@@ -133,7 +131,7 @@ function Field({
     )
   }
   return (
-    <label htmlFor={htmlFor} className="flex flex-col gap-1.5">
+    <label className="flex flex-col gap-1.5">
       {body}
     </label>
   )
@@ -195,10 +193,17 @@ export function SettingsView() {
     setForm(toForm(settings))
   }, [settings, dirty])
 
-  const providerItems = useMemo(
-    () => providers.map((preset) => ({ label: preset.label, value: preset.id })),
-    [providers],
-  )
+  const providerItems = useMemo(() => {
+    const items = providers.map((preset) => ({
+      label: preset.label,
+      value: preset.id,
+    }))
+    const current = form?.provider
+    if (current && !items.some((item) => item.value === current)) {
+      items.unshift({ label: current, value: current })
+    }
+    return items
+  }, [providers, form?.provider])
 
   const saveMutation = useMutation({
     mutationFn: (update: LlmSettingsUpdate) => updateLlmSettings(update),
@@ -236,9 +241,15 @@ export function SettingsView() {
   }
 
   function updateForm(patch: Partial<FormState>) {
+    if (!form) return
+    const next = { ...form, ...patch }
+    const changed = (Object.keys(patch) as (keyof FormState)[]).some(
+      (key) => form[key] !== next[key],
+    )
+    if (!changed) return
     setDirty(true)
     resetTransientState()
-    setForm((prev) => (prev ? { ...prev, ...patch } : prev))
+    setForm(next)
   }
 
   function handleKeyInput(value: string) {
@@ -256,6 +267,7 @@ export function SettingsView() {
   }
 
   function handleProviderChange(id: string) {
+    if (id === form?.provider) return
     const preset = providers.find((item) => item.id === id)
     setDirty(true)
     resetTransientState()
@@ -508,7 +520,9 @@ export function SettingsView() {
                       aria-label="API key"
                       value={apiKey}
                       onChange={(event) => handleKeyInput(event.target.value)}
-                      placeholder={keyPlaceholder}
+                      placeholder={
+                        clearKey ? "Will be removed on save" : keyPlaceholder
+                      }
                       autoComplete="off"
                     />
                     <Button
