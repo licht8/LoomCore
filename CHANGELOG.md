@@ -3,6 +3,16 @@
 Short entries only: date + one or two lines. Details live in `docs/` or in the
 task report (RULES 14).
 
+## 2026-09-22
+
+- Hardened the DB layer against `InvalidCachedStatementError`: the async engine
+  now disables both asyncpg and SQLAlchemy prepared-statement caches
+  (`statement_cache_size` / `prepared_statement_cache_size` = 0), so DDL applied
+  by Alembic (e.g. migration `006`) can no longer invalidate a live pooled plan.
+- `deploy/install.sh` now applies migrations before the hub starts (build, bring
+  up `db`, `docker compose run --rm hub alembic upgrade head`, then start the
+  stack), so no long-running hub is connected during the migration.
+
 ## 2026-09-21
 
 - Rewrote `RULES.md` for the current LoomCore architecture (thin core + MCP

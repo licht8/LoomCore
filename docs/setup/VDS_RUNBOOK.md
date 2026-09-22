@@ -57,9 +57,15 @@ sudo bash deploy/install.sh
 Manual equivalent (if you prefer):
 
 ```bash
-sudo docker compose up -d --build
-sudo docker compose exec hub alembic upgrade head
+sudo docker compose build
+sudo docker compose up -d --wait db
+sudo docker compose run --rm hub alembic upgrade head
+sudo docker compose up -d --wait
 ```
+
+If you apply a migration while the hub is already running (`docker compose exec
+hub alembic upgrade head`), restart it afterwards so it reconnects: `docker
+compose restart hub`.
 
 No host WireGuard packages are needed: the `hub` image ships the userspace tools
 and the LoomWG plugin installs/repairs anything missing inside its container. The
@@ -70,13 +76,17 @@ kernel install `kmod-wireguard` on the host (see section 6).
 
 ## 3. Apply migrations
 
-`deploy/install.sh` runs migrations automatically at the end (`alembic upgrade
+`deploy/install.sh` runs migrations **before** the hub starts (`alembic upgrade
 head`). If you started the containers manually, run it yourself:
 
 ```bash
-docker compose exec hub alembic upgrade head
+docker compose run --rm hub alembic upgrade head
 docker compose exec db psql -U loomuser -d loomcore -c '\dt'
 ```
+
+If you apply a migration manually against an already-running hub, restart it
+afterwards (`docker compose restart hub`) so it drops connections whose cached
+plans predate the schema change.
 
 You should see `users`, `sessions`, `messages`, `alembic_version`.
 
@@ -281,8 +291,10 @@ Approved tool results should now be persisted as `role = tool` rows.
 ```bash
 cd ~/LoomCore
 git pull
-docker compose up -d --build
-docker compose exec hub alembic upgrade head
+docker compose build
+docker compose up -d --wait db
+docker compose run --rm hub alembic upgrade head
+docker compose up -d --wait
 ```
 
 ### One-time migration from the old name (LoomHub -> LoomCore)

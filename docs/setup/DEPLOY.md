@@ -35,9 +35,9 @@ sudo bash deploy/install.sh
 
 The script:
 - creates `.env` if missing;
-- builds and starts the containers via `docker compose up -d --build`;
-- applies database migrations (`alembic upgrade head`);
-- prints the container status.
+- builds the images and starts Postgres (`docker compose build`, `docker compose up -d --wait db`);
+- applies database migrations **before** the hub starts (`docker compose run --rm hub alembic upgrade head`);
+- starts the rest of the stack (`docker compose up -d --wait`) and prints the container status.
 
 It does **not** install WireGuard packages: the `hub` image already contains the
 userspace tools, and the LoomWG plugin installs/repairs anything missing inside
@@ -50,12 +50,18 @@ rerun.
 ### Step 2: Database migrations
 
 The schema is managed by Alembic. `deploy/install.sh` applies migrations
-automatically. If you started the containers manually with `docker compose up
--d --build`, run them yourself (and after every update that adds a migration):
+**before** the hub starts, so a running hub never holds prepared statements
+planned against the old schema. If you started the containers manually, run them
+yourself (and after every update that adds a migration):
 
 ```bash
-docker compose exec hub alembic upgrade head
+docker compose run --rm hub alembic upgrade head
 ```
+
+If the hub is already running when you apply a migration manually (for example
+`docker compose exec hub alembic upgrade head`), restart it afterwards so it
+drops connections holding pre-migration cached plans: `docker compose restart
+hub`.
 
 ### Step 3: Configure WireGuard
 
@@ -202,8 +208,10 @@ and never leave access unconfigured (unconfigured access fails closed with 503).
 ```bash
 cd ~/LoomCore
 git pull
-docker compose up -d --build
-docker compose exec hub alembic upgrade head
+docker compose build
+docker compose up -d --wait db
+docker compose run --rm hub alembic upgrade head
+docker compose up -d --wait
 docker image prune -f
 ```
 
