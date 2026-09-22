@@ -79,6 +79,8 @@ def patched_router(monkeypatch):
         "tool_choice": None,
         "temperature": None,
         "last_messages": None,
+        "purpose": None,
+        "session_id": None,
         "user_saved": [],
         "assistant_saved": [],
         "plans_saved": [],
@@ -111,13 +113,22 @@ def patched_router(monkeypatch):
     router = AIRouter(plugin_manager=None)
 
     async def fake_chat_completion(
-        messages, tools=None, tool_choice=None, temperature=None, model=None
+        messages,
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        model=None,
+        *,
+        purpose=None,
+        session_id=None,
     ):
         state["calls"] += 1
         state["tools"] = tools
         state["tool_choice"] = tool_choice
         state["temperature"] = temperature
         state["last_messages"] = messages
+        state["purpose"] = purpose
+        state["session_id"] = session_id
         if state["queue"]:
             return state["queue"].pop(0)
         return {"choices": []}
@@ -830,3 +841,14 @@ async def test_route_reask_skips_empty_assistant_content(patched_router):
         message["role"] == "assistant" and not message.get("content")
         for message in state["last_messages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_route_passes_planner_usage_context(patched_router):
+    router, state = patched_router
+    state["queue"] = [_reply_response("Hi there!")]
+
+    await router.route("hi", "sess-7")
+
+    assert state["purpose"] == "planner"
+    assert state["session_id"] == "sess-7"

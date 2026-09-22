@@ -230,6 +230,8 @@ class AIRouter:
                     tools=PLANNER_TOOLS,
                     tool_choice="required",
                     temperature=0,
+                    purpose="planner",
+                    session_id=session_id,
                 )
                 choices = llm_response.get("choices", [])
                 if not choices:
@@ -355,7 +357,7 @@ class AIRouter:
         messages = build_summary_messages(user_message, plan, observations)
         async with span("summary_call", steps=len(plan.get("steps", []))):
             llm_response = await self.client.chat_completion(
-                messages, model=config.summary_model or None
+                messages, model=config.summary_model or None, purpose="summary"
             )
             content, _tool_name, _tool_args, _raw = self._parse_completion(llm_response)
         return content

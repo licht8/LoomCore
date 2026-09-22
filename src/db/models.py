@@ -108,3 +108,36 @@ class AuditEntry(Base):
         UniqueConstraint("prev_hash", name="uq_audit_log_prev_hash"),
         UniqueConstraint("entry_hash", name="uq_audit_log_entry_hash"),
     )
+
+
+class LlmUsage(Base):
+    """One row per completed LLM call (success or terminal failure).
+
+    Recording is best-effort: it never blocks or fails the request it measures.
+    The table has no foreign keys so rows survive session deletion, mirroring
+    ``audit_log``. Token columns are nullable because some OpenAI-compatible
+    gateways omit ``usage``.
+    """
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    created_at: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True
+    )  # UTC isoformat
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    base_url: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    model: Mapped[str] = mapped_column(
+        String(256), nullable=False, default="", index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="chat")
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="success")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

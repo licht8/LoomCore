@@ -1,11 +1,11 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models import Message, Session, User
+from src.db.models import LlmUsage, Message, Session, User
 
 
 async def add_message(
@@ -180,3 +180,121 @@ async def clear_session_history(
     )
     await session_db.commit()
     return result.rowcount or 0
+
+
+async def add_llm_usage(
+    session_db: AsyncSession,
+    *,
+    provider: str,
+    base_url: str,
+    model: str,
+    purpose: str,
+    session_id: str | None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    total_tokens: int | None,
+    latency_ms: int | None,
+    attempts: int,
+    status: str,
+    error: str | None = None,
+) -> LlmUsage:
+    """Append one LLM usage row. Best-effort: callers swallow any failure."""
+    row = LlmUsage(
+        id=str(uuid4()),
+        created_at=datetime.now(UTC).isoformat(),
+        provider=provider,
+        base_url=base_url,
+        model=model,
+        purpose=purpose,
+        session_id=session_id,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        latency_ms=latency_ms,
+        attempts=attempts,
+        status=status,
+        error=error,
+    )
+    session_db.add(row)
+    await session_db.commit()
+    await session_db.refresh(row)
+    return row
+
+
+async def llm_usage_totals(session_db: AsyncSession, since_iso: str) -> dict:
+    """Aggregate usage for every row at/after ``since_iso`` (raw sums)."""
+    stmt = select(
+        func.count(LlmUsage.id),
+        func.sum(LlmUsage.prompt_tokens),
+        func.sum(LlmUsage.completion_tokens),
+        func.sum(LlmUsage.total_tokens),
+        func.avg(LlmUsage.latency_ms),
+    ).where(LlmUsage.created_at >= since_iso)
+    row = (await session_db.execute(stmt)).one()
+    return {
+        "calls": row[0],
+        "prompt_tokens": row[1],
+        "completion_tokens": row[2],
+        "total_tokens": row[3],
+        "avg_latency_ms": row[4],
+    }
+
+
+async def llm_usage_by_model(session_db: AsyncSession, since_iso: str) -> list[dict]:
+    """Aggregate usage per (provider, model) at/after ``since_iso``."""
+    calls = func.count(LlmUsage.id)
+    stmt = (
+        select(
+            LlmUsage.provider,
+            LlmUsage.model,
+            calls,
+            func.sum(LlmUsage.prompt_tokens),
+            func.sum(LlmUsage.completion_tokens),
+            func.sum(LlmUsage.total_tokens),
+            func.avg(LlmUsage.latency_ms),
+        )
+        .where(LlmUsage.created_at >= since_iso)
+        .group_by(LlmUsage.provider, LlmUsage.model)
+        .order_by(calls.desc(), LlmUsage.model)
+    )
+    rows = (await session_db.execute(stmt)).all()
+    return [
+        {
+            "provider": row[0],
+            "model": row[1],
+            "calls": row[2],
+            "prompt_tokens": row[3],
+            "completion_tokens": row[4],
+            "total_tokens": row[5],
+            "avg_latency_ms": row[6],
+        }
+        for row in rows
+    ]
+
+
+async def llm_usage_by_day(session_db: AsyncSession, since_iso: str) -> list[dict]:
+    """Aggregate usage per calendar day (UTC) at/after ``since_iso``."""
+    day = func.substr(LlmUsage.created_at, 1, 10).label("day")
+    stmt = (
+        select(
+            day,
+            func.count(LlmUsage.id),
+            func.sum(LlmUsage.prompt_tokens),
+            func.sum(LlmUsage.completion_tokens),
+            func.sum(LlmUsage.total_tokens),
+        )
+        .where(LlmUsage.created_at >= since_iso)
+        .group_by(day)
+        .order_by(day)
+    )
+    rows = (await session_db.execute(stmt)).all()
+    return [
+        {
+            "day": row[0],
+            "calls": row[1],
+            "prompt_tokens": row[2],
+            "completion_tokens": row[3],
+            "total_tokens": row[4],
+        }
+        for row in rows
+    ]

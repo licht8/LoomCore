@@ -16,6 +16,7 @@ from src.llm.exceptions import (
     LlmNotConfigured,
     LlmTimeoutError,
 )
+from src.llm.usage import record_llm_usage
 
 logger = logging.getLogger("loomcore.llm")
 
@@ -89,6 +90,9 @@ class OpenAICompatClient:
         tool_choice: str | None = None,
         temperature: float | None = None,
         model: str | None = None,
+        *,
+        purpose: str = "chat",
+        session_id: str | None = None,
     ) -> dict:
         """Send a request to the active provider and return the JSON response.
 
@@ -186,6 +190,19 @@ class OpenAICompatClient:
                         else None
                     ),
                 )
+                await record_llm_usage(
+                    provider=config.provider,
+                    base_url=config.base_url,
+                    model=active_model,
+                    purpose=purpose,
+                    session_id=session_id,
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=completion_tokens,
+                    total_tokens=usage.get("total_tokens"),
+                    latency_ms=int(elapsed * 1000),
+                    attempts=attempt,
+                    status="success",
+                )
                 return data
             except httpx.HTTPStatusError as exc:
                 status = (
@@ -205,6 +222,20 @@ class OpenAICompatClient:
                     await asyncio.sleep(delay)
                     continue
                 logger.error(f"❌ LLM HTTP error {status}: {body}")
+                await record_llm_usage(
+                    provider=config.provider,
+                    base_url=config.base_url,
+                    model=active_model,
+                    purpose=purpose,
+                    session_id=session_id,
+                    prompt_tokens=None,
+                    completion_tokens=None,
+                    total_tokens=None,
+                    latency_ms=None,
+                    attempts=attempt,
+                    status="error",
+                    error=f"LLM API error {status}",
+                )
                 raise LlmError(f"LLM API error {status}") from exc
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc = exc
@@ -217,7 +248,35 @@ class OpenAICompatClient:
                     await asyncio.sleep(min(2 ** (attempt - 1), 5))
 
         if isinstance(last_exc, httpx.TimeoutException):
+            await record_llm_usage(
+                provider=config.provider,
+                base_url=config.base_url,
+                model=active_model,
+                purpose=purpose,
+                session_id=session_id,
+                prompt_tokens=None,
+                completion_tokens=None,
+                total_tokens=None,
+                latency_ms=None,
+                attempts=max_attempts,
+                status="error",
+                error=f"LLM request timed out: {type(last_exc).__name__}",
+            )
             raise LlmTimeoutError(
                 f"LLM did not respond within {config.read_timeout:.0f}s"
             ) from last_exc
+        await record_llm_usage(
+            provider=config.provider,
+            base_url=config.base_url,
+            model=active_model,
+            purpose=purpose,
+            session_id=session_id,
+            prompt_tokens=None,
+            completion_tokens=None,
+            total_tokens=None,
+            latency_ms=None,
+            attempts=max_attempts,
+            status="error",
+            error=f"LLM request failed: {last_exc}",
+        )
         raise LlmError(f"LLM request failed: {last_exc}") from last_exc

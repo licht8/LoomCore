@@ -1,6 +1,7 @@
 """Unit tests for the LLM client retry/timeout behavior."""
 
 import json
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -16,6 +17,14 @@ from src.llm.exceptions import (
     LlmNotConfigured,
     LlmTimeoutError,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_usage_db(monkeypatch):
+    """Keep unit tests DB-free by stubbing the usage recorder."""
+    recorder = AsyncMock()
+    monkeypatch.setattr(client_module, "record_llm_usage", recorder)
+    return recorder
 
 
 class _FakeResponse:
@@ -381,3 +390,40 @@ async def test_unconfigured_raises_not_configured(monkeypatch):
         ).chat_completion([{"role": "user", "content": "hi"}])
 
     assert created == []
+
+
+@pytest.mark.asyncio
+async def test_success_records_usage(monkeypatch, _no_usage_db):
+    _install(monkeypatch, [_FakeResponse()])
+
+    await OpenAICompatClient(config=_config()).chat_completion(
+        [{"role": "user", "content": "hi"}], purpose="planner", session_id="sess-9"
+    )
+
+    _no_usage_db.assert_awaited_once()
+    kwargs = _no_usage_db.await_args.kwargs
+    assert kwargs["purpose"] == "planner"
+    assert kwargs["session_id"] == "sess-9"
+    assert kwargs["provider"] == "custom"
+    assert kwargs["model"] == "test-model"
+    assert kwargs["status"] == "success"
+    assert kwargs["attempts"] == 1
+    assert kwargs["latency_ms"] is not None
+    assert kwargs["prompt_tokens"] is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_records_error(monkeypatch, _no_usage_db):
+    _install(monkeypatch, [_ErrorResponse(status_code=400)])
+
+    with pytest.raises(LlmError):
+        await OpenAICompatClient(config=_config(max_retries=3)).chat_completion(
+            [{"role": "user", "content": "hi"}]
+        )
+
+    _no_usage_db.assert_awaited_once()
+    kwargs = _no_usage_db.await_args.kwargs
+    assert kwargs["status"] == "error"
+    assert kwargs["error"] == "LLM API error 400"
+    assert kwargs["latency_ms"] is None
+    assert kwargs["attempts"] == 1
