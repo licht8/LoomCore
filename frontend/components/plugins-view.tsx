@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { RotateCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ErrorBanner } from "@/components/error-banner"
 import { PluginRow } from "@/components/plugin-row"
 import {
   disablePlugin,
@@ -16,32 +17,6 @@ import {
   type PluginInfo,
 } from "@/lib/plugins-api"
 import { cn } from "@/lib/utils"
-
-function ErrorBanner({
-  message,
-  actionLabel,
-  onAction,
-}: {
-  message: string
-  actionLabel: string
-  onAction: () => void
-}) {
-  return (
-    <div
-      role="alert"
-      className="mt-4 flex items-center gap-2 text-xs text-destructive"
-    >
-      <span className="truncate">{message}</span>
-      <button
-        type="button"
-        onClick={onAction}
-        className="shrink-0 font-medium underline underline-offset-4 hover:opacity-80"
-      >
-        {actionLabel}
-      </button>
-    </div>
-  )
-}
 
 export function PluginsView() {
   const queryClient = useQueryClient()

@@ -25,6 +25,12 @@ const navItems: NavItem[] = [
   { label: "Plugins", href: "/plugins", icon: Puzzle },
 ]
 
+const settingsItem: NavItem = {
+  label: "Settings",
+  href: "/settings",
+  icon: Settings,
+}
+
 function itemClass(active: boolean) {
   return cn(
     "group relative flex h-10 items-center gap-2 rounded-md px-3 text-sm transition-colors duration-150",
@@ -90,10 +96,7 @@ export function DashboardSidebar() {
       <div className="mt-auto flex flex-col py-4">
         <div className="mx-3 border-t border-border/50" />
         <div className="flex flex-col gap-1.5 pt-4">
-          <button type="button" className={itemClass(false)}>
-            <Settings className={iconClass(false)} strokeWidth={1.75} />
-            Settings
-          </button>
+          <NavLink item={settingsItem} active={isActive(settingsItem.href)} />
         </div>
       </div>
     </aside>

@@ -1,5 +1,6 @@
 import { authHeaders } from "@/lib/admin-token"
 import { getApiBase } from "@/lib/chat-api"
+import { readError } from "@/lib/http-error"
 
 export type PluginAction = "enable" | "disable" | "reload"
 
@@ -14,17 +15,6 @@ export type PluginInfo = {
   description: string
   tools: number
   permission_warnings: string[]
-}
-
-async function readError(response: Response): Promise<string> {
-  try {
-    const data = await response.json()
-    const message = data?.detail ?? data?.error
-    if (typeof message === "string" && message) return message
-  } catch {
-    // response had no JSON body
-  }
-  return `${response.status} ${response.statusText}`.trim()
 }
 
 /** Load every discovered plugin with its lifecycle metadata. */
