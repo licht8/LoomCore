@@ -12,6 +12,11 @@ task report (RULES 14).
 - `deploy/install.sh` now applies migrations before the hub starts (build, bring
   up `db`, `docker compose run --rm hub alembic upgrade head`, then start the
   stack), so no long-running hub is connected during the migration.
+- Added LLM usage tracking: every completed provider call is recorded (tokens,
+  latency, purpose, session, attempts, status) in the new `llm_usage` table
+  (migration `008`), exposed read-only to admins at `GET /api/llm/usage` and in
+  the new `/usage` dashboard page. Recording is best-effort and never fails a
+  chat turn.
 
 ## 2026-09-21
 
