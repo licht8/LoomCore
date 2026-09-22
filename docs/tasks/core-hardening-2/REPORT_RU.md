@@ -397,6 +397,36 @@ Verification: `uv run ruff check .` clean; `uv run pytest -m "not integration an
 not e2e" -q` -> **1156 passed, 12 skipped, 5 deselected**
 (`tmp/tests_core_hardening2_review6_full.log`).
 
+## Review fix round 7
+
+Three findings applied:
+
+1. **In-memory revocation store is now bounded** (`src/auth.py::_save_revoked`):
+   `_prune_revoked()` runs before the `path is None` early return, so the
+   supported file-less configuration (`LOOMCORE_REVOKED_FILE` empty) also drops
+   entries older than the retention window instead of growing without bound.
+   (The post-merge prune inside the lock is kept.)
+2. **IPv4-compatible prefix denied** (`src/llm/security.py`): `::/96` was added
+   to `_BLOCKED_NETWORKS`. `_normalize_address` does not unwrap it
+   (`ipv4_mapped`/`sixtofour` are both `None`) and `IPv6Address.is_global`
+   reports it as global, so `[::7f00:1]` / `[::a9fe:a9fe]` previously passed the
+   literal-only guard; now they are rejected like the mapped/6to4/NAT64 forms.
+3. **`usage` shape guarded one level deeper** (`src/llm/client.py`): `usage` is
+   only used when it is a mapping, and a new `_token_count` helper coerces each
+   token field to `int | None` (ignoring strings/bools/None), so a truthy
+   non-object `usage` or a non-numeric `completion_tokens` can no longer raise
+   `AttributeError`/`TypeError` in the success path.
+
+Tests: `tests/test_auth.py` (+`test_pruning_runs_without_a_revocation_file`);
+`tests/test_llm_security.py` (+`[::7f00:1]`, `[::a9fe:a9fe]`, `[::]` rejected);
+`tests/test_llm_client.py` (+non-object `usage` ignored, +non-numeric token
+counts ignored, +numeric token counts recorded).
+
+Verification: `uv run ruff check .` clean; `uv run pytest -m "not integration and
+not e2e" -q` -> **1165 passed, 12 skipped, 5 deselected**
+(`tmp/tests_core_hardening2_review7_full.log`).
+
+
 
 
 

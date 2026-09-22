@@ -304,6 +304,24 @@ def test_revocation_pruning_drops_old_entries_keeps_fresh(monkeypatch, tmp_path)
     assert "old" not in persisted
 
 
+def test_pruning_runs_without_a_revocation_file(monkeypatch):
+    monkeypatch.setattr(settings, "loomcore_revoked_file", "")
+    now = time.time()
+    monkeypatch.setattr(
+        auth,
+        "_revoked",
+        {
+            "old": now - auth._REVOKE_RETENTION_SECONDS - 1,
+            "fresh": now,
+        },
+    )
+
+    auth._save_revoked()
+
+    assert "fresh" in auth._revoked
+    assert "old" not in auth._revoked
+
+
 def test_file_lock_is_noop_without_fcntl(monkeypatch, tmp_path):
     monkeypatch.setattr(auth, "fcntl", None)
     store = tmp_path / "revoked.json"

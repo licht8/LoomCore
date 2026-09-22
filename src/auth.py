@@ -180,6 +180,9 @@ def _load_revoked() -> None:
 
 def _save_revoked() -> None:
     """Persist revocations atomically; never fail the request on a write error."""
+    # Prune before the file-less early return so the in-memory-only store is
+    # bounded too (it never reaches the write path).
+    _prune_revoked()
     path = _revoked_path()
     if path is None:
         return

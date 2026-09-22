@@ -40,6 +40,13 @@ def _retry_delay(response: httpx.Response, attempt: int) -> float:
     return min(2 ** (attempt - 1), 5)
 
 
+def _token_count(value: object) -> int | None:
+    """Coerce a provider token count to ``int``; ignore non-numeric values."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
 class OpenAICompatClient:
     """Client for any OpenAI-compatible Chat Completions API.
 
@@ -181,8 +188,12 @@ class OpenAICompatClient:
                     raise LlmError(f"LLM returned invalid JSON: {exc}") from exc
                 if not isinstance(data, dict):
                     raise LlmError("LLM returned a non-object JSON body")
-                usage = data.get("usage") or {}
-                completion_tokens = usage.get("completion_tokens")
+                usage = data.get("usage")
+                if not isinstance(usage, dict):
+                    usage = {}
+                prompt_tokens = _token_count(usage.get("prompt_tokens"))
+                completion_tokens = _token_count(usage.get("completion_tokens"))
+                total_tokens = _token_count(usage.get("total_tokens"))
                 log_stage(
                     "llm_call",
                     elapsed,
@@ -192,7 +203,7 @@ class OpenAICompatClient:
                     prompt_chars=prompt_chars,
                     approx_prompt_tokens=prompt_chars // 4,
                     tools=len(tools) if tools else 0,
-                    prompt_tokens=usage.get("prompt_tokens"),
+                    prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     out_tok_per_s=(
                         round(completion_tokens / elapsed, 1)
@@ -206,9 +217,9 @@ class OpenAICompatClient:
                     model=active_model,
                     purpose=purpose,
                     session_id=session_id,
-                    prompt_tokens=usage.get("prompt_tokens"),
+                    prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    total_tokens=usage.get("total_tokens"),
+                    total_tokens=total_tokens,
                     latency_ms=int(elapsed * 1000),
                     attempts=attempt,
                     status="success",

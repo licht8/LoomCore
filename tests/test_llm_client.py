@@ -78,6 +78,26 @@ class _BadJsonResponse:
         raise json.JSONDecodeError("Expecting value", "<html>", 0)
 
 
+class _UsageResponse:
+    """A successful response carrying a caller-supplied ``usage`` value."""
+
+    status_code = 200
+    content = b"{}"
+    text = "{}"
+
+    def __init__(self, usage):
+        self._usage = usage
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": self._usage,
+        }
+
+
 class _FakeClient:
     """Client whose post() returns/raises scripted outcomes."""
 
@@ -471,6 +491,63 @@ async def test_terminal_failure_records_error(monkeypatch, _no_usage_db):
     assert kwargs["error"] == "LLM API error 400"
     assert kwargs["latency_ms"] is None
     assert kwargs["attempts"] == 1
+
+
+@pytest.mark.parametrize("usage", [[1], "12", 5])
+@pytest.mark.asyncio
+async def test_non_object_usage_is_ignored(monkeypatch, _no_usage_db, usage):
+    _install(monkeypatch, [_UsageResponse(usage)])
+
+    await OpenAICompatClient(config=_config()).chat_completion(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    kwargs = _no_usage_db.await_args.kwargs
+    assert kwargs["prompt_tokens"] is None
+    assert kwargs["completion_tokens"] is None
+    assert kwargs["total_tokens"] is None
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_token_counts_are_ignored(monkeypatch, _no_usage_db):
+    _install(
+        monkeypatch,
+        [
+            _UsageResponse(
+                {"prompt_tokens": "12", "completion_tokens": "x", "total_tokens": None}
+            )
+        ],
+    )
+
+    await OpenAICompatClient(config=_config()).chat_completion(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    kwargs = _no_usage_db.await_args.kwargs
+    assert kwargs["prompt_tokens"] is None
+    assert kwargs["completion_tokens"] is None
+    assert kwargs["total_tokens"] is None
+
+
+@pytest.mark.asyncio
+async def test_numeric_token_counts_are_recorded(monkeypatch, _no_usage_db):
+    _install(
+        monkeypatch,
+        [
+            _UsageResponse(
+                {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
+            )
+        ],
+    )
+
+    await OpenAICompatClient(config=_config()).chat_completion(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    kwargs = _no_usage_db.await_args.kwargs
+    assert kwargs["prompt_tokens"] == 10
+    assert kwargs["completion_tokens"] == 4
+    assert kwargs["total_tokens"] == 14
 
 
 @pytest.mark.asyncio
