@@ -96,3 +96,13 @@ task report (RULES 14).
 - Hardened plugin tests: manifest lookups guard `None`, LoomWG capability
   masks derive from `_CAPABILITIES`, JSON-RPC responses correlate by `id`, and
   the e2e teardown picks a unique interface/free port and reports failures.
+- **Breaking:** removed the hardcoded Hetzner provider and all `HETZNER_*`
+  settings. The LLM provider (OpenAI, OpenRouter, Groq, DeepSeek, or a custom
+  OpenAI-compatible endpoint) is now chosen at runtime in the new **Settings**
+  tab, persisted to `/data/llm.json` (`LLM_SETTINGS_FILE`) with the API key
+  write-only (mode 0600, never returned/logged/audited). Generic `LLM_*` env
+  vars only pre-seed the first start.
+- Added the admin LLM settings API (`GET /api/llm/providers`,
+  `GET`/`PUT /api/llm/settings`, `POST /api/llm/test`) and an unconfigured-state
+  banner; an unconfigured deployment still boots and chat replies with a setup
+  hint instead of failing.
