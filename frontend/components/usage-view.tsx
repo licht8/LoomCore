@@ -26,12 +26,12 @@ const RANGES = [
 ]
 
 function formatCount(value: number | null): string {
-  if (value === null || value === undefined) return "—"
+  if (value === null) return "—"
   return value.toLocaleString()
 }
 
 function formatLatency(value: number | null): string {
-  if (value === null || value === undefined) return "—"
+  if (value === null) return "—"
   return `${value.toLocaleString()} ms`
 }
 
@@ -183,9 +183,10 @@ export function UsageView() {
               <span className="sr-only">Refresh</span>
             </Button>
             <Select
+              items={RANGES}
               value={String(days)}
               onValueChange={(value) => {
-                if (typeof value === "string" && value) {
+                if (value) {
                   setDays(Number(value))
                 }
               }}
