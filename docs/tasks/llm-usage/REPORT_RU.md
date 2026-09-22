@@ -59,7 +59,7 @@ to provider-call behaviour, no change to the in-memory daily budget semantics.
 
 ### D5 — frontend `/usage`
 
-- `frontend/lib/llm-usage-api.ts` — `fetchLlmUsage(days)` + types, mirroring the
+- `frontend/lib/llm-usage-api.ts` — `fetchLlmUsage(days)` + types, reusing the
   shared `requestJson` (auth headers, `credentials: "include"`, `readError`).
 - `frontend/components/usage-view.tsx` — React Query
   (`["llm-usage", days]`, 60s refetch), 1/7/30-day range `Select`, refresh
@@ -105,6 +105,7 @@ to provider-call behaviour, no change to the in-memory daily budget semantics.
 - `alembic/versions/008_llm_usage.py` (new)
 - `src/llm/usage.py` (new), `src/llm/client.py`, `src/llm/router.py`
 - `src/api/llm.py`
+- `frontend/lib/api-client.ts` (new), `frontend/lib/llm-settings-api.ts`
 - `frontend/lib/llm-usage-api.ts` (new), `frontend/components/usage-view.tsx` (new),
   `frontend/app/(dashboard)/usage/page.tsx` (new),
   `frontend/components/dashboard-sidebar.tsx`
@@ -128,3 +129,27 @@ None (executor does not commit; the coordinator commits after acceptance).
   and growth is bounded by the daily call budget.
 - Summary rows have `session_id = NULL` by design; `created_at` is an ISO string,
   so day grouping is an exact `substr`.
+
+## Review fix round 1 (frontend)
+
+Findings from the frontend review, all applied:
+
+1. **Duplicated request plumbing** — extracted the shared `requestHeaders` +
+   `requestJson` (auth header merge, `credentials: "include"`, empty-body and
+   invalid-JSON handling) into a new `frontend/lib/api-client.ts`; both
+   `frontend/lib/llm-settings-api.ts` and `frontend/lib/llm-usage-api.ts` now
+   import it instead of carrying their own copy.
+2. **Dead `value === undefined` checks** — `formatCount`/`formatLatency` in
+   `frontend/components/usage-view.tsx` now check only `value === null` (the
+   declared parameter is `number | null`).
+3. **Select `onValueChange` guard** — kept a live guard (`if (value) ...`) rather
+   than dropping it: Base UI types the value as `string | null`, so an
+   unconditional `Number(value)` would turn a null selection into `0`. (The
+   finding assumed Radix's `(value: string) => void` signature.)
+4. **Missing `items` on the Base UI `Select`** — added `items={RANGES}` so
+   `<Select.Value />` renders the label (`Last 7 days`) instead of the raw value
+   (`7`), matching the convention in `settings-view.tsx`.
+
+Verification after the fixes: `npx tsc --noEmit` clean; `npm run build`
+succeeded with the `/usage` route (`tmp/frontend_build_llm_usage_review1.log`).
+No Python changed in this round.
