@@ -139,6 +139,24 @@ async def test_route_text_response(patched_router):
 
 
 @pytest.mark.asyncio
+async def test_route_unconfigured_persists_turn(patched_router, monkeypatch):
+    router, state = patched_router
+    monkeypatch.setattr(router_module, "get_active", LlmConfig)
+
+    result = await router.route("hi", "sess-1")
+
+    assert result == {
+        "type": "text",
+        "content": router_module.NOT_CONFIGURED_MESSAGE,
+    }
+    assert state["user_saved"] == [("sess-1", "hi")]
+    assert state["assistant_saved"] == [
+        ("sess-1", router_module.NOT_CONFIGURED_MESSAGE, None)
+    ]
+    assert state["calls"] == 0
+
+
+@pytest.mark.asyncio
 async def test_route_plan_response(patched_router):
     router, state = patched_router
     state["queue"] = [

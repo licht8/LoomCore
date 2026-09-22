@@ -190,6 +190,11 @@ class AIRouter:
         5. Persist and return the plan, or the plain-text answer.
         """
         if not get_active().configured:
+            # Persist the turn even without a provider: the user message and the
+            # notice stay in history so they survive a reload and are valid
+            # context once an admin configures a provider.
+            await self._begin_turn(session_id, user_message)
+            await self._persist_assistant(session_id, NOT_CONFIGURED_MESSAGE, None)
             return {"type": "text", "content": NOT_CONFIGURED_MESSAGE}
 
         route_started = time.monotonic()
