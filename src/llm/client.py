@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 from dataclasses import replace
 
@@ -43,6 +44,8 @@ def _retry_delay(response: httpx.Response, attempt: int) -> float:
 def _token_count(value: object) -> int | None:
     """Coerce a provider token count to ``int``; ignore non-numeric values."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return int(value)
 
