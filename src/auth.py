@@ -13,9 +13,15 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import jwt
+
+try:  # pragma: no cover - advisory file locking is POSIX-only
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None
 
 from src.config import settings
 
@@ -30,6 +36,10 @@ _revoked_lock = threading.RLock()
 # Well above the 310_000 rounds used by generate_password_hash; anything larger
 # is treated as an attack on the verifier rather than a real hash.
 _MAX_PBKDF2_ROUNDS = 10_000_000
+# Revoked tokens only need to outlive the token itself (8 h). Keeping three
+# token lifetimes (24 h) bounds the store while never reviving a still-valid
+# token, and the extra margin absorbs clock skew between writers.
+_REVOKE_RETENTION_SECONDS = 86400
 
 
 def _revoked_path() -> Path | None:
@@ -79,13 +89,69 @@ def _parse_revoked(data: object) -> dict[str, float]:
 def _read_revoked_file(path: Path) -> dict[str, float] | None:
     """Read and parse the store; ``None`` means missing, unreadable or corrupt."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
         logger.warning(f"Cannot read revoked-session store '{path}': {exc}")
         return None
+    if not raw.strip():
+        # An empty file is a valid empty store, not corruption: returning an
+        # empty mapping lets _load_revoked latch the signature and stop warning
+        # on every decode.
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        logger.warning(f"Cannot read revoked-session store '{path}': {exc}")
+        return None
     return _parse_revoked(data)
+
+
+def _prune_revoked(now: float | None = None) -> None:
+    """Drop revocation entries older than the retention window (in place)."""
+    cutoff = (time.time() if now is None else now) - _REVOKE_RETENTION_SECONDS
+    for token_id in [tid for tid, revoked_at in _revoked.items() if revoked_at < cutoff]:
+        del _revoked[token_id]
+
+
+@contextlib.contextmanager
+def _file_lock(path: Path) -> Iterator[None]:
+    """Best-effort advisory lock around a read-merge-write of the store.
+
+    Uses ``fcntl.flock`` on a ``<store>.lock`` sibling when available; on
+    platforms without ``fcntl`` (Windows) it is a no-op, so callers still work.
+    """
+    if fcntl is None:
+        yield
+        return
+    try:
+        lock_path = path.with_name(path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    except (OSError, ValueError):
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_NB)
+        except OSError:
+            # Another process (or a slow filesystem) holds the lock. Waiting
+            # would stall the event loop for a best-effort persist, so degrade to
+            # the same no-lock path used on platforms without ``fcntl``.
+            logger.warning(
+                "Revoked-session store lock is busy; writing without it."
+            )
+            yield
+            return
+        try:
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
 
 
 def _load_revoked() -> None:
@@ -117,10 +183,11 @@ def _save_revoked() -> None:
     path = _revoked_path()
     if path is None:
         return
-    with _revoked_lock:
+    with _revoked_lock, _file_lock(path):
         on_disk = _read_revoked_file(path)
         if on_disk is not None:
             _revoked.update(on_disk)
+        _prune_revoked()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             descriptor, temp_name = tempfile.mkstemp(
@@ -169,9 +236,15 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def verify_totp(code: str, secret: str) -> bool:
+    # An empty secret decodes to an empty HMAC key, which would happily verify a
+    # code derived from that key; fail closed instead.
+    if not secret or not secret.strip():
+        return False
+    normalized_code = "".join(code.split())
+    if len(normalized_code) != 6 or not normalized_code.isdigit():
+        return False
     try:
         key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
-        normalized_code = "".join(code.split())
         current_counter = int(time.time()) // 30
         for counter in range(current_counter - 1, current_counter + 2):
             digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()

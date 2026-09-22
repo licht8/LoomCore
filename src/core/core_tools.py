@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from src.core.contracts import validate_tool_args
 from src.core.security import classify_tool_risk
 from src.plugins import plugin_manager
+from src.plugins.errors import PluginPolicyDenied
 from src.plugins.manifest import (
     CAPABILITIES,
     effective_capabilities,
@@ -276,7 +277,11 @@ async def _core_capabilities(arguments: dict) -> dict:
 
 async def _core_enable_plugin(arguments: dict) -> dict:
     name = _require_plugin(arguments)
-    if not await plugin_manager.enable_plugin(name):
+    try:
+        enabled = await plugin_manager.enable_plugin(name)
+    except PluginPolicyDenied as exc:
+        raise RuntimeError(f"Plugin '{name}' is not permitted by policy") from exc
+    if not enabled:
         raise RuntimeError(f"Failed to enable plugin '{name}'")
     return _result(f"Plugin '{name}' enabled.", plugin=name, enabled=True)
 

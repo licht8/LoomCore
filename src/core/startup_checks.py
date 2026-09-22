@@ -26,6 +26,34 @@ def _check_auth_mode() -> None:
         )
 
 
+def _check_jwt_mode_credentials() -> None:
+    """Warn when JWT mode is selected but no JWT-capable credential exists.
+
+    ``AUTH_MODE=jwt``/``both`` passes config validation with just a
+    ``SESSION_SECRET``, yet every password+TOTP login and session check 503s
+    because no ``admin_password_hash`` + ``admin_totp_secret`` pair exists. With
+    ``AUTH_MODE=both`` and a static ``ADMIN_TOKEN`` admin access still works via
+    that token, so the warning then names only the unusable JWT path.
+    """
+    mode = settings.auth_mode.strip().lower()
+    if mode not in {"jwt", "both"}:
+        return
+    if not settings.session_secret or admin_jwt_mode_enabled():
+        return
+    if mode == "both" and settings.admin_token:
+        logger.warning(
+            "AUTH_MODE=both but ADMIN_PASSWORD_HASH/ADMIN_TOTP_SECRET are not "
+            "both set: JWT sessions can never authenticate; only the static "
+            "ADMIN_TOKEN works."
+        )
+        return
+    logger.warning(
+        "AUTH_MODE=%s but ADMIN_PASSWORD_HASH/ADMIN_TOTP_SECRET are not both "
+        "set: JWT sessions can never authenticate and admin access will 503.",
+        mode,
+    )
+
+
 def _check_tls() -> None:
     """Fail closed when TLS is required but cookies are insecure; warn otherwise."""
     if settings.require_tls and not settings.secure_cookies:
@@ -52,8 +80,16 @@ def _check_revocation_store() -> None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8"):
-            pass
+        try:
+            # Create-only: never truncate an existing store, which a concurrent
+            # writer may have just populated.
+            with path.open("x", encoding="utf-8") as handle:
+                handle.write("{}\n")
+        except FileExistsError:
+            # Existing store: prove it is writable without touching its contents
+            # (a 0-byte file already reads as an empty store).
+            with path.open("a", encoding="utf-8"):
+                pass
     except OSError as exc:
         logger.warning(
             "Revocation store '%s' cannot be persisted to (%s); falling back to "
@@ -75,6 +111,7 @@ def _check_llm_provider() -> None:
 def check_security_posture() -> None:
     """Run all startup security-posture checks (warnings and fail-closed errors)."""
     _check_auth_mode()
+    _check_jwt_mode_credentials()
     _check_tls()
     _check_revocation_store()
     _check_llm_provider()

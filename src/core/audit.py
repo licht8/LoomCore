@@ -140,7 +140,7 @@ async def _record_mutation(
         await session_db.refresh(entry)
         return entry
     except Exception as exc:
-        logger.warning("audit: failed to record the %s mutation: %s", tool, exc)
+        logger.error("audit: failed to record the %s mutation: %s", tool, exc)
         with contextlib.suppress(Exception):
             await session_db.rollback()
         return None
@@ -152,7 +152,7 @@ async def record_mutation_isolated(**kwargs: Any) -> AuditEntry | None:
         async with async_session_factory() as session_db:
             return await _record_mutation(session_db, **kwargs)
     except Exception as exc:
-        logger.warning(
+        logger.error(
             "audit: isolated record failed for %s: %s", kwargs.get("tool"), exc
         )
         return None

@@ -213,9 +213,10 @@ class AIRouter:
         messages = build_planner_messages(user_message, history_dicts, catalog)
 
         logger.info(
-            "Planner call: "
-            f"user_msg='{user_message[:100]}...', "
-            f"history_len={len(history_dicts)}, tools_count={len(tools_schema)}"
+            "Planner call: history_len=%d, tools_count=%d, message_chars=%d",
+            len(history_dicts),
+            len(tools_schema),
+            len(user_message),
         )
 
         errors: list[str] = []

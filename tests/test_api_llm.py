@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from src.api import llm as llm_api
 from src.config import settings
 from src.llm import config as llm_config
+from src.llm import security as llm_security
 from src.main import app
 
 
@@ -33,6 +34,14 @@ def _isolated_llm_settings(monkeypatch, tmp_path):
     llm_config.clear_cache()
     yield
     llm_config.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_dns(monkeypatch):
+    """Never perform real DNS: every host resolves to a public address."""
+    monkeypatch.setattr(
+        llm_security, "resolve_host", lambda host: ["93.184.216.34"]
+    )
 
 
 def _configured_payload(provider="openai", **overrides):
@@ -128,6 +137,107 @@ async def test_update_rejects_invalid_base_url(monkeypatch):
         )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8000/v1",
+        "http://10.0.0.5/v1",
+        "http://169.254.169.254/v1",
+        "http://localhost:11434/v1",
+        "http://foo.internal/v1",
+    ],
+)
+async def test_update_rejects_private_base_url(monkeypatch, base_url):
+    _auth(monkeypatch)
+    async with _client() as client:
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"base_url": base_url, "model": "m"},
+        )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_host_that_resolves_private(monkeypatch):
+    _auth(monkeypatch)
+    monkeypatch.setattr(llm_security, "resolve_host", lambda host: ["10.0.0.9"])
+    async with _client() as client:
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"base_url": "https://api.example.com/v1", "model": "m"},
+        )
+
+    assert response.status_code == 400
+    assert "non-public address" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_unresolvable_host(monkeypatch):
+    _auth(monkeypatch)
+
+    def boom(host):
+        raise ValueError(f"base_url host '{host}' could not be resolved")
+
+    monkeypatch.setattr(llm_security, "resolve_host", boom)
+    async with _client() as client:
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"base_url": "https://api.example.com/v1", "model": "m"},
+        )
+
+    assert response.status_code == 400
+    assert "could not be resolved" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_negative_max_retries(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"max_retries": -1},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "max_retries must be >= 0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["Infinity", "-Infinity", "NaN"])
+async def test_update_rejects_non_finite_timeout(monkeypatch, raw):
+    _auth(monkeypatch)
+    async with _client() as client:
+        response = await client.put(
+            "/api/llm/settings",
+            headers={**_AUTH, "Content-Type": "application/json"},
+            content=f'{{"read_timeout": "{raw}"}}',
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_returns_the_saved_config(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        put = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(model="gpt-4o"),
+        )
+        get = await client.get("/api/llm/settings", headers=_AUTH)
+
+    assert put.status_code == 200
+    assert put.json() == get.json()
+    assert put.json()["model"] == "gpt-4o"
 
 
 @pytest.mark.asyncio
@@ -380,6 +490,39 @@ async def test_test_connection_reports_http_failure(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"ok": False, "status": 500, "error": "HTTP 500"}
+
+
+@pytest.mark.asyncio
+async def test_test_connection_rejects_private_base_url(monkeypatch):
+    _auth(monkeypatch)
+    monkeypatch.setattr(settings, "llm_base_url", "http://10.0.0.5/v1")
+    monkeypatch.setattr(settings, "llm_model", "m")
+    llm_config.clear_cache()
+
+    async with _client() as client:
+        response = await client.post("/api/llm/test", headers=_AUTH)
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_test_connection_rejects_redirect(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(),
+        )
+        _patch_httpx(monkeypatch, _FakeResponse(302))
+        response = await client.post("/api/llm/test", headers=_AUTH)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": False,
+        "status": 302,
+        "error": "redirect not allowed",
+    }
 
 
 @pytest.mark.asyncio

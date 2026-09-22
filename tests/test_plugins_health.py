@@ -234,3 +234,44 @@ async def test_healthcheck_loop_survives_enumeration_error(monkeypatch, caplog):
 
     assert iterations["count"] == 2
     assert "Failed to enumerate plugins" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_loop_times_out_hanging_restart(monkeypatch, caplog):
+    restarted: list[str] = []
+
+    class _FakeManager:
+        def plugin_names(self):
+            return ["slow", "good"]
+
+        def is_enabled(self, name):
+            return True
+
+        def is_healthy(self, name):
+            return False
+
+        async def restart_plugin(self, name):
+            restarted.append(name)
+            if name == "slow":
+                await asyncio.Event().wait()
+            return True
+
+    monkeypatch.setattr(health_module, "plugin_manager", _FakeManager())
+    monkeypatch.setattr(health_module, "RESTART_TIMEOUT_SECONDS", 0.01)
+    iterations = {"count": 0}
+
+    async def fake_sleep(_seconds):
+        iterations["count"] += 1
+        if iterations["count"] > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(health_module.asyncio, "sleep", fake_sleep)
+
+    with (
+        caplog.at_level(logging.ERROR, logger="loomcore.plugins.health"),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await health_module.healthcheck_loop()
+
+    assert restarted == ["slow", "good"]
+    assert "timed out" in caplog.text

@@ -62,7 +62,7 @@ async def test_chat_maps_llm_error_to_504(monkeypatch):
         )
 
     assert response.status_code == 504
-    assert response.json() == {"error": "upstream timeout"}
+    assert response.json() == {"detail": "upstream timeout"}
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_chat_logs_llm_error(monkeypatch, caplog):
             )
 
     assert response.status_code == 504
-    assert response.json() == {"error": "upstream timeout"}
+    assert response.json() == {"detail": "upstream timeout"}
     assert "LLM error (session=s1)" in caplog.text
     assert "upstream timeout" in caplog.text
 
@@ -129,7 +129,7 @@ async def test_chat_maps_unexpected_error_to_500(monkeypatch, caplog):
             )
 
     assert response.status_code == 500
-    assert response.json() == {"error": "Internal server error"}
+    assert response.json() == {"detail": "Internal server error"}
     assert "kaboom" not in response.text
     assert "chat request failed (session=s1)" in caplog.text
     assert "kaboom" in caplog.text

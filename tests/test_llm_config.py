@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import threading
 
 import pytest
 
@@ -108,6 +109,68 @@ def test_load_ignores_unknown_keys_and_bad_types(tmp_path):
     assert config.provider == "openai"
     assert config.base_url == "https://api.openai.com/v1"
     assert config.max_retries == default_config().max_retries
+
+
+def test_load_ignores_non_finite_numbers(tmp_path):
+    path = tmp_path / "llm.json"
+    path.write_text(
+        '{"base_url": "https://x/v1", "model": "m", '
+        '"read_timeout": NaN, "connect_timeout": Infinity, '
+        '"write_timeout": -Infinity, "pool_timeout": 5.0}',
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+    base = default_config()
+    assert config.read_timeout == base.read_timeout
+    assert config.connect_timeout == base.connect_timeout
+    assert config.write_timeout == base.write_timeout
+    assert config.pool_timeout == 5.0
+
+
+def test_load_ignores_out_of_range_integers(tmp_path):
+    huge = "1" + "0" * 400
+    path = tmp_path / "llm.json"
+    path.write_text(
+        '{"base_url": "https://x/v1", "model": "m", '
+        f'"read_timeout": {huge}, "connect_timeout": -{huge}, '
+        '"pool_timeout": 5.0}',
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+    base = default_config()
+    assert config.read_timeout == base.read_timeout
+    assert config.connect_timeout == base.connect_timeout
+    assert config.pool_timeout == 5.0
+
+
+def test_concurrent_set_and_get_do_not_corrupt_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        config_module.settings, "llm_settings_file", str(tmp_path / "llm.json")
+    )
+    configs = [
+        LlmConfig(base_url=f"https://host{i}.example/v1", model=f"m{i}")
+        for i in range(5)
+    ]
+    errors: list[BaseException] = []
+
+    def worker(index: int) -> None:
+        try:
+            for _ in range(20):
+                set_active(configs[index])
+                get_active()
+        except BaseException as exc:  # noqa: BLE001 - surface any thread failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert get_active() in configs
 
 
 def test_save_load_round_trip(tmp_path):

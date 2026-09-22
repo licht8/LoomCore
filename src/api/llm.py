@@ -5,12 +5,13 @@ write-only: it is never echoed back, only reported as configured plus a short
 preview, and it is never written to the audit log or application logs.
 """
 
+import asyncio
 import logging
 from dataclasses import asdict, replace
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.api.deps import extract_admin_token
 from src.core.audit import record_mutation_isolated
@@ -24,11 +25,26 @@ from src.llm.config import (
     set_active,
 )
 from src.llm.providers import PROVIDER_PRESETS
+from src.llm.security import validate_provider_url
 from src.llm.usage import llm_usage_summary
 
 router = APIRouter(prefix="/api", tags=["llm"])
 
 logger = logging.getLogger("loomcore.api.llm")
+
+# Serializes the settings read-modify-write so concurrent PUTs cannot lose an
+# update. Bound lazily to the running loop (module-level so it is shared).
+_settings_lock: asyncio.Lock | None = None
+_settings_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _settings_lock_for_loop() -> asyncio.Lock:
+    global _settings_lock, _settings_lock_loop
+    loop = asyncio.get_running_loop()
+    if _settings_lock is None or _settings_lock_loop is not loop:
+        _settings_lock = asyncio.Lock()
+        _settings_lock_loop = loop
+    return _settings_lock
 
 
 class LlmSettingsUpdate(BaseModel):
@@ -41,10 +57,10 @@ class LlmSettingsUpdate(BaseModel):
     summary_model: str | None = None
     enable_thinking: bool | None = None
     thinking_template: bool | None = None
-    connect_timeout: float | None = None
-    read_timeout: float | None = None
-    write_timeout: float | None = None
-    pool_timeout: float | None = None
+    connect_timeout: float | None = Field(default=None, allow_inf_nan=False)
+    read_timeout: float | None = Field(default=None, allow_inf_nan=False)
+    write_timeout: float | None = Field(default=None, allow_inf_nan=False)
+    pool_timeout: float | None = Field(default=None, allow_inf_nan=False)
     max_retries: int | None = None
 
 
@@ -91,12 +107,11 @@ def _merge(current: LlmConfig, data: dict) -> LlmConfig:
 
     supplied_base_url = data.get("base_url")
     base_url = _unchanged(data, "base_url", current.base_url)
-    if supplied_base_url and not supplied_base_url.startswith(
-        ("http://", "https://")
-    ):
-        raise HTTPException(
-            status_code=400, detail="base_url must start with http:// or https://"
-        )
+    if supplied_base_url:
+        try:
+            validate_provider_url(supplied_base_url, resolve=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     model = _unchanged(data, "model", current.model)
     if "model" in data and data["model"] is not None and not data["model"].strip():
@@ -204,12 +219,28 @@ async def update_llm_settings(
     """Validate, apply at runtime, and persist the provider config."""
     require_admin_token(extract_admin_token(request, authorization), request)
     data = payload.model_dump(exclude_unset=True)
-    updated = _merge(get_active(), data)
-    saved = set_active(updated)
+    supplied_base_url = data.get("base_url")
+    if supplied_base_url:
+        # Resolve once, off the event loop, when the provider is saved; the
+        # per-request client guard is literal-only (no DNS on the hot path).
+        try:
+            await asyncio.to_thread(
+                validate_provider_url, supplied_base_url, resolve=True
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    def _apply() -> tuple[LlmConfig, bool]:
+        # get_active/set_active do synchronous file I/O and take the config
+        # module's lock, so run them off the event loop while we hold the API lock.
+        merged = _merge(get_active(), data)
+        return merged, set_active(merged)
+
+    async with _settings_lock_for_loop():
+        updated, saved = await asyncio.to_thread(_apply)
     await _audit_llm_update(updated, status="success" if saved else "error")
     if not saved:
         raise HTTPException(status_code=500, detail="Failed to persist LLM settings")
-    return _serialize(get_active())
+    return _serialize(updated)
 
 
 @router.post("/llm/test")
@@ -224,15 +255,29 @@ async def test_llm_connection(
     if not config.configured:
         raise HTTPException(status_code=400, detail=NOT_CONFIGURED_MESSAGE)
 
+    try:
+        await asyncio.to_thread(validate_provider_url, config.base_url, resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     headers = (
         {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
     )
     url = f"{config.base_url.rstrip('/')}/models"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=False
+        ) as client:
             response = await client.get(url, headers=headers)
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    if 300 <= response.status_code < 400:
+        return {
+            "ok": False,
+            "status": response.status_code,
+            "error": "redirect not allowed",
+        }
 
     if response.status_code >= 400:
         return {

@@ -110,6 +110,34 @@ async def test_download_artifact_requires_admin_token(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_download_artifact_accepts_bearer_token(monkeypatch):
+    # Static-token clients must be able to reach the endpoint: the Authorization
+    # header has to be forwarded to the auth guard.
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "secret")
+    monkeypatch.setattr(settings, "require_tls", False)
+
+    class _FakeManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            return {
+                "data": {
+                    "filename": "alice.conf",
+                    "media_type": "text/plain",
+                    "content_base64": base64.b64encode(b"[Interface]\n").decode(),
+                }
+            }
+
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _FakeManager())
+
+    response = await artifacts_api.download_artifact(
+        "alice", "config", _make_admin_request(token="secret"), "Bearer secret"
+    )
+
+    assert response.status_code == 200
+    assert response.body == b"[Interface]\n"
+
+
+@pytest.mark.asyncio
 async def test_download_artifact_returns_file(monkeypatch):
     class _FakeManager:
         async def execute_internal_tool(self, tool_name, arguments):
@@ -146,8 +174,25 @@ async def test_download_artifact_hides_internal_reason(monkeypatch):
 
     assert response.status_code == 404
     body = json.loads(response.body)
-    assert body == {"error": "Artifact not found or unavailable"}
+    assert body == {"detail": "Artifact not found or unavailable"}
     assert "reason" not in body
+
+
+@pytest.mark.asyncio
+async def test_download_artifact_handles_non_dict_result(monkeypatch):
+    class _ListManager:
+        async def execute_internal_tool(self, tool_name, arguments):
+            return ["not", "a", "dict"]
+
+    _patch_auth(monkeypatch)
+    monkeypatch.setattr(artifacts_api, "plugin_manager", _ListManager())
+
+    response = await artifacts_api.download_artifact("alice", "config", None)
+
+    assert response.status_code == 404
+    assert json.loads(response.body) == {
+        "detail": "Artifact not found or unavailable"
+    }
 
 
 @pytest.mark.asyncio
@@ -212,7 +257,7 @@ async def test_download_artifact_maps_backend_failures_to_404(monkeypatch, failu
     response = await artifacts_api.download_artifact("alice", "config", None)
 
     assert response.status_code == 404
-    assert json.loads(response.body) == {"error": "Artifact not found or unavailable"}
+    assert json.loads(response.body) == {"detail": "Artifact not found or unavailable"}
 
 
 @pytest.mark.asyncio

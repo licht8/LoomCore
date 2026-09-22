@@ -29,12 +29,34 @@ _SENSITIVE_MARKERS = (
 _REDACTED = "***"
 
 
+def _is_sensitive(key: object) -> bool:
+    """Whether a field name matches a known-sensitive marker."""
+    return any(marker in str(key).lower() for marker in _SENSITIVE_MARKERS)
+
+
+def _sanitize_key(key: object) -> str:
+    """Neutralise CR/LF/``=`` in a field name so it cannot forge a record."""
+    return str(key).replace("\r", "\\r").replace("\n", "\\n").replace("=", "\\=")
+
+
+def _redact_nested(value: Any) -> Any:
+    """Recursively redact sensitive keys inside dicts and sequences."""
+    if isinstance(value, dict):
+        return {
+            key: (_REDACTED if _is_sensitive(key) else _redact_nested(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_nested(item) for item in value]
+    return value
+
+
 def _render_field(key: str, value: Any) -> str:
     """Render one ``key=value`` field, redacting sensitive keys safely."""
-    if any(marker in key.lower() for marker in _SENSITIVE_MARKERS):
+    if _is_sensitive(key):
         return _REDACTED
     try:
-        return repr(value)
+        return repr(_redact_nested(value))
     except Exception:  # noqa: BLE001 - a hostile __repr__ must not break the caller
         return "<unrepresentable>"
 
@@ -48,7 +70,7 @@ def log_security_event(event: str, **fields: Any) -> None:
     """
     safe_event = str(event).replace("\r", "\\r").replace("\n", "\\n")
     parts = [
-        f"{key}={_render_field(key, value)}"
+        f"{_sanitize_key(key)}={_render_field(key, value)}"
         for key, value in sorted(fields.items())
         if value is not None
     ]

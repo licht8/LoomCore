@@ -225,7 +225,11 @@ async def test_process_user_message_reports_llm_error(monkeypatch):
 
     await ws_module._process_user_message(send, "sess", "hi")
 
-    assert sent[-1] == {"type": "error", "error": "boom", "schema_version": 1}
+    assert sent[-1] == {
+        "type": "error",
+        "error": "The language model request failed.",
+        "schema_version": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -1026,6 +1030,27 @@ async def test_plan_failure_emits_plan_done_failed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_plan_crash_does_not_leak_exception_text(monkeypatch):
+    sent, send = _collector()
+    _patch_plan_runtime(monkeypatch)
+    plan = _safe_two_step_plan()
+
+    async def boom(plan, dispatch=None, emit=None):
+        raise RuntimeError("secret /etc/wireguard/wg0.conf")
+
+    monkeypatch.setattr(ws_module, "execute_plan", boom)
+
+    await ws_module._run_plan(
+        send, "sess", "inspect", plan, {"tool": None, "plan": None}
+    )
+
+    errors = [p for p in sent if p["type"] == "error"]
+    assert errors
+    assert all("secret" not in (p.get("error") or "") for p in errors)
+    assert any(p.get("error") == "Internal error." for p in errors)
+
+
+@pytest.mark.asyncio
 async def test_run_plan_completes_when_tool_persistence_fails(monkeypatch, caplog):
     sent, send = _collector()
     _patch_plan_runtime(monkeypatch)
@@ -1392,3 +1417,19 @@ async def test_websocket_logs_payload_summary_not_content(monkeypatch, caplog):
     assert secret not in caplog.text
     assert "Received client message" in caplog.text
     assert "message=" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disconnect_keeps_the_shared_window(monkeypatch):
+    _patch_db(monkeypatch)
+    monkeypatch.setattr(ws_module, "WS_MESSAGE_LIMIT_PER_MINUTE", 1)
+    ws_module.reset_ws_message_limits()
+
+    ws = FakeWebSocket([{"message": ""}])
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    # Closing a socket must not hand the client a fresh allowance: the window is
+    # shared per identity, so the used slot survives the disconnect.
+    assert ws_module._allow_ws_message("admin") is False

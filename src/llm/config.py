@@ -14,8 +14,10 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import tempfile
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -95,11 +97,14 @@ def _as_bool(value: object) -> bool:
 
 
 def _as_float(value: object, fallback: float) -> float:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return fallback
-    if isinstance(value, (int, float)):
-        return float(value)
-    return fallback
+    try:
+        number = float(value)
+    except OverflowError:
+        # An arbitrarily large JSON integer cannot be represented as a float.
+        return fallback
+    return number if math.isfinite(number) else fallback
 
 
 def _as_int(value: object, fallback: int) -> int:
@@ -187,6 +192,10 @@ _active: LlmConfig | None = None
 _active_signature: tuple[int, int] | None = None
 _active_path: Path | None = None
 
+# Guards the stat-then-load and write-then-assign sequences below so concurrent
+# threads (e.g. the API and a background caller) cannot interleave them.
+_config_lock = threading.RLock()
+
 
 def _file_signature(path: Path) -> tuple[int, int] | None:
     try:
@@ -199,31 +208,34 @@ def _file_signature(path: Path) -> tuple[int, int] | None:
 def clear_cache() -> None:
     """Drop the cached active config (used by tests and reload paths)."""
     global _active, _active_signature, _active_path
-    _active = None
-    _active_signature = None
-    _active_path = None
+    with _config_lock:
+        _active = None
+        _active_signature = None
+        _active_path = None
 
 
 def get_active() -> LlmConfig:
     """Return the active config, reloading it when the file changes on disk."""
     global _active, _active_signature, _active_path
-    path = resolve_config_path(settings.llm_settings_file)
-    signature = _file_signature(path)
-    if _active is None or _active_path != path or signature != _active_signature:
-        _active = load_config(path)
-        _active_path = path
-        _active_signature = signature
-    return _active
+    with _config_lock:
+        path = resolve_config_path(settings.llm_settings_file)
+        signature = _file_signature(path)
+        if _active is None or _active_path != path or signature != _active_signature:
+            _active = load_config(path)
+            _active_path = path
+            _active_signature = signature
+        return _active
 
 
 def set_active(config: LlmConfig) -> bool:
     """Apply ``config`` at runtime (hot switch) and persist it."""
     global _active, _active_signature, _active_path
-    path = resolve_config_path(settings.llm_settings_file)
-    saved = save_config(path, config)
-    if not saved:
-        return False
-    _active = config
-    _active_path = path
-    _active_signature = _file_signature(path)
-    return saved
+    with _config_lock:
+        path = resolve_config_path(settings.llm_settings_file)
+        saved = save_config(path, config)
+        if not saved:
+            return False
+        _active = config
+        _active_path = path
+        _active_signature = _file_signature(path)
+        return saved

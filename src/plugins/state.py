@@ -76,14 +76,51 @@ def save_disabled(path: Path, disabled: set[str]) -> bool:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """Write ``text`` atomically (temp file + ``os.replace``)."""
+    """Write ``text`` atomically and durably (temp file + ``os.replace``).
+
+    The staged file is fsynced before the replace and the parent directory after
+    it, so a crash cannot leave a truncated state file. An existing destination's
+    permission bits are preserved; a newly created file defaults to ``0o600``.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = 0o600
+    with contextlib.suppress(OSError):
+        mode = os.stat(path).st_mode & 0o777
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, mode)
+            else:  # pragma: no cover - Windows has no os.fchmod
+                os.chmod(temporary, mode)
+            handle = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            # fdopen did not take ownership of the descriptor; close it so the
+            # failing call cannot leak the raw file descriptor.
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
+        with handle:
             handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
+        _fsync_directory(path.parent)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort fsync of ``directory`` (no-op where unsupported)."""
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        with contextlib.suppress(OSError):
+            os.fsync(dir_fd)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(dir_fd)

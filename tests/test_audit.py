@@ -1,5 +1,6 @@
 """Unit tests for the central hash-chained audit log (no database)."""
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -211,3 +212,22 @@ async def test_record_mutation_swallows_failures():
             return None
 
     assert await _record_mutation(_Boom(), tool="ops_write_file", status="success") is None
+
+
+@pytest.mark.asyncio
+async def test_record_mutation_logs_failures_at_error(caplog):
+    class _Boom:
+        async def execute(self, statement):
+            raise RuntimeError("database down")
+
+        async def rollback(self):
+            return None
+
+    with caplog.at_level(logging.ERROR):
+        result = await _record_mutation(
+            _Boom(), tool="ops_write_file", status="success"
+        )
+
+    assert result is None
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+    assert "ops_write_file" in caplog.text

@@ -4,7 +4,7 @@ import base64
 import logging
 import re
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 
 from src.api.deps import require_admin_token_from_request
@@ -50,17 +50,22 @@ async def download_artifact(
     name: str,
     kind: str,
     request: Request,
+    authorization: str | None = Header(default=None),
 ):
     """Serve a client's config/QR by name (admin-only, rebuilt on demand)."""
-    require_admin_token_from_request(request)
+    require_admin_token_from_request(request, authorization)
     if kind not in {"config", "qr"}:
-        return JSONResponse(status_code=404, content={"error": "Artifact not found"})
+        return JSONResponse(status_code=404, content={"detail": "Artifact not found"})
     try:
         result = await plugin_manager.execute_internal_tool(
             "wg_get_client_artifact",
             {"name": name, "kind": kind},
         )
+        if not isinstance(result, dict):
+            raise TypeError("plugin returned a non-object result")
         data = result.get("data", {})
+        if not isinstance(data, dict):
+            raise TypeError("plugin returned a non-object artifact payload")
         payload = base64.b64decode(data["content_base64"], validate=True)
         filename = _sanitize_filename(data["filename"])
         return Response(
@@ -71,9 +76,9 @@ async def download_artifact(
                 "Cache-Control": "no-store",
             },
         )
-    except (KeyError, ValueError, OSError, RuntimeError) as exc:
+    except (KeyError, ValueError, OSError, RuntimeError, TypeError) as exc:
         logger.warning("Artifact fetch failed for %r (%s): %s", name, kind, exc)
         return JSONResponse(
             status_code=404,
-            content={"error": "Artifact not found or unavailable"},
+            content={"detail": "Artifact not found or unavailable"},
         )

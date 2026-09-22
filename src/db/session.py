@@ -136,7 +136,7 @@ async def ensure_session(
             )
             session_db.add(session)
             await session_db.commit()
-        except Exception:
+        except IntegrityError:
             await session_db.rollback()
             # The session may have been created concurrently — re-read it.
             session_result = await session_db.execute(

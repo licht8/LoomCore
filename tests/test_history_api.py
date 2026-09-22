@@ -104,3 +104,22 @@ async def test_delete_messages_returns_count(monkeypatch):
 
     assert result == {"session_id": "sess", "deleted": 3}
     assert captured["session_id"] == "sess"
+
+
+@pytest.mark.asyncio
+async def test_history_rejects_invalid_session_id(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+
+    from src.main import app
+
+    _patch_auth(monkeypatch)
+    _patch_history(monkeypatch, [])
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        invalid = await client.get("/api/sessions/bad%0Aid/messages")
+        valid = await client.get("/api/sessions/sess/messages")
+
+    assert invalid.status_code == 422
+    assert valid.status_code == 200

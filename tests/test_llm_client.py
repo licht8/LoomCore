@@ -9,6 +9,7 @@ import pytest
 from src.config import settings
 from src.llm import budget
 from src.llm import client as client_module
+from src.llm import security as llm_security
 from src.llm.client import OpenAICompatClient
 from src.llm.config import LlmConfig
 from src.llm.exceptions import (
@@ -25,6 +26,14 @@ def _no_usage_db(monkeypatch):
     recorder = AsyncMock()
     monkeypatch.setattr(client_module, "record_llm_usage", recorder)
     return recorder
+
+
+@pytest.fixture(autouse=True)
+def _no_live_dns(monkeypatch):
+    """Never perform real DNS: every host resolves to a public address."""
+    monkeypatch.setattr(
+        llm_security, "resolve_host", lambda host: ["93.184.216.34"]
+    )
 
 
 class _FakeResponse:
@@ -273,6 +282,41 @@ async def test_invalid_json_body_raises_llm_error(monkeypatch):
     assert fake.calls == 1
 
 
+class _NonObjectResponse:
+    def __init__(self, payload):
+        self.status_code = 200
+        self.content = b"x"
+        self.text = "x"
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [[], "x", 123, None])
+async def test_non_object_json_body_raises_llm_error(monkeypatch, payload):
+    _install(monkeypatch, [_NonObjectResponse(payload)])
+
+    with pytest.raises(LlmError, match="non-object JSON body"):
+        await OpenAICompatClient(config=_config(max_retries=0)).chat_completion(
+            [{"role": "user", "content": "hi"}]
+        )
+
+
+@pytest.mark.asyncio
+async def test_private_provider_url_is_rejected(monkeypatch):
+    _install(monkeypatch, [_FakeResponse()])
+
+    with pytest.raises(LlmError):
+        await OpenAICompatClient(
+            config=_config(base_url="http://10.0.0.5/v1")
+        ).chat_completion([{"role": "user", "content": "hi"}])
+
+
 @pytest.mark.asyncio
 async def test_daily_budget_blocks_and_logs_security_event(monkeypatch, caplog):
     monkeypatch.setattr(settings, "llm_daily_call_limit", 1)
@@ -427,3 +471,32 @@ async def test_terminal_failure_records_error(monkeypatch, _no_usage_db):
     assert kwargs["error"] == "LLM API error 400"
     assert kwargs["latency_ms"] is None
     assert kwargs["attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_request_path_does_not_resolve_dns(monkeypatch):
+    hosts: list[str] = []
+
+    def counting_resolve(host):
+        hosts.append(host)
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(llm_security, "resolve_host", counting_resolve)
+    fake = _install(monkeypatch, [_FakeResponse(), _FakeResponse()])
+    client = OpenAICompatClient(config=_config())
+
+    await client.chat_completion([{"role": "user", "content": "hi"}])
+    await client.chat_completion([{"role": "user", "content": "hi"}])
+
+    assert fake.calls == 2
+    assert hosts == []
+
+
+@pytest.mark.asyncio
+async def test_request_path_still_rejects_literal_internal_url(monkeypatch):
+    _install(monkeypatch, [_FakeResponse()])
+
+    with pytest.raises(LlmError):
+        await OpenAICompatClient(
+            config=_config(base_url="http://10.0.0.5/v1")
+        ).chat_completion([{"role": "user", "content": "hi"}])

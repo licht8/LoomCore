@@ -8,6 +8,7 @@ from src.plugins import plugin_manager
 logger = logging.getLogger("loomcore.plugins.health")
 
 HEALTHCHECK_INTERVAL_SECONDS = 30
+RESTART_TIMEOUT_SECONDS = 60
 
 
 async def healthcheck_loop() -> None:
@@ -26,10 +27,19 @@ async def healthcheck_loop() -> None:
                 if not plugin_manager.is_healthy(name):
                     logger.warning(f"Plugin '{name}' is unhealthy — restarting")
                     try:
-                        if await plugin_manager.restart_plugin(name):
+                        restarted = await asyncio.wait_for(
+                            plugin_manager.restart_plugin(name),
+                            timeout=RESTART_TIMEOUT_SECONDS,
+                        )
+                        if restarted:
                             logger.info(f"Plugin '{name}' restarted successfully")
                         else:
                             logger.warning(f"Plugin '{name}' could not be restarted")
+                    except TimeoutError:
+                        logger.error(
+                            f"Restart of '{name}' timed out after "
+                            f"{RESTART_TIMEOUT_SECONDS}s"
+                        )
                     except Exception as exc:
                         logger.error(f"Failed to restart '{name}': {exc}")
             except Exception as exc:

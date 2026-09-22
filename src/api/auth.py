@@ -1,5 +1,6 @@
 """Admin authentication routes."""
 
+import asyncio
 import secrets
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -22,6 +23,7 @@ from src.core.security import (
     admin_jwt_mode_enabled,
     auth_mode,
     is_https,
+    is_valid_admin_credential,
     require_admin_token,
 )
 from src.core.security_log import log_security_event
@@ -66,7 +68,8 @@ async def login(request: Request):
         str(data.get("username") or "").encode("utf-8"),
         (settings.admin_username or "").encode("utf-8"),
     )
-    password_ok = verify_password(
+    password_ok = await asyncio.to_thread(
+        verify_password,
         str(data.get("password", "")),
         settings.admin_password_hash or _DUMMY_PASSWORD_HASH,
     )
@@ -123,10 +126,10 @@ async def auth_session(request: Request, authorization: str | None = Header(defa
     credential-guessing oracle.
     """
     cookie = request.cookies.get(SESSION_COOKIE)
-    if cookie and decode_jwt_token(cookie, settings.session_secret):
+    if is_valid_admin_credential(cookie):
         return {"authenticated": True}
 
-    if authorization and authorization.startswith("Bearer "):
+    if authorization and authorization.lower().startswith("bearer "):
         require_admin_token(extract_admin_token(request, authorization), request)
         return {"authenticated": True}
 

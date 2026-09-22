@@ -30,9 +30,14 @@ def extract_admin_token(
     leaks through access logs, browser history and Referer headers.
     """
     cookie = request.cookies.get(SESSION_COOKIE)
+    raw = authorization
+    if not isinstance(raw, str):
+        # ``None`` (caller omitted it) or FastAPI's ``Header`` default object on a
+        # direct function call: fall back to the actual request header.
+        raw = request.headers.get("authorization")
     header = None
-    if authorization and authorization.startswith("Bearer "):
-        header = authorization.removeprefix("Bearer ").strip()
+    if raw and raw.lower().startswith("bearer "):
+        header = raw.split(" ", 1)[1].strip()
     for candidate in (cookie, header):
         if candidate and is_valid_admin_credential(candidate):
             return candidate

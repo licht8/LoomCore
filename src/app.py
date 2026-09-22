@@ -61,9 +61,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Discover plugins and run the background healthcheck for the app lifetime."""
     logger.info("LoomCore starting up")
 
-    check_security_posture()
+    await asyncio.to_thread(check_security_posture)
 
-    discovered = plugin_manager.discover_plugins(settings.plugins_dir)
+    discovered = await asyncio.to_thread(
+        plugin_manager.discover_plugins, settings.plugins_dir
+    )
     logger.info("Plugins loaded: %s", ", ".join(discovered) or "none")
 
     # Prime the tool cache so plugin tool counts and schemas are available

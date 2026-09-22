@@ -69,6 +69,18 @@ def test_extract_admin_token_ignores_non_bearer_header():
     assert extract_admin_token(request, None) is None
 
 
+def test_extract_admin_token_reads_header_from_request_when_arg_omitted():
+    # Callers that do not pass the explicit argument must still see the header.
+    request = _request(headers={"authorization": "Bearer from-header"})
+    assert extract_admin_token(request) == "from-header"
+
+
+def test_extract_admin_token_bearer_is_case_insensitive():
+    request = _request()
+    assert extract_admin_token(request, "bearer lower") == "lower"
+    assert extract_admin_token(request, "BEARER upper") == "upper"
+
+
 def test_chat_key_func_uses_credential_not_session_id(monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "token")
     monkeypatch.setattr(settings, "admin_token", "token-a")

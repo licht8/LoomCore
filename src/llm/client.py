@@ -16,6 +16,7 @@ from src.llm.exceptions import (
     LlmNotConfigured,
     LlmTimeoutError,
 )
+from src.llm.security import validate_provider_url
 from src.llm.usage import record_llm_usage
 
 logger = logging.getLogger("loomcore.llm")
@@ -74,7 +75,7 @@ class OpenAICompatClient:
     def _get_client(self) -> httpx.AsyncClient:
         """Return the shared HTTP client, creating it on first use."""
         if self._client is None:
-            self._client = httpx.AsyncClient()
+            self._client = httpx.AsyncClient(follow_redirects=False)
         return self._client
 
     async def aclose(self) -> None:
@@ -109,6 +110,13 @@ class OpenAICompatClient:
         config = self._resolve_config()
         if not config.configured:
             raise LlmNotConfigured(NOT_CONFIGURED_MESSAGE)
+
+        # Literal/hostname guard only: no DNS on the request path. The resolving
+        # check runs when a provider is saved or probed (see the settings API).
+        try:
+            validate_provider_url(config.base_url, resolve=False)
+        except ValueError as exc:
+            raise LlmError(str(exc)) from exc
 
         active_model = model or config.model
         payload: dict = {
@@ -171,6 +179,8 @@ class OpenAICompatClient:
                     data = response.json()
                 except ValueError as exc:
                     raise LlmError(f"LLM returned invalid JSON: {exc}") from exc
+                if not isinstance(data, dict):
+                    raise LlmError("LLM returned a non-object JSON body")
                 usage = data.get("usage") or {}
                 completion_tokens = usage.get("completion_tokens")
                 log_stage(

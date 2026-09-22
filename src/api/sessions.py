@@ -1,8 +1,9 @@
 """REST routes for reading and clearing a chat session's stored history."""
 
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Header, Query, Request
+from fastapi import APIRouter, Header, Path, Query, Request
 
 from src.api.deps import require_admin_token_from_request
 from src.db.database import async_session_factory
@@ -11,6 +12,10 @@ from src.db.session import clear_session_history, get_session_history
 logger = logging.getLogger("loomcore.api.sessions")
 
 router = APIRouter(prefix="/api", tags=["sessions"])
+
+_SESSION_ID = Annotated[
+    str, Path(max_length=64, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+]
 
 
 def _serialize(message) -> dict:
@@ -27,7 +32,7 @@ def _serialize(message) -> dict:
 
 @router.get("/sessions/{session_id}/messages")
 async def get_messages(
-    session_id: str,
+    session_id: _SESSION_ID,
     request: Request,
     limit: int = Query(default=200, ge=1, le=1000),
     authorization: str | None = Header(default=None),
@@ -41,7 +46,7 @@ async def get_messages(
 
 @router.delete("/sessions/{session_id}/messages")
 async def delete_messages(
-    session_id: str,
+    session_id: _SESSION_ID,
     request: Request,
     authorization: str | None = Header(default=None),
 ):

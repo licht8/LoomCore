@@ -300,12 +300,46 @@ async def test_session_requires_cookie(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_session_accepts_valid_cookie(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "jwt")
+    monkeypatch.setattr(settings, "admin_password_hash", "hash")
+    monkeypatch.setattr(settings, "admin_totp_secret", "totp")
     monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
     token = create_jwt_token({"username": "admin"}, LONG_SECRET)
 
     async with _client() as client:
         client.cookies.set(SESSION_COOKIE, token)
         response = await client.get("/api/auth/session")
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True}
+
+
+@pytest.mark.asyncio
+async def test_session_rejects_cookie_when_jwt_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+    monkeypatch.setattr(settings, "admin_password_hash", "hash")
+    monkeypatch.setattr(settings, "admin_totp_secret", "totp")
+    monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
+    token = create_jwt_token({"username": "admin"}, LONG_SECRET)
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, token)
+        response = await client.get("/api/auth/session")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_session_accepts_case_insensitive_bearer(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+
+    async with _client() as client:
+        response = await client.get(
+            "/api/auth/session",
+            headers={"Authorization": "bearer static-token"},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"authenticated": True}

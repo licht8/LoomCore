@@ -139,6 +139,7 @@ async def test_ensure_session_recovers_from_insert_race():
             _FakeResult(scalar=existing),
         ],
         fail_commit_on=1,
+        commit_error=IntegrityError("INSERT", {}, Exception("duplicate key")),
     )
 
     session_id = await db_session.ensure_session(db, "sess-3")
@@ -156,12 +157,29 @@ async def test_ensure_session_reraises_when_recovery_finds_no_row():
             _FakeResult(scalar=None),
         ],
         fail_commit_on=1,
+        commit_error=IntegrityError("INSERT", {}, Exception("duplicate key")),
     )
 
-    with pytest.raises(RuntimeError, match="commit failed"):
+    with pytest.raises(IntegrityError):
         await db_session.ensure_session(db, "sess-4")
 
     assert db.rolled_back == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_propagates_non_integrity_error():
+    db = _FakeSession(
+        results=[
+            _FakeResult(scalar=SimpleNamespace(id="u1")),
+            _FakeResult(scalar=None),
+        ],
+        fail_commit_on=1,
+    )
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await db_session.ensure_session(db, "sess-5")
+
+    assert db.rolled_back == 0
 
 
 @pytest.mark.asyncio

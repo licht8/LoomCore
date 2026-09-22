@@ -9,6 +9,7 @@ from src.api import plugins as plugins_api
 from src.config import settings
 from src.core.core_tools import CORE_TOOLS_SCHEMA
 from src.main import app
+from src.plugins.errors import PluginPolicyDenied
 
 
 def _client() -> AsyncClient:
@@ -123,6 +124,51 @@ async def test_plugin_lifecycle_unknown_plugin_404(monkeypatch):
         response = await client.post("/api/plugins/LoomOps/enable", headers=_AUTH)
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_plugin_enable_policy_denial_403(monkeypatch):
+    _auth(monkeypatch)
+    monkeypatch.setattr(plugins_api.plugin_manager, "plugin_names", lambda: ["LoomOps"])
+
+    async def denied(name):
+        raise PluginPolicyDenied(name)
+
+    monkeypatch.setattr(plugins_api.plugin_manager, "enable_plugin", denied)
+
+    async with _client() as client:
+        response = await client.post("/api/plugins/LoomOps/enable", headers=_AUTH)
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Plugin 'LoomOps' is not permitted by policy"
+    }
+
+
+@pytest.mark.asyncio
+async def test_plugin_enable_start_failure_502(monkeypatch):
+    _auth(monkeypatch)
+    _patch_lifecycle(monkeypatch, ok=False)
+
+    async with _client() as client:
+        response = await client.post("/api/plugins/LoomOps/enable", headers=_AUTH)
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Failed to start 'LoomOps'"}
+
+
+@pytest.mark.asyncio
+async def test_plugin_reload_failure_409(monkeypatch):
+    _auth(monkeypatch)
+    _patch_lifecycle(monkeypatch, ok=False)
+
+    async with _client() as client:
+        response = await client.post("/api/plugins/LoomOps/reload", headers=_AUTH)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Plugin 'LoomOps' is disabled or failed to reload"
+    }
 
 
 @pytest.mark.asyncio

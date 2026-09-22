@@ -10,6 +10,7 @@ import time
 import pytest
 
 from src.core.contracts import ToolContractError
+from src.plugins.errors import PluginPolicyDenied
 from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
 
 
@@ -442,7 +443,7 @@ async def test_restart_success(monkeypatch):
 
     assert await manager._restart_plugin("demo") is True
     assert plugin.state == PluginState.IDLE
-    assert plugin.restart_attempt == 1
+    assert plugin.restart_attempt == 0
     assert rebuilt == ["demo"]
 
 
@@ -572,6 +573,56 @@ def test_read_response_skips_mismatched_ids():
     response = manager._read_response("demo", "want")
 
     assert response == {"id": "want", "result": {"ok": True}}
+
+
+def test_read_response_skips_non_json_lines():
+    manager = PluginManager()
+    proc = _FakeProc()
+    proc.stdout = io.StringIO(
+        "plugin starting up\n"
+        + json.dumps([1, 2, 3])
+        + "\n"
+        + json.dumps({"id": "want", "result": {"ok": True}})
+        + "\n"
+    )
+    _add_plugin(manager, proc=proc)
+
+    response = manager._read_response("demo", "want")
+
+    assert response == {"id": "want", "result": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_get_tools_null_result_is_unavailable(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager)
+
+    async def fake_exchange(plugin_name, request, call_timeout):
+        return {"result": None}
+
+    monkeypatch.setattr(manager, "_exchange", fake_exchange)
+
+    with pytest.raises(RuntimeError, match="returned no result"):
+        await manager.get_tools("demo")
+
+
+@pytest.mark.asyncio
+async def test_restart_plugin_holds_the_plugin_lock(monkeypatch):
+    manager = PluginManager()
+    plugin = _add_plugin(manager, state=PluginState.STOPPED)
+    seen: dict[str, bool] = {}
+
+    monkeypatch.setattr(manager, "_do_register_inplace", lambda *a, **k: None)
+
+    async def capture(name):
+        seen["locked"] = plugin.lock._lock.locked()
+
+    monkeypatch.setattr(manager, "_initialize_plugin", capture)
+    monkeypatch.setattr(manager, "get_tools", _true)
+    monkeypatch.setattr(manager, "_rebuild_tool_cache", lambda *a, **k: None)
+
+    assert await manager._restart_plugin("demo") is True
+    assert seen["locked"] is True
 
 
 @pytest.mark.asyncio
@@ -1238,7 +1289,8 @@ async def test_enable_refuses_plugin_not_in_allowlist(monkeypatch):
         manager, "_do_register_inplace", lambda *a, **k: pytest.fail("no spawn")
     )
 
-    assert await manager.enable_plugin("demo") is False
+    with pytest.raises(PluginPolicyDenied):
+        await manager.enable_plugin("demo")
     assert plugin.enabled is False
     assert plugin.state == PluginState.STOPPED
 

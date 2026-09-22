@@ -133,3 +133,29 @@ def test_log_security_event_redacts_sensitive_fields(caplog):
     assert "Bearer abc" not in message
     assert "***" in message
     assert "1.2.3.4" in message
+
+
+def test_log_security_event_sanitizes_field_keys(caplog):
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        log_security_event("demo_event", **{"bad\nkey": "value"})
+
+    records = [r for r in caplog.records if r.name == "loomcore.security"]
+    assert records, "expected a loomcore.security record"
+    message = records[0].getMessage()
+    assert "bad\\nkey='value'" in message
+    assert "\n" not in message
+
+
+def test_log_security_event_redacts_nested_secrets(caplog):
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        log_security_event(
+            "demo_event",
+            payload={"token": "nested-token", "client": "1.2.3.4"},
+        )
+
+    records = [r for r in caplog.records if r.name == "loomcore.security"]
+    assert records, "expected a loomcore.security record"
+    message = records[0].getMessage()
+    assert "nested-token" not in message
+    assert "***" in message
+    assert "1.2.3.4" in message

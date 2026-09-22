@@ -4,9 +4,11 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import struct
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -79,6 +81,21 @@ def test_verify_totp_accepts_neighbouring_window():
 def test_verify_totp_rejects_bad_code_and_secret():
     assert verify_totp("000000", TOTP_SECRET) is False
     assert verify_totp("abc", "not-base32-!!!") is False
+
+
+def test_verify_totp_rejects_empty_secret():
+    counter = int(time.time()) // 30
+    empty_key_code = _totp_code("", counter)
+    assert verify_totp(empty_key_code, "") is False
+    assert verify_totp(empty_key_code, "   ") is False
+
+
+def test_verify_totp_requires_six_digit_code():
+    counter = int(time.time()) // 30
+    code = _totp_code(TOTP_SECRET, counter)
+    assert verify_totp(code[:5], TOTP_SECRET) is False
+    assert verify_totp(code + "0", TOTP_SECRET) is False
+    assert verify_totp("abcdef", TOTP_SECRET) is False
 
 
 # === JWT ===
@@ -250,3 +267,90 @@ def test_concurrent_revocations_are_not_lost(monkeypatch, tmp_path):
     persisted = json.loads(store.read_text(encoding="utf-8"))
     assert set(ids) <= set(persisted)
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+# === retention, empty store and file locking ===
+
+def test_empty_revocation_store_reads_as_empty(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    store.write_text("", encoding="utf-8")
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+    monkeypatch.setattr(auth, "_revoked", {})
+    monkeypatch.setattr(auth, "_revoked_loaded", False)
+
+    token = create_jwt_token({"username": "admin", "jti": "x"}, SECRET)
+    assert decode_jwt_token(token, SECRET) is not None
+    # A blank file is a valid (empty) store, so the signature is latched.
+    assert auth._revoked_loaded is True
+
+
+def test_revocation_pruning_drops_old_entries_keeps_fresh(monkeypatch, tmp_path):
+    store = tmp_path / "revoked.json"
+    monkeypatch.setattr(settings, "loomcore_revoked_file", str(store))
+    now = time.time()
+    monkeypatch.setattr(
+        auth,
+        "_revoked",
+        {
+            "old": now - auth._REVOKE_RETENTION_SECONDS - 1,
+            "fresh": now,
+        },
+    )
+
+    auth._save_revoked()
+
+    persisted = json.loads(store.read_text(encoding="utf-8"))
+    assert "fresh" in persisted
+    assert "old" not in persisted
+
+
+def test_file_lock_is_noop_without_fcntl(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "fcntl", None)
+    store = tmp_path / "revoked.json"
+
+    ran = False
+    with auth._file_lock(store):
+        ran = True
+
+    assert ran is True
+    assert not (tmp_path / "revoked.json.lock").exists()
+
+
+def test_file_lock_degrades_when_busy(monkeypatch, tmp_path, caplog):
+    class _BusyFcntl:
+        LOCK_NB = 1
+        LOCK_UN = 2
+
+        def flock(self, descriptor, operation):
+            if operation == self.LOCK_NB:
+                raise OSError("lock is held elsewhere")
+
+    monkeypatch.setattr(auth, "fcntl", _BusyFcntl())
+    store = tmp_path / "revoked.json"
+
+    ran = False
+    with (
+        caplog.at_level(logging.WARNING, logger="loomcore.auth"),
+        auth._file_lock(store),
+    ):
+        ran = True
+
+    assert ran is True
+    assert any("lock is busy" in message for message in caplog.messages)
+
+
+def test_file_lock_tolerates_unnamable_store(monkeypatch):
+    class _FakeFcntl:
+        LOCK_NB = 1
+        LOCK_UN = 2
+
+        def flock(self, descriptor, operation):
+            return None
+
+    monkeypatch.setattr(auth, "fcntl", _FakeFcntl())
+
+    ran = False
+    with auth._file_lock(Path(".")):
+        ran = True
+
+    assert ran is True

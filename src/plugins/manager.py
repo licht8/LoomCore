@@ -22,6 +22,7 @@ from src.core.contracts import validate_tool_args, validate_tool_result
 from src.core.security_log import log_security_event
 from src.core.timing import log_stage
 from src.core.version import CORE_VERSION
+from src.plugins.errors import PluginPolicyDenied
 from src.plugins.manifest import (
     ManifestError,
     check_compatibility,
@@ -380,7 +381,7 @@ class PluginManager:
             if not plugin.enabled:
                 return True
 
-            self._kill_and_stop(plugin_name)
+            await asyncio.to_thread(self._kill_and_stop, plugin_name)
             plugin.enabled = False
             self._rebuild_tool_cache(plugin_name, [])
             self._disabled.add(plugin_name)
@@ -411,7 +412,7 @@ class PluginManager:
                     f"Plugin '{plugin_name}' is not in LOOMCORE_PLUGINS_ALLOWED; "
                     f"refusing to enable"
                 )
-                return False
+                raise PluginPolicyDenied(plugin_name)
 
             self._disabled.discard(plugin_name)
             plugin.enabled = True
@@ -426,7 +427,7 @@ class PluginManager:
                 plugin.state = PluginState.IDLE
             except Exception as exc:
                 logger.error(f"Failed to enable plugin '{plugin_name}': {exc}")
-                self._kill_and_stop(plugin_name)
+                await asyncio.to_thread(self._kill_and_stop, plugin_name)
                 plugin.enabled = False
                 plugin.state = PluginState.STOPPED
                 self._disabled.add(plugin_name)
@@ -449,7 +450,7 @@ class PluginManager:
                 logger.warning(f"Plugin '{plugin_name}' is disabled; cannot reload")
                 return False
 
-            self._kill_and_stop(plugin_name)
+            await asyncio.to_thread(self._kill_and_stop, plugin_name)
             plugin.restart_attempt = 0
             try:
                 self._do_register_inplace(
@@ -461,7 +462,7 @@ class PluginManager:
                 plugin.state = PluginState.IDLE
             except Exception as exc:
                 logger.error(f"Failed to reload plugin '{plugin_name}': {exc}")
-                self._kill_and_stop(plugin_name)
+                await asyncio.to_thread(self._kill_and_stop, plugin_name)
                 plugin.state = PluginState.STOPPED
                 return False
 
@@ -515,70 +516,79 @@ class PluginManager:
             logger.warning(f"Plugin '{plugin_name}' is disabled; not restarting")
             return False
 
-        # Check the restart limit
-        if plugin.restart_attempt >= plugin.max_restarts:
-            logger.error(
-                f"Plugin '{plugin_name}' exhausted restart attempts "
-                f"({plugin.restart_attempt}/{plugin.max_restarts})"
+        async with plugin.lock:
+            # Check the restart limit
+            if plugin.restart_attempt >= plugin.max_restarts:
+                logger.error(
+                    f"Plugin '{plugin_name}' exhausted restart attempts "
+                    f"({plugin.restart_attempt}/{plugin.max_restarts})"
+                )
+                plugin.state = PluginState.STOPPED
+                return False
+
+            plugin.restart_attempt += 1
+            attempt = plugin.restart_attempt
+            delay = min(
+                plugin.restart_delay_base * (2 ** (attempt - 1)),
+                plugin.restart_delay_max,
             )
-            plugin.state = PluginState.STOPPED
-            return False
 
-        plugin.restart_attempt += 1
-        attempt = plugin.restart_attempt
-        delay = min(
-            plugin.restart_delay_base * (2 ** (attempt - 1)), plugin.restart_delay_max
-        )
+            logger.info(
+                f"Restarting plugin '{plugin_name}' "
+                f"({attempt}/{plugin.max_restarts}), delay {delay:.1f}s"
+            )
 
-        logger.info(
-            f"Restarting plugin '{plugin_name}' ({attempt}/{plugin.max_restarts}), "
-            f"delay {delay:.1f}s"
-        )
+            # Wait before restarting (non-blocking)
+            await asyncio.sleep(delay)
 
-        # Wait before restarting (non-blocking)
-        await asyncio.sleep(delay)
+            started = monotonic()
+            try:
+                # Kill the old process if it is still alive
+                old_proc = plugin.proc
+                if old_proc and old_proc.poll() is None:
+                    await asyncio.to_thread(self._terminate_process, old_proc)
 
-        started = monotonic()
+                # Launch the subprocess again in place
+                self._do_register_inplace(
+                    plugin_name, plugin.command, plugin.working_dir
+                )
+
+                # Wait for initialize
+                await self._initialize_plugin(plugin_name)
+
+                # Fetch tools via tools/list
+                tools = await self.get_tools(plugin_name)
+
+                # Refresh the tool cache
+                self._rebuild_tool_cache(plugin_name, tools)
+
+                plugin.state = PluginState.IDLE
+                plugin.restart_attempt = 0
+                logger.info(f"Plugin '{plugin_name}' restarted successfully")
+                return True
+
+            except Exception as exc:
+                logger.error(f"Failed to restart plugin '{plugin_name}': {exc}")
+                await asyncio.to_thread(self._kill_and_stop, plugin_name)
+                plugin.state = PluginState.STOPPED
+                return False
+            finally:
+                log_stage(
+                    "plugin_restart",
+                    monotonic() - started,
+                    plugin=plugin_name,
+                    attempt=attempt,
+                    delay=delay,
+                )
+
+    def _terminate_process(self, proc: subprocess.Popen) -> None:
+        """Terminate a subprocess, escalating to kill; blocks, so run in a thread."""
+        proc.terminate()
         try:
-            # Kill the old process if it is still alive
-            old_proc = plugin.proc
-            if old_proc and old_proc.poll() is None:
-                old_proc.terminate()
-                try:
-                    old_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    old_proc.kill()
-                    old_proc.wait()
-
-            # Launch the subprocess again in place
-            self._do_register_inplace(plugin_name, plugin.command, plugin.working_dir)
-
-            # Wait for initialize
-            await self._initialize_plugin(plugin_name)
-
-            # Fetch tools via tools/list
-            tools = await self.get_tools(plugin_name)
-
-            # Refresh the tool cache
-            self._rebuild_tool_cache(plugin_name, tools)
-
-            plugin.state = PluginState.IDLE
-            logger.info(f"Plugin '{plugin_name}' restarted successfully")
-            return True
-
-        except Exception as exc:
-            logger.error(f"Failed to restart plugin '{plugin_name}': {exc}")
-            self._kill_and_stop(plugin_name)
-            plugin.state = PluginState.STOPPED
-            return False
-        finally:
-            log_stage(
-                "plugin_restart",
-                monotonic() - started,
-                plugin=plugin_name,
-                attempt=attempt,
-                delay=delay,
-            )
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
     def _do_register_inplace(self, name: str, command: list[str], working_dir: str | None):
         """Launch the subprocess again, keeping the same ManagedPlugin record."""
@@ -753,7 +763,7 @@ class PluginManager:
                 logger.warning(
                     f"{call_timeout:.0f}s timeout for plugin '{plugin_name}' — killing process"
                 )
-                self._kill_and_stop(plugin_name)
+                await asyncio.to_thread(self._kill_and_stop, plugin_name)
                 raise
             except asyncio.CancelledError:
                 # Only a request that actually reached the stream can desync it.
@@ -765,7 +775,7 @@ class PluginManager:
                         f"Exchange with plugin '{plugin_name}' cancelled mid-call "
                         "— killing process"
                     )
-                    self._kill_and_stop(plugin_name)
+                    await asyncio.to_thread(self._kill_and_stop, plugin_name)
                 raise
             finally:
                 if plugin.state == PluginState.BUSY:
@@ -846,7 +856,18 @@ class PluginManager:
                 plugin.state = PluginState.STOPPED
                 raise RuntimeError(f"Plugin '{plugin_name}' terminated")
 
-            response = json.loads(line.strip())
+            try:
+                response = json.loads(line.strip())
+            except json.JSONDecodeError:
+                # A plugin may print non-JSON log lines to stdout; skip them
+                # instead of letting the reader thread die on a parse error.
+                logger.debug(
+                    "Plugin '%s' emitted a non-JSON stdout line; skipping",
+                    plugin_name,
+                )
+                continue
+            if not isinstance(response, dict):
+                continue
             if "id" not in response:
                 continue
             if response["id"] != request_id:
@@ -882,7 +903,9 @@ class PluginManager:
         try:
             request = {"jsonrpc": "2.0", "method": "tools/list"}
             response = await self._exchange(plugin_name, request, call_timeout=30)
-            result = response.get("result", {})
+            result = response.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError(f"Plugin '{plugin_name}' returned no result")
             return result.get("tools", [])
         finally:
             log_stage("plugin_get_tools", monotonic() - started, plugin=plugin_name)

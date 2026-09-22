@@ -60,10 +60,25 @@ from src.interfaces.tool_events import (
     tool_error_payload as _tool_error_payload,
 )
 from src.llm.client import LlmError
+from src.llm.exceptions import LlmTimeoutError
 from src.llm.router import AIRouter
 from src.plugins import plugin_manager
 
 logger = logging.getLogger("loomcore.websocket")
+
+
+def _safe_error_message(exc: Exception) -> str:
+    """Map an internal exception to a category-only client message.
+
+    Raw exception text can leak provider URLs, keys or internal paths, so the
+    client only ever sees one of these categories; the real exception is logged
+    server-side by the caller.
+    """
+    if isinstance(exc, (LlmTimeoutError, TimeoutError)):
+        return "The language model timed out."
+    if isinstance(exc, LlmError):
+        return "The language model request failed."
+    return "Internal error."
 
 # Shared AIRouter instance using the shared plugin_manager
 airouter_with_plugins = AIRouter(plugin_manager=plugin_manager)
@@ -89,6 +104,8 @@ def _allow_ws_message(identity: str) -> bool:
         window.popleft()
     if len(window) >= WS_MESSAGE_LIMIT_PER_MINUTE:
         return False
+    # An empty window just means every prior timestamp aged out; the key is
+    # already present, so the new message is appended to it below.
     window.append(now)
     return True
 
@@ -163,17 +180,16 @@ async def _run_plan(
         risk = step.get("risk")
         if not risk or risk == "safe":
             return
-        with contextlib.suppress(Exception):
-            await record_mutation_isolated(
-                tool=step["tool"],
-                arguments=step.get("args"),
-                risk=risk,
-                status=status,
-                session_id=session_id,
-                plan_id=plan.get("plan_id"),
-                revision=plan.get("revision"),
-                error=error,
-            )
+        await record_mutation_isolated(
+            tool=step["tool"],
+            arguments=step.get("args"),
+            risk=risk,
+            status=status,
+            session_id=session_id,
+            plan_id=plan.get("plan_id"),
+            revision=plan.get("revision"),
+            error=error,
+        )
 
     async def emit(event: dict) -> None:
         if event.get("type") != "plan_step":
@@ -259,7 +275,7 @@ async def _run_plan(
         final_plan = plan
         observations = []
         with contextlib.suppress(Exception):
-            await send(error_payload(str(exc)))
+            await send(error_payload(_safe_error_message(exc)))
     finally:
         log_stage(
             "execute_plan",
@@ -443,11 +459,11 @@ async def _process_user_message(
             )
         except asyncio.CancelledError:
             raise
-        except LlmError as exc:
-            await send(error_payload(str(exc)))
-            return
         except Exception as exc:
-            await send(error_payload(f"{type(exc).__name__}: {exc}"))
+            logger.error(
+                "LLM route failed for session %s: %s", session_id, exc
+            )
+            await send(error_payload(_safe_error_message(exc)))
             return
         finally:
             log_stage("route_call", time.monotonic() - route_started)
@@ -768,13 +784,13 @@ async def websocket_endpoint(
                 logger.error(f"❌ Error handling client message: {exc}")
                 logger.error(traceback.format_exc())
                 with contextlib.suppress(Exception):
-                    await send(error_payload(str(exc)))
+                    await send(error_payload(_safe_error_message(exc)))
 
     except WebSocketDisconnect:
         logger.info(f"🔌 WebSocket disconnected for session {session_id}")
     except Exception as exc:
         with contextlib.suppress(Exception):
-            await send(error_payload(str(exc)))
+            await send(error_payload(_safe_error_message(exc)))
         logger.error(f"❌ Fatal WebSocket error for session {session_id}: {exc}")
         logger.error(traceback.format_exc())
     finally:

@@ -4,6 +4,7 @@ import pytest
 
 from src.core import core_tools
 from src.core.contracts import ToolContractError
+from src.plugins.errors import PluginPolicyDenied
 
 
 class _FakeManager:
@@ -207,6 +208,18 @@ async def test_core_lifecycle_failure_raises(monkeypatch, fake_manager):
 
     monkeypatch.setattr(fake_manager, "enable_plugin", boom)
     with pytest.raises(RuntimeError):
+        await core_tools.dispatch_core_tool(
+            "core_enable_plugin", {"plugin": "LoomOps"}, approved=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_core_enable_plugin_policy_denial_raises(monkeypatch, fake_manager):
+    async def denied(name):
+        raise PluginPolicyDenied(name)
+
+    monkeypatch.setattr(fake_manager, "enable_plugin", denied)
+    with pytest.raises(RuntimeError, match="not permitted by policy"):
         await core_tools.dispatch_core_tool(
             "core_enable_plugin", {"plugin": "LoomOps"}, approved=True
         )
