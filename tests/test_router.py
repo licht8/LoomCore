@@ -973,6 +973,23 @@ def test_catalog_truncates_long_descriptions():
     assert "d" * 160 in catalog
 
 
+def test_reply_text_stream_decodes_surrogate_pairs():
+    text = "a😀b"
+    raw = json.dumps({"text": text})
+    assert "\\ud83d\\ude00" in raw
+    stream = _ReplyTextStream()
+    fragments = []
+    for index in range(1, len(raw) + 1):
+        fragment = stream.feed(REPLY_TOOL, raw[:index])
+        if fragment:
+            fragments.append(fragment)
+
+    decoded = "".join(fragments)
+    assert decoded == text
+    # No lone surrogate may leak: it would fail UTF-8 encoding on send.
+    decoded.encode("utf-8")
+
+
 def test_reply_text_stream_ignores_agent_plan():
     stream = _ReplyTextStream()
     payload = json.dumps({"goal": "x", "steps": []})

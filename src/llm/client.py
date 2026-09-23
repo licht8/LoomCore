@@ -440,16 +440,18 @@ class OpenAICompatClient:
         purpose: str = "chat",
         session_id: str | None = None,
         on_content: Callable[[str], Awaitable[None]] | None = None,
-        on_tool_delta: Callable[[str | None, str], Awaitable[None]] | None = None,
+        on_tool_delta: Callable[[str | None, str], Awaitable[bool | None]] | None = None,
     ) -> dict:
         """Stream a Chat Completions request, forwarding incremental deltas.
 
         Emits content fragments via ``on_content`` and per-tool-call
         ``(name_so_far, arguments_so_far)`` via ``on_tool_delta`` as SSE chunks
         arrive, and returns a response shaped like :meth:`chat_completion`
-        (``{"choices": [{"message": {...}}], "usage": {...}}``). Retries only
-        before the first emitted delta: once output has been forwarded a retry
-        would duplicate it, so the error is recorded and raised instead. A
+        (``{"choices": [{"message": {...}}], "usage": {...}}``). ``on_tool_delta``
+        returns truthy when it forwarded user-visible text. Retries only before
+        the first *forwarded* delta: once output has reached the user a retry
+        would duplicate it, so the error is recorded and raised instead (a
+        streamed ``agent_plan`` that never surfaces text can still retry). A
         gateway that ignores ``stream: true`` and returns a single JSON body is
         handled transparently. ``read_timeout`` applies per chunk while
         streaming, so the wall-clock bound rests on ``max_tokens``.
@@ -575,9 +577,9 @@ class OpenAICompatClient:
                         fragment = delta.get("content")
                         if fragment:
                             content_parts.append(fragment)
-                            emitted = True
                             if on_content is not None:
                                 await on_content(fragment)
+                                emitted = True
                         for tool_delta in delta.get("tool_calls") or []:
                             if not isinstance(tool_delta, dict):
                                 continue
@@ -597,12 +599,11 @@ class OpenAICompatClient:
                                 slot["function"]["name"] += function["name"]
                             if function.get("arguments"):
                                 slot["function"]["arguments"] += function["arguments"]
-                            emitted = True
-                            if on_tool_delta is not None:
-                                await on_tool_delta(
-                                    slot["function"]["name"] or None,
-                                    slot["function"]["arguments"],
-                                )
+                            if on_tool_delta is not None and await on_tool_delta(
+                                slot["function"]["name"] or None,
+                                slot["function"]["arguments"],
+                            ):
+                                emitted = True
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc = exc
                 elapsed = time.monotonic() - started

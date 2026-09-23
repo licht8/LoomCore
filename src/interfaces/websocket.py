@@ -158,12 +158,18 @@ async def _run_plan(
     user_text: str,
     plan: dict,
     tracker: dict | None = None,
+    *,
+    message_id: str | None = None,
 ) -> None:
     """Replay an approved (or all-safe) plan, then summarize the outcome.
 
     Each step is mirrored to the UI as a tool card plus a plan_step event, and
     persisted so the cards survive a reload. The plan is the sole dispatch path:
     the executor replays exactly the stored tool and arguments.
+
+    ``message_id`` ties the summary deltas to a bubble opened earlier in the same
+    turn (the routing reply stream); when omitted (approve/re-run paths) a fresh
+    id is allocated.
     """
     if tracker is not None:
         tracker["plan"] = plan
@@ -300,7 +306,7 @@ async def _run_plan(
     uses_llm_summary = _uses_llm_summary(
         final_plan, observations, raw_requested=raw_requested
     )
-    message_id = f"msg_{uuid4().hex}"
+    message_id = message_id or f"msg_{uuid4().hex}"
 
     async def on_delta(fragment: str, *, reset: bool = False) -> None:
         await send(delta_payload(message_id, fragment, reset=reset))
@@ -521,7 +527,9 @@ async def _process_user_message(
         if plan_is_direct(plan):
             if not requires_approval:
                 # One obvious, safe action: just do it, no plan card.
-                await _run_plan(send, session_id, user_text, plan, tracker)
+                await _run_plan(
+                    send, session_id, user_text, plan, tracker, message_id=message_id
+                )
                 return
             # Direct but mutating: ask for a plain-language confirmation.
             goal = plan.get("goal") or "Proceed"
@@ -541,7 +549,9 @@ async def _process_user_message(
             _remember_pending(pending, plan, user_text)
             return
 
-        await _run_plan(send, session_id, user_text, plan, tracker)
+        await _run_plan(
+            send, session_id, user_text, plan, tracker, message_id=message_id
+        )
     finally:
         log_stage(
             "turn_total", time.monotonic() - started, kind=answer_type or "unknown"

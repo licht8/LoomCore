@@ -651,12 +651,16 @@ class AIRouter:
 _REPLY_TEXT_KEY_RE = re.compile(r'"text"\s*:\s*"')
 
 
-def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int]:
+def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int, bool]:
     """Decode a JSON string body from ``start`` (after the opening quote).
 
-    Returns ``(decoded, end_index)``; ``end_index`` is the closing-quote index,
-    or ``len(raw)`` while the string is still open. A trailing partial escape is
-    left undecoded for the next call.
+    Returns ``(decoded, next_pos, done)``. ``next_pos`` is where decoding should
+    resume on the next call: the raw offset of a trailing partial escape, or
+    ``len(raw)`` while the string is still open. ``done`` is True once the
+    closing quote is reached (``next_pos`` is then just past it). A high
+    surrogate is held back until its low counterpart arrives, so astral
+    characters stream as one code point and never leave a lone surrogate that
+    would fail UTF-8 encoding.
     """
     simple = {
         "n": "\n",
@@ -673,7 +677,7 @@ def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int]:
     while i < n:
         ch = raw[i]
         if ch == '"':
-            return "".join(out), i
+            return "".join(out), i + 1, True
         if ch != "\\":
             out.append(ch)
             i += 1
@@ -687,15 +691,45 @@ def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int]:
         elif esc == "u":
             if i + 6 > n:
                 break
+            code = raw[i + 2 : i + 6]
             try:
-                out.append(chr(int(raw[i + 2 : i + 6], 16)))
+                value = int(code, 16)
             except ValueError:
-                out.append("\\u" + raw[i + 2 : i + 6])
-            i += 6
+                out.append("\\u" + code)
+                i += 6
+                continue
+            if 0xD800 <= value <= 0xDBFF:
+                # A high surrogate needs its low counterpart; wait for the next
+                # chunk when the pair is still incomplete.
+                if i + 12 > n:
+                    break
+                if raw[i + 6 : i + 8] != "\\u":
+                    out.append("\ufffd")
+                    i += 6
+                    continue
+                try:
+                    low = int(raw[i + 8 : i + 12], 16)
+                except ValueError:
+                    low = -1
+                if 0xDC00 <= low <= 0xDFFF:
+                    out.append(
+                        chr(0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00))
+                    )
+                    i += 12
+                else:
+                    out.append("\ufffd")
+                    i += 6
+            elif 0xDC00 <= value <= 0xDFFF:
+                # A lone low surrogate cannot be encoded; replace it.
+                out.append("\ufffd")
+                i += 6
+            else:
+                out.append(chr(value))
+                i += 6
         else:
             out.append(esc)
             i += 2
-    return "".join(out), n
+    return "".join(out), i, False
 
 
 class _ReplyTextStream:
@@ -703,41 +737,48 @@ class _ReplyTextStream:
 
     def __init__(self) -> None:
         self._active = False
-        self._emitted = 0
         self._done = False
+        # Raw offset in the accumulated arguments to resume decoding from; None
+        # until the ``text`` key has been seen.
+        self._pos: int | None = None
 
     def reset(self) -> None:
         """Discard state so a re-ask starts from a clean slate."""
         self._active = False
-        self._emitted = 0
         self._done = False
+        self._pos = None
 
     def feed(self, name: str | None, args_so_far: str) -> str:
-        """Return the newly decoded reply text for the accumulated arguments."""
+        """Return the newly decoded reply text for the accumulated arguments.
+
+        Only the suffix appended since the previous call is decoded, so the cost
+        is linear in the reply length rather than quadratic.
+        """
         if name is not None:
             self._active = name == REPLY_TOOL
         if not self._active or self._done:
             return ""
-        match = _REPLY_TEXT_KEY_RE.search(args_so_far)
-        if match is None:
-            return ""
-        decoded, end = _decode_json_string_prefix(args_so_far, match.end())
-        if end < len(args_so_far):
-            self._done = True
-        delta = decoded[self._emitted :]
-        self._emitted = len(decoded)
-        return delta
+        if self._pos is None:
+            match = _REPLY_TEXT_KEY_RE.search(args_so_far)
+            if match is None:
+                return ""
+            self._pos = match.end()
+        decoded, self._pos, done = _decode_json_string_prefix(args_so_far, self._pos)
+        self._done = done
+        return decoded
 
 
 def _make_reply_streamer(
     stream: _ReplyTextStream,
     on_delta: Callable[[str], Awaitable[None]],
-) -> Callable[[str | None, str], Awaitable[None]]:
+) -> Callable[[str | None, str], Awaitable[bool]]:
     """Build the ``on_tool_delta`` callback that forwards reply text."""
 
-    async def _on_tool_delta(name: str | None, args_so_far: str) -> None:
+    async def _on_tool_delta(name: str | None, args_so_far: str) -> bool:
         fragment = stream.feed(name, args_so_far)
         if fragment:
             await on_delta(fragment)
+            return True
+        return False
 
     return _on_tool_delta

@@ -1499,6 +1499,46 @@ async def test_run_plan_streams_summary_deltas(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_plan_reuses_routing_message_id(monkeypatch):
+    _patch_db(monkeypatch)
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "health",
+            "steps": [
+                {"tool": "core_health", "args": {}, "why": "baseline"},
+                {"tool": "wg_interface_status", "args": {}, "why": "interfaces"},
+            ],
+        }
+    )
+
+    async def fake_route(user_text, session_id, **kwargs):
+        on_delta = kwargs.get("on_delta")
+        if on_delta is not None:
+            await on_delta("draft")
+            await on_delta("", reset=True)
+        return {"type": "plan", "plan": plan}
+
+    async def fake_summary(user_text, plan, observations, **kwargs):
+        on_delta = kwargs.get("on_delta")
+        if on_delta is not None:
+            await on_delta("summary text")
+        return "summary text"
+
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", fake_summary)
+
+    await ws_module._process_user_message(send, "sess", "hi")
+
+    deltas = [p for p in sent if p["type"] == "delta"]
+    assert len({p["message_id"] for p in deltas}) == 1
+    response = next(p for p in sent if p["type"] == "response")
+    assert response["message_id"] == deltas[0]["message_id"]
+    assert response["content"] == "summary text"
+
+
+@pytest.mark.asyncio
 async def test_text_reply_streams_and_reconciles(monkeypatch):
     _patch_db(monkeypatch)
     sent, send = _collector()

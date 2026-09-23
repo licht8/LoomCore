@@ -784,15 +784,95 @@ async def test_stream_does_not_retry_after_first_delta(monkeypatch, _no_usage_db
             )
         ],
     )
+    fragments: list[str] = []
+
+    async def on_content(fragment: str) -> None:
+        fragments.append(fragment)
 
     with pytest.raises(LlmError, match="after partial output"):
         await OpenAICompatClient(
             config=_config(max_retries=3)
-        ).stream_chat_completion([{"role": "user", "content": "hi"}])
+        ).stream_chat_completion(
+            [{"role": "user", "content": "hi"}], on_content=on_content
+        )
 
+    assert fragments == ["partial"]
     assert fake.calls == 1
     _no_usage_db.assert_awaited_once()
     assert _no_usage_db.await_args.kwargs["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_when_tool_delta_not_forwarded(monkeypatch):
+    sleeps = _record_sleeps(monkeypatch)
+    fake = _install_stream(
+        monkeypatch,
+        [
+            _RaisingStreamResponse(
+                [
+                    _sse(
+                        {
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": 0,
+                                                "function": {
+                                                    "name": "agent_plan",
+                                                    "arguments": '{"goal"',
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                ],
+                httpx.ReadTimeout("mid-stream"),
+            ),
+            _FakeStreamResponse(
+                [
+                    _sse(
+                        {
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": 0,
+                                                "function": {
+                                                    "name": "agent_plan",
+                                                    "arguments": '{"goal": "x"}',
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ),
+                    "data: [DONE]",
+                ]
+            ),
+        ],
+    )
+
+    async def on_tool_delta(name, args_so_far):
+        return False
+
+    result = await OpenAICompatClient(
+        config=_config(max_retries=1)
+    ).stream_chat_completion(
+        [{"role": "user", "content": "hi"}], on_tool_delta=on_tool_delta
+    )
+
+    assert fake.calls == 2
+    assert sleeps == [1]
+    call = result["choices"][0]["message"]["tool_calls"][0]
+    assert call["function"]["name"] == "agent_plan"
+    assert call["function"]["arguments"] == '{"goal": "x"}'
 
 
 @pytest.mark.asyncio
