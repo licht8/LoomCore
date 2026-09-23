@@ -5,6 +5,14 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Meta-listing fast-path and planner recovery: short tool/plugin listing
+  requests (`show me tools for LoomOps`, `покажи инструменты для LoomCore`) are
+  now answered deterministically without an LLM call, `core_list_tools` accepts
+  an optional `plugin` filter (served from the indexed cache), a `reply` step
+  inside `agent_plan` is answered as text, and a bare known tool name becomes a
+  direct plan (or a specific re-ask) instead of the confused fallback. Added a
+  configurable `LLM_PLANNER_MODEL` and stream the plan goal for action-turn
+  feedback.
 - Streaming replies and token caps: the planner's `reply` text and the plan
   summary now stream to the client as `delta` WebSocket events (reconciled by a
   shared `message_id` on the final `response`), with `LLM_PLANNER_MAX_TOKENS` /

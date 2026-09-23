@@ -34,7 +34,22 @@ _PLUGIN_ARG_SCHEMA = {
     },
     "required": ["plugin"],
 }
+_OPTIONAL_PLUGIN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "plugin": {
+            "type": "string",
+            "description": (
+                "Optional plugin id (e.g. LoomOps) or `core`; omit to list everything."
+            ),
+        }
+    },
+    "required": [],
+}
 _NO_ARGS_SCHEMA = {"type": "object", "properties": {}, "required": []}
+
+# Plugin-id aliases that mean "the core's own meta-tools".
+_CORE_PLUGIN_ALIASES = frozenset({"core", "loomcore", "loom_core"})
 
 
 CORE_TOOLS_SCHEMA: list[dict] = [
@@ -62,8 +77,11 @@ CORE_TOOLS_SCHEMA: list[dict] = [
     },
     {
         "name": "core_list_tools",
-        "description": "List the tools exposed by the core and by enabled plugins.",
-        "inputSchema": _NO_ARGS_SCHEMA,
+        "description": (
+            "List the tools exposed by the core and by enabled plugins. Pass an "
+            "optional plugin id (or `core`) to list only that source."
+        ),
+        "inputSchema": _OPTIONAL_PLUGIN_SCHEMA,
         "risk": "safe",
     },
     {
@@ -131,6 +149,17 @@ def _plugin_name(arguments: dict) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Argument 'plugin' is required")
     return value.strip()
+
+
+def _optional_plugin_name(arguments: dict) -> str:
+    """Return the requested plugin filter, or ``""`` when none was given."""
+    value = (
+        arguments.get("plugin")
+        or arguments.get("plugin_id")
+        or arguments.get("name")
+        or arguments.get("id")
+    )
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _require_plugin(arguments: dict) -> str:
@@ -212,32 +241,58 @@ async def _core_plugin_status(arguments: dict) -> dict:
 
 
 async def _core_list_tools(arguments: dict) -> dict:
+    requested = _optional_plugin_name(arguments)
     core_tools = [
         {"name": tool["name"], "description": tool["description"]}
         for tool in CORE_TOOLS_SCHEMA
     ]
-    lines = [
+    core_line = (
         f"{len(core_tools)} core tools: "
         + ", ".join(tool["name"] for tool in core_tools)
-    ]
+    )
+
+    # The core's own meta-tools: no plugin round trip is needed.
+    if requested and requested.lower() in _CORE_PLUGIN_ALIASES:
+        return _result(core_line, core_tools=core_tools, plugin_tools=[])
+
+    if requested:
+        if requested not in plugin_manager.plugin_names():
+            raise ValueError(f"Plugin '{requested}' is not registered")
+        plugin_names = [requested]
+        lines: list[str] = []
+    else:
+        plugin_names = plugin_manager.plugin_names()
+        lines = [core_line]
+
     plugin_tools: list[dict] = []
-    for name in plugin_manager.plugin_names():
+    for name in plugin_names:
         if not plugin_manager.is_enabled(name):
             lines.append(f"{name} (disabled)")
             continue
         try:
-            tools = await plugin_manager.get_tools(name)
-            if not isinstance(tools, list):
-                raise ValueError(f"plugin '{name}' returned a non-list tool catalog")
+            if plugin_manager.tools_indexed():
+                # Served from the indexed catalog: no JSON-RPC round trip.
+                names = [
+                    tool["name"]
+                    for tool in plugin_manager.get_cached_tools()
+                    if isinstance(tool.get("name"), str)
+                    and plugin_manager.plugin_for_tool(tool["name"]) == name
+                ]
+            else:
+                tools = await plugin_manager.get_tools(name)
+                if not isinstance(tools, list):
+                    raise ValueError(
+                        f"plugin '{name}' returned a non-list tool catalog"
+                    )
+                names = [
+                    tool["name"]
+                    for tool in tools
+                    if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+                ]
         except Exception as exc:  # noqa: BLE001 - best-effort catalog
             logger.warning(f"Cannot list tools of plugin '{name}': {exc}")
             lines.append(f"{name} (unavailable)")
             continue
-        names = [
-            tool["name"]
-            for tool in tools
-            if isinstance(tool, dict) and isinstance(tool.get("name"), str)
-        ]
         plugin_tools.extend(
             {"name": tool_name, "plugin": name} for tool_name in names
         )

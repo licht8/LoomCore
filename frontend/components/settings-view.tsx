@@ -58,6 +58,7 @@ type FormState = {
   base_url: string
   model: string
   summary_model: string
+  planner_model: string
   enable_thinking: boolean
   thinking_template: boolean
   connect_timeout: string
@@ -75,6 +76,7 @@ function toForm(settings: LlmSettings): FormState {
     base_url: settings.base_url,
     model: settings.model,
     summary_model: settings.summary_model,
+    planner_model: settings.planner_model,
     enable_thinking: settings.enable_thinking,
     thinking_template: settings.thinking_template,
     connect_timeout: String(settings.connect_timeout),
@@ -295,6 +297,7 @@ export function SettingsView() {
           base_url: preset?.default_base_url ?? "",
           model: preset?.default_model ?? "",
           summary_model: "",
+          planner_model: "",
         }
       : form
     setDirty(!matchesSaved(next, "", false))
@@ -370,6 +373,7 @@ export function SettingsView() {
       base_url: form.base_url.trim(),
       model: form.model.trim(),
       summary_model: form.summary_model.trim(),
+      planner_model: form.planner_model.trim(),
       enable_thinking: form.enable_thinking,
       thinking_template: form.thinking_template,
       connect_timeout: Number(form.connect_timeout),
@@ -608,6 +612,20 @@ export function SettingsView() {
                     value={form.summary_model}
                     onChange={(event) =>
                       updateForm({ summary_model: event.target.value })
+                    }
+                    placeholder={form.model}
+                    autoComplete="off"
+                  />
+                </Field>
+
+                <Field
+                  label="Planner model"
+                  hint="Optional faster/dedicated model for planning; defaults to the main model when empty."
+                >
+                  <Input
+                    value={form.planner_model}
+                    onChange={(event) =>
+                      updateForm({ planner_model: event.target.value })
                     }
                     placeholder={form.model}
                     autoComplete="off"

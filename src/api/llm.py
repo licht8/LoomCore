@@ -55,6 +55,7 @@ class LlmSettingsUpdate(BaseModel):
     model: str | None = None
     api_key: str | None = None
     summary_model: str | None = None
+    planner_model: str | None = None
     enable_thinking: bool | None = None
     thinking_template: bool | None = None
     connect_timeout: float | None = Field(default=None, allow_inf_nan=False)
@@ -73,6 +74,7 @@ def _serialize(config: LlmConfig) -> dict:
         "base_url": config.base_url,
         "model": config.model,
         "summary_model": config.summary_model,
+        "planner_model": config.planner_model,
         "enable_thinking": config.enable_thinking,
         "thinking_template": config.thinking_template,
         "connect_timeout": config.connect_timeout,
@@ -154,6 +156,7 @@ def _merge(current: LlmConfig, data: dict) -> LlmConfig:
         model=model,
         api_key=api_key,
         summary_model=_unchanged(data, "summary_model", current.summary_model),
+        planner_model=_unchanged(data, "planner_model", current.planner_model),
         enable_thinking=_unchanged(data, "enable_thinking", current.enable_thinking),
         thinking_template=_unchanged(
             data, "thinking_template", current.thinking_template

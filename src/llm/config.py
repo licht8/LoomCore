@@ -41,6 +41,7 @@ class LlmConfig:
     model: str = ""
     api_key: str = ""
     summary_model: str = ""
+    planner_model: str = ""
     enable_thinking: bool = False
     thinking_template: bool = False
     connect_timeout: float = 15.0
@@ -72,6 +73,7 @@ def default_config() -> LlmConfig:
         model=settings.llm_model.strip(),
         api_key=settings.llm_api_key,
         summary_model=settings.llm_summary_model,
+        planner_model=settings.llm_planner_model,
         enable_thinking=settings.llm_enable_thinking,
         thinking_template=settings.llm_thinking_template,
         connect_timeout=settings.llm_connect_timeout,
@@ -161,6 +163,11 @@ def load_config(path: Path) -> LlmConfig:
             _as_str(data.get("summary_model"))
             if "summary_model" in data
             else base.summary_model
+        ),
+        planner_model=(
+            _as_str(data.get("planner_model"))
+            if "planner_model" in data
+            else base.planner_model
         ),
         enable_thinking=_as_bool(data.get("enable_thinking")),
         thinking_template=_as_bool(data.get("thinking_template")),

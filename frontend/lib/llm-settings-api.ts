@@ -17,6 +17,7 @@ export type LlmSettings = {
   base_url: string
   model: string
   summary_model: string
+  planner_model: string
   enable_thinking: boolean
   thinking_template: boolean
   connect_timeout: number
@@ -35,6 +36,7 @@ export type LlmSettingsUpdate = {
   base_url?: string
   model?: string
   summary_model?: string
+  planner_model?: string
   api_key?: string | null
   enable_thinking?: boolean
   thinking_template?: boolean

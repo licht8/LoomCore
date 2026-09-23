@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_api_key: str = ""
     llm_summary_model: str = ""
+    llm_planner_model: str = ""
     llm_connect_timeout: float = 15.0
     llm_read_timeout: float = 30.0
     llm_write_timeout: float = 30.0

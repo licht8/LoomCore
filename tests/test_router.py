@@ -1,6 +1,7 @@
 """Unit tests for the AIRouter planner without DB or network."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -80,6 +81,7 @@ def patched_router(monkeypatch):
         "temperature": None,
         "max_tokens": None,
         "last_messages": None,
+        "model": None,
         "purpose": None,
         "session_id": None,
         "user_saved": [],
@@ -130,6 +132,7 @@ def patched_router(monkeypatch):
         state["temperature"] = temperature
         state["max_tokens"] = max_tokens
         state["last_messages"] = messages
+        state["model"] = model
         state["purpose"] = purpose
         state["session_id"] = session_id
         if state["queue"]:
@@ -616,7 +619,7 @@ async def test_route_recovers_textual_real_tool(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("[tool core_list_tools]")]
 
-    result = await router.route("show tools", "sess-1")
+    result = await router.route("hi", "sess-1")
 
     assert result["type"] == "plan"
     plan = result["plan"]
@@ -629,7 +632,7 @@ async def test_route_recovers_narrated_tool_result(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("Tool result (core_list_tools):\n")]
 
-    result = await router.route("what are the tools", "sess-1")
+    result = await router.route("hi", "sess-1")
 
     assert result["type"] == "plan"
     plan = result["plan"]
@@ -679,7 +682,7 @@ async def test_route_recovers_unwrapped_agent_plan_text(patched_router):
     }
     state["queue"] = [_text_response(f"agent_plan {json.dumps(plan_args)}")]
 
-    result = await router.route("show tools", "sess-1")
+    result = await router.route("hi", "sess-1")
 
     assert result["type"] == "plan"
     assert result["plan"]["steps"][0]["tool"] == "core_list_tools"
@@ -704,7 +707,7 @@ async def test_route_recovers_unwrapped_known_tool_text(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("core_list_tools {}")]
 
-    result = await router.route("what are the tools", "sess-1")
+    result = await router.route("hi", "sess-1")
 
     assert result["type"] == "plan"
     plan = result["plan"]
@@ -814,14 +817,126 @@ async def test_route_bare_agent_plan_name_falls_back_after_reask(patched_router)
 
 
 @pytest.mark.asyncio
-async def test_route_bare_known_tool_name_is_malformed(patched_router):
+async def test_bare_known_tool_becomes_direct_plan(patched_router):
     router, state = patched_router
-    state["queue"] = [_text_response("core_health"), _text_response("hello")]
+    state["queue"] = [_text_response("core_health")]
 
     result = await router.route("hi", "sess-1")
 
-    assert result["content"] == "hello"
+    assert result["type"] == "plan"
+    assert result["plan"]["mode"] == "direct"
+    assert result["plan"]["steps"][0]["tool"] == "core_health"
+    assert state["calls"] == 1
+    # Direct plans are ephemeral: they are not persisted.
+    assert state["plans_saved"] == []
+
+
+@pytest.mark.asyncio
+async def test_reply_step_becomes_text(patched_router):
+    router, state = patched_router
+    state["queue"] = [
+        _plan_response(
+            {
+                "goal": "greet the user",
+                "mode": "direct",
+                "steps": [
+                    {"tool": REPLY_TOOL, "args": {"text": "Hello!"}, "why": "greet"}
+                ],
+            }
+        )
+    ]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "Hello!"
+    assert state["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bare_known_tool_missing_args_reasks(patched_router):
+    router, state = patched_router
+    state["queue"] = [
+        _text_response("core_plugin_status"),
+        _reply_response("Please specify the plugin."),
+    ]
+
+    result = await router.route("hi", "sess-1")
+
+    assert result["type"] == "text"
+    assert result["content"] == "Please specify the plugin."
+    assert result["content"] != router_module._CONFUSED_REPLY
     assert state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_meta_fast_path_tools_en(patched_router, monkeypatch):
+    router, state = patched_router
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_dispatch(name, arguments=None, *, approved=False):
+        calls.append((name, arguments))
+        return {
+            "content": [{"type": "text", "text": "LoomOps (2): a, b"}],
+            "data": {},
+        }
+
+    monkeypatch.setattr(router_module, "dispatch_core_tool", fake_dispatch)
+
+    result = await router.route("show me tools for LoomOps", "sess-1")
+
+    assert result == {"type": "text", "content": "LoomOps (2): a, b"}
+    assert state["calls"] == 0
+    assert calls == [("core_list_tools", {"plugin": "LoomOps"})]
+
+
+@pytest.mark.asyncio
+async def test_meta_fast_path_tools_ru(patched_router, monkeypatch):
+    router, state = patched_router
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_dispatch(name, arguments=None, *, approved=False):
+        calls.append((name, arguments))
+        return {"content": [{"type": "text", "text": "8 core tools: ..."}], "data": {}}
+
+    monkeypatch.setattr(router_module, "dispatch_core_tool", fake_dispatch)
+
+    result = await router.route("покажи инструменты для LoomCore", "sess-1")
+
+    assert result["type"] == "text"
+    assert state["calls"] == 0
+    assert calls == [("core_list_tools", {"plugin": "core"})]
+
+
+@pytest.mark.asyncio
+async def test_meta_fast_path_skips_what_can_you_do(patched_router, monkeypatch):
+    router, state = patched_router
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("fast path must not run for capability questions")
+
+    monkeypatch.setattr(router_module, "dispatch_core_tool", boom)
+    state["queue"] = [_text_response("I can help with lots of things.")]
+
+    result = await router.route("что ты умеешь", "sess-1")
+
+    assert result["content"] == "I can help with lots of things."
+    assert state["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_route_passes_configured_planner_model(patched_router, monkeypatch):
+    router, state = patched_router
+    monkeypatch.setattr(
+        router_module,
+        "get_active",
+        lambda: replace(_TEST_CONFIG, planner_model="fast-model"),
+    )
+    state["queue"] = [_text_response("hi there")]
+
+    await router.route("hi", "sess-1")
+
+    assert state["model"] == "fast-model"
 
 
 @pytest.mark.asyncio
@@ -857,7 +972,7 @@ async def test_route_unwrapped_invalid_json_body_not_executed(patched_router):
     router, state = patched_router
     state["queue"] = [_text_response("core_list_tools {oops}")]
 
-    result = await router.route("show tools", "sess-1")
+    result = await router.route("hi", "sess-1")
 
     assert result["type"] == "text"
     assert state["calls"] == 1
@@ -906,6 +1021,12 @@ def _reply_args_fragments(text: str) -> list[tuple[str, str]]:
     """Cumulative ``on_tool_delta`` payloads for a streamed ``reply`` call."""
     full = json.dumps({"text": text})
     return [(REPLY_TOOL, full[: i + 1]) for i in range(len(full))]
+
+
+def _goal_args_fragments(args: dict) -> list[tuple[str, str]]:
+    """Cumulative ``on_tool_delta`` payloads for a streamed ``agent_plan`` call."""
+    full = json.dumps(args)
+    return [("agent_plan", full[: i + 1]) for i in range(len(full))]
 
 
 def _install_stream_stub(
@@ -995,6 +1116,37 @@ def test_reply_text_stream_ignores_agent_plan():
     payload = json.dumps({"goal": "x", "steps": []})
 
     assert stream.feed("agent_plan", payload) == ""
+
+
+@pytest.mark.asyncio
+async def test_goal_stream_forwards_agent_plan_goal(patched_router):
+    router, state = patched_router
+    goal = "Check the core health"
+    plan_args = {
+        "goal": goal,
+        "mode": "direct",
+        "steps": [{"tool": "core_health", "args": {}, "why": "x"}],
+    }
+    _install_stream_stub(
+        router,
+        state,
+        [
+            {
+                "tool": _goal_args_fragments(plan_args),
+                "response": _plan_response(plan_args),
+            }
+        ],
+    )
+    deltas: list[str] = []
+
+    async def on_delta(fragment, *, reset=False):
+        if fragment:
+            deltas.append(fragment)
+
+    result = await router.route("hi", "sess-1", on_delta=on_delta)
+
+    assert result["type"] == "plan"
+    assert "".join(deltas) == goal
 
 
 def test_reply_text_stream_reset_restarts():

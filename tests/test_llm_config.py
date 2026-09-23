@@ -92,6 +92,34 @@ def test_load_config_summary_model_explicit_empty_clears(tmp_path, monkeypatch):
     assert load_config(path).summary_model == ""
 
 
+def test_planner_model_from_env(monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_planner_model", "fast-model")
+
+    assert default_config().planner_model == "fast-model"
+
+
+def test_load_config_planner_model_falls_back_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_planner_model", "seed-model")
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m"}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).planner_model == "seed-model"
+
+
+def test_load_config_planner_model_explicit_empty_clears(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_planner_model", "seed-model")
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m", "planner_model": ""}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).planner_model == ""
+
+
 def test_max_tokens_from_env(monkeypatch):
     monkeypatch.setattr(config_module.settings, "llm_planner_max_tokens", 2048)
     monkeypatch.setattr(config_module.settings, "llm_summary_max_tokens", 256)

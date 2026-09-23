@@ -249,6 +249,60 @@ async def test_update_preserves_max_tokens_when_omitted(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_update_round_trips_planner_model(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        put = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(planner_model="fast-model"),
+        )
+        get = await client.get("/api/llm/settings", headers=_AUTH)
+
+    assert put.status_code == 200
+    assert put.json()["planner_model"] == "fast-model"
+    assert get.json()["planner_model"] == "fast-model"
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_planner_model_when_omitted(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(planner_model="fast-model"),
+        )
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"model": "gpt-4o"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["planner_model"] == "fast-model"
+
+
+@pytest.mark.asyncio
+async def test_update_clears_planner_model_with_empty_string(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(planner_model="fast-model"),
+        )
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"planner_model": ""},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["planner_model"] == ""
+
+
+@pytest.mark.asyncio
 async def test_update_rejects_negative_max_retries(monkeypatch):
     _auth(monkeypatch)
     async with _client() as client:

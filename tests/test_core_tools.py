@@ -44,6 +44,15 @@ class _FakeManager:
     async def get_tools(self, name):
         return [{"name": "ops_disk_usage", "description": "df"}]
 
+    def tools_indexed(self):
+        return False
+
+    def get_cached_tools(self):
+        return []
+
+    def plugin_for_tool(self, tool_name):
+        return "LoomOps"
+
     async def enable_plugin(self, name):
         self.calls.append(("enable", name))
         return True
@@ -250,3 +259,46 @@ async def test_core_list_tools_ignores_malformed_plugin_tools(monkeypatch, fake_
     result = await core_tools.dispatch_core_tool("core_list_tools", {})
     assert result["data"]["plugin_tools"] == []
     assert "LoomOps (unavailable)" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_list_tools_filtered_by_plugin(monkeypatch):
+    manager = _FakeManager(names=("LoomOps", "LoomWG"))
+    monkeypatch.setattr(core_tools, "plugin_manager", manager)
+
+    result = await core_tools.dispatch_core_tool("core_list_tools", {"plugin": "LoomOps"})
+
+    data = result["data"]
+    assert data["plugin_tools"] == [{"name": "ops_disk_usage", "plugin": "LoomOps"}]
+    text = result["content"][0]["text"]
+    assert "LoomOps (1): ops_disk_usage" in text
+    assert "core tools" not in text
+    assert "LoomWG" not in text
+
+
+@pytest.mark.asyncio
+async def test_list_tools_core_alias(fake_manager):
+    for alias in ("core", "LoomCore", "loom_core"):
+        result = await core_tools.dispatch_core_tool(
+            "core_list_tools", {"plugin": alias}
+        )
+        data = result["data"]
+        assert len(data["core_tools"]) == 8
+        assert data["plugin_tools"] == []
+        assert "LoomOps" not in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_list_tools_unknown_plugin_errors(fake_manager):
+    with pytest.raises(ValueError, match="not registered"):
+        await core_tools.dispatch_core_tool(
+            "core_list_tools", {"plugin": "ghost"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_tools_unfiltered_still_lists_all(fake_manager):
+    result = await core_tools.dispatch_core_tool("core_list_tools", {})
+    data = result["data"]
+    assert len(data["core_tools"]) == 8
+    assert data["plugin_tools"] == [{"name": "ops_disk_usage", "plugin": "LoomOps"}]

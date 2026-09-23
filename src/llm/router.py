@@ -13,7 +13,7 @@ from src.core.agent import (
     plan_is_direct,
     validate_plan,
 )
-from src.core.core_tools import CORE_TOOLS_SCHEMA, resolve_tool_risk
+from src.core.core_tools import CORE_TOOLS_SCHEMA, dispatch_core_tool, resolve_tool_risk
 from src.core.timing import log_stage, span
 from src.db import session as db_session
 from src.db.database import async_session_factory
@@ -63,6 +63,26 @@ _MALFORMED_NUDGE = (
 )
 _CONFUSED_REPLY = "Sorry, I didn't quite catch that — could you rephrase your request?"
 
+# Meta fast-path: answer short, explicit tool/plugin-listing requests without an
+# LLM call. Deliberately conservative — anything longer or less explicit falls
+# through to the planner.
+_META_MAX_CHARS = 120
+_META_TOOLS_RE = re.compile(
+    r"(?:list|show|see|which|what)\b[^?]*\btools?\b"
+    r"|\btools?\s+(?:for|of)\b"
+    r"|(?:какие|покажи|список)\s+инструмент",
+    re.IGNORECASE,
+)
+_META_PLUGINS_RE = re.compile(
+    r"(?:list|show|which|what)\b[^?]*\bplugins?\b"
+    r"|(?:какие|покажи|список)\s+плагин",
+    re.IGNORECASE,
+)
+_META_PLUGIN_TOKEN_RE = re.compile(r"\b(LoomOps|LoomWG|LoomCore)\b", re.IGNORECASE)
+_META_PLUGIN_AFTER_RE = re.compile(
+    r"(?:for|of|для)\s+([A-Za-z_][\w-]*)", re.IGNORECASE
+)
+
 
 def _strip_tool_prefix(text: str) -> str:
     """Remove a leading planner tool-name marker from assistant text."""
@@ -80,10 +100,56 @@ def _is_bare_tool_name(text: str, known_tools: Iterable[str] = ()) -> bool:
     Normalizes surrounding whitespace and quotes/backticks, then checks the
     planner tools plus the currently offered catalog names.
     """
+    return _bare_tool_name(text, known_tools) is not None
+
+
+def _bare_tool_name(text: str, known_tools: Iterable[str] = ()) -> str | None:
+    """Return the normalized tool name when ``text`` is only that name, else None."""
     cleaned = text.strip().strip("`\"'").strip().lower()
     if not cleaned:
-        return False
-    return cleaned in _BARE_TOOL_NAMES or cleaned in known_tools
+        return None
+    if cleaned in _BARE_TOOL_NAMES or cleaned in known_tools:
+        return cleaned
+    return None
+
+
+def _tool_text(result: object) -> str | None:
+    """Return the text of an MCP-shaped tool result, or None when malformed."""
+    if not isinstance(result, dict):
+        return None
+    content = result.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    first = content[0]
+    if not isinstance(first, dict):
+        return None
+    text = first.get("text")
+    return text if isinstance(text, str) and text else None
+
+
+def _plan_reply_step_text(raw_args: object) -> str | None:
+    """Return the answer text when a plan is a single ``reply`` step.
+
+    Some planners wrap a plain answer in an ``agent_plan`` whose only step calls
+    ``reply``; that is chat text, not an action, and must not be validated as a
+    plan (``reply`` is not a catalog tool).
+    """
+    if not isinstance(raw_args, dict):
+        return None
+    steps = raw_args.get("steps")
+    if not isinstance(steps, list) or len(steps) != 1:
+        return None
+    step = steps[0]
+    if not isinstance(step, dict) or step.get("tool") != REPLY_TOOL:
+        return None
+    args = step.get("args")
+    text = str(args.get("text") or "") if isinstance(args, dict) else ""
+    if not text.strip():
+        text = str(raw_args.get("goal") or step.get("why") or "")
+    text = _strip_tool_prefix(text)
+    if text and not _is_bare_tool_name(text):
+        return text
+    return None
 
 
 def _balanced_json(text: str, start: int) -> str | None:
@@ -179,6 +245,39 @@ class AIRouter:
         """Close the router's shared HTTP client."""
         await self.client.aclose()
 
+    async def _meta_fast_path(self, user_message: str) -> str | None:
+        """Answer a short tool/plugin-listing request without an LLM call.
+
+        Returns the rendered text, or None to let the planner handle the turn
+        (unknown intent, too long, or any error while listing).
+        """
+        if len(user_message) > _META_MAX_CHARS:
+            return None
+        if _META_TOOLS_RE.search(user_message):
+            tool_name = "core_list_tools"
+        elif _META_PLUGINS_RE.search(user_message):
+            tool_name = "core_list_plugins"
+        else:
+            return None
+
+        token = ""
+        match = _META_PLUGIN_TOKEN_RE.search(user_message)
+        if match:
+            token = match.group(1)
+        else:
+            after = _META_PLUGIN_AFTER_RE.search(user_message)
+            if after:
+                token = after.group(1)
+        if token.lower() == "loomcore":
+            token = "core"
+        arguments = {"plugin": token} if (token and tool_name == "core_list_tools") else {}
+        try:
+            result = await dispatch_core_tool(tool_name, arguments)
+        except Exception as exc:  # noqa: BLE001 - fall back to the planner
+            logger.warning(f"Meta fast-path lookup failed: {exc}")
+            return None
+        return _tool_text(result)
+
     async def route(
         self,
         user_message: str,
@@ -211,6 +310,12 @@ class AIRouter:
         route_started = time.monotonic()
         history_dicts = await self._begin_turn(session_id, user_message)
 
+        # High-confidence tool/plugin listings never need an LLM turn.
+        fast = await self._meta_fast_path(user_message)
+        if fast:
+            await self._persist_assistant(session_id, fast, None)
+            return {"type": "text", "content": fast}
+
         collect_started = time.monotonic()
         tools_schema, message_extra = await self._collect_tools()
         log_stage(
@@ -235,12 +340,15 @@ class AIRouter:
         planner_started = time.monotonic()
         planner_attempts = 0
         reply_stream = _ReplyTextStream() if on_delta is not None else None
+        goal_stream = _GoalTextStream() if on_delta is not None else None
         try:
             for attempt in range(PLANNER_REASK_LIMIT + 1):
                 planner_attempts += 1
+                reask_nudge: str | None = None
                 if reply_stream is not None and attempt > 0:
                     # A re-ask must not append to the previous attempt's text.
                     reply_stream.reset()
+                    goal_stream.reset()
                     await on_delta("", reset=True)
                 if on_delta is not None:
                     llm_response = await self.client.stream_chat_completion(
@@ -248,10 +356,13 @@ class AIRouter:
                         tools=PLANNER_TOOLS,
                         tool_choice="required",
                         temperature=0,
+                        model=config.planner_model or None,
                         max_tokens=config.planner_max_tokens,
                         purpose="planner",
                         session_id=session_id,
-                        on_tool_delta=_make_reply_streamer(reply_stream, on_delta),
+                        on_tool_delta=_make_reply_streamer(
+                            reply_stream, goal_stream, on_delta
+                        ),
                     )
                 else:
                     llm_response = await self.client.chat_completion(
@@ -259,6 +370,7 @@ class AIRouter:
                         tools=PLANNER_TOOLS,
                         tool_choice="required",
                         temperature=0,
+                        model=config.planner_model or None,
                         max_tokens=config.planner_max_tokens,
                         purpose="planner",
                         session_id=session_id,
@@ -272,6 +384,7 @@ class AIRouter:
                 )
 
                 bare_answer = False
+                bare_text = ""
 
                 if tool_name == REPLY_TOOL:
                     reply_text = ""
@@ -285,6 +398,7 @@ class AIRouter:
                         return {"type": "text", "content": reply_text} | message_extra
                     # An empty or bare-name reply is a malformed completion.
                     bare_answer = True
+                    bare_text = reply_text
                 elif not raw_tool_calls:
                     recovered_args = self._recover_textual_plan_args(
                         content, user_message, known_tools
@@ -298,6 +412,7 @@ class AIRouter:
                             await self._persist_assistant(session_id, reply_text, None)
                             return {"type": "text", "content": reply_text} | message_extra
                         bare_answer = True
+                        bare_text = reply_text
                     elif recovered_args is None:
                         answer = _strip_tool_prefix(content)
                         if (
@@ -308,6 +423,7 @@ class AIRouter:
                             await self._persist_assistant(session_id, answer, None)
                             return {"type": "text", "content": answer} | message_extra
                         bare_answer = True
+                        bare_text = answer
                     else:
                         logger.warning(
                             "Recovered a tool call the planner wrote as text "
@@ -318,12 +434,56 @@ class AIRouter:
                         tool_args = recovered_args
 
                 if bare_answer:
-                    logger.warning(
-                        "Planner returned a bare tool name as text "
-                        f"(session={session_id}, content={content!r})"
-                    )
-                    errors = ["the planner wrote a bare tool name instead of calling it"]
+                    candidate = _bare_tool_name(bare_text, known_tools)
+                    if candidate is not None and candidate in known_tools:
+                        # The planner named a real catalog tool instead of calling
+                        # it: run it as a direct one-step action.
+                        raw = {
+                            "goal": user_message,
+                            "mode": "direct",
+                            "steps": [
+                                {
+                                    "tool": candidate,
+                                    "args": {},
+                                    "why": "The user asked for this tool.",
+                                }
+                            ],
+                        }
+                        plan = build_plan(raw, risk_of=resolve_tool_risk)
+                        errors = validate_plan(plan, known_tools, tool_schemas)
+                        if not errors:
+                            if not plan_is_direct(plan):
+                                await self._persist_plan(session_id, plan)
+                            return {"type": "plan", "plan": plan} | message_extra
+                        logger.warning(
+                            "Planner named a tool that needs arguments instead of "
+                            f"calling it (session={session_id}, tool={candidate})"
+                        )
+                        bare_answer = False
+                        errors = [f"missing required arguments for '{candidate}'"]
+                        reask_nudge = (
+                            "Call agent_plan with the required arguments for "
+                            f"'{candidate}'."
+                        )
+                    else:
+                        logger.warning(
+                            "Planner returned a bare tool name as text "
+                            f"(session={session_id}, content={content!r})"
+                        )
+                        errors = [
+                            "the planner wrote a bare tool name instead of calling it"
+                        ]
                 elif tool_name == AGENT_PLAN_TOOL:
+                    reply_step_text = _plan_reply_step_text(tool_args)
+                    if reply_step_text is not None:
+                        # A `reply` step is a plain answer, not an action.
+                        await self._persist_assistant(
+                            session_id, reply_step_text, raw_tool_calls
+                        )
+                        return {
+                            "type": "text",
+                            "content": reply_step_text,
+                        } | message_extra
                     plan = build_plan(tool_args or {}, risk_of=resolve_tool_risk)
                     errors = validate_plan(plan, known_tools, tool_schemas)
                     if not errors:
@@ -338,21 +498,18 @@ class AIRouter:
                 if attempt < PLANNER_REASK_LIMIT:
                     if content:
                         messages.append({"role": "assistant", "content": content})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                _MALFORMED_NUDGE
-                                if bare_answer
-                                else (
-                                    "That plan was rejected: "
-                                    + "; ".join(errors)
-                                    + ". Call agent_plan again with a corrected plan "
-                                    "that uses only catalog tool names."
-                                )
-                            ),
-                        }
-                    )
+                    if reask_nudge is not None:
+                        nudge = reask_nudge
+                    elif bare_answer:
+                        nudge = _MALFORMED_NUDGE
+                    else:
+                        nudge = (
+                            "That plan was rejected: "
+                            + "; ".join(errors)
+                            + ". Call agent_plan again with a corrected plan "
+                            "that uses only catalog tool names."
+                        )
+                    messages.append({"role": "user", "content": nudge})
 
             if bare_answer:
                 await self._persist_assistant(session_id, _CONFUSED_REPLY, None)
@@ -646,11 +803,6 @@ class AIRouter:
         return content, tool_name, tool_args, raw_tool_calls
 
 
-# The start of the ``text`` string value inside a streamed ``reply`` call's
-# JSON arguments (the opening quote is consumed by ``match.end()``).
-_REPLY_TEXT_KEY_RE = re.compile(r'"text"\s*:\s*"')
-
-
 def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int, bool]:
     """Decode a JSON string body from ``start`` (after the opening quote).
 
@@ -738,14 +890,16 @@ def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int, bool]:
     return "".join(out), i, False
 
 
-class _ReplyTextStream:
-    """Incrementally extract the ``text`` argument of a streamed ``reply``."""
+class _ToolFieldStream:
+    """Incrementally extract one string field of a streamed tool call."""
 
-    def __init__(self) -> None:
+    def __init__(self, tool: str, key: str) -> None:
+        self._tool = tool
+        self._key_re = re.compile(rf'"{re.escape(key)}"\s*:\s*"')
         self._active = False
         self._done = False
         # Raw offset in the accumulated arguments to resume decoding from; None
-        # until the ``text`` key has been seen.
+        # until the field has been seen.
         self._pos: int | None = None
         # Buffer seen on the previous call, used to detect a silent restart
         # (see ``feed``).
@@ -759,15 +913,16 @@ class _ReplyTextStream:
         self._buf = ""
 
     def feed(self, name: str | None, args_so_far: str) -> str:
-        """Return the newly decoded reply text for the accumulated arguments.
+        """Return the newly decoded field text for the accumulated arguments.
 
         Decoding itself is linear overall: only the suffix appended since the
         previous call is decoded. Detecting a silent restart additionally compares
         the whole buffer against the previous one, which is O(n) per delta, but
-        reply text is bounded by the configured max tokens, so this stays cheap.
+        the streamed text is bounded by the configured max tokens, so this stays
+        cheap.
         """
         if name is not None:
-            self._active = name == REPLY_TOOL
+            self._active = name == self._tool
         if not args_so_far.startswith(self._buf):
             # The client restarted this call internally (a retry after tool
             # deltas that never forwarded text) without notifying us. The new
@@ -779,7 +934,7 @@ class _ReplyTextStream:
         if not self._active or self._done:
             return ""
         if self._pos is None:
-            match = _REPLY_TEXT_KEY_RE.search(args_so_far)
+            match = self._key_re.search(args_so_far)
             if match is None:
                 return ""
             self._pos = match.end()
@@ -788,14 +943,35 @@ class _ReplyTextStream:
         return decoded
 
 
+class _ReplyTextStream(_ToolFieldStream):
+    """Incrementally extract the ``text`` argument of a streamed ``reply``."""
+
+    def __init__(self) -> None:
+        super().__init__(REPLY_TOOL, "text")
+
+
+class _GoalTextStream(_ToolFieldStream):
+    """Incrementally extract the ``goal`` of a streamed ``agent_plan``."""
+
+    def __init__(self) -> None:
+        super().__init__(AGENT_PLAN_TOOL, "goal")
+
+
 def _make_reply_streamer(
-    stream: _ReplyTextStream,
+    reply_stream: _ReplyTextStream,
+    goal_stream: _GoalTextStream,
     on_delta: Callable[[str], Awaitable[None]],
 ) -> Callable[[str | None, str], Awaitable[bool]]:
-    """Build the ``on_tool_delta`` callback that forwards reply text."""
+    """Build the ``on_tool_delta`` callback.
+
+    ``reply`` streams its ``text``; ``agent_plan`` streams its ``goal``. Only one
+    is active for a given tool call, so the first stream that yields text wins.
+    """
 
     async def _on_tool_delta(name: str | None, args_so_far: str) -> bool:
-        fragment = stream.feed(name, args_so_far)
+        fragment = reply_stream.feed(name, args_so_far)
+        if not fragment:
+            fragment = goal_stream.feed(name, args_so_far)
         if fragment:
             await on_delta(fragment)
             return True
