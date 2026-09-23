@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Streaming replies and token caps: the planner's `reply` text and the plan
+  summary now stream to the client as `delta` WebSocket events (reconciled by a
+  shared `message_id` on the final `response`), with `LLM_PLANNER_MAX_TOKENS` /
+  `LLM_SUMMARY_MAX_TOKENS` (default 1024/512) bounding the two per-turn LLM
+  calls. The planner prompt catalog is trimmed (tool descriptions capped at 160
+  chars; user/history char limits lowered) to cut prefill latency.
 - Assistant latency quick wins: the planner tool catalog is served from the
   indexed cache (`PluginManager.get_tools_for_routing`, skipping plugins that are
   disabled, unhealthy or advertise malformed tools) instead of a per-turn

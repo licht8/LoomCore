@@ -2,8 +2,8 @@ from functools import lru_cache
 from pathlib import Path
 
 _MAX_RESULT_CHARS = 2000
-_MAX_USER_CHARS = 8000
-_MAX_HISTORY_CHARS = 12000
+_MAX_USER_CHARS = 4000
+_MAX_HISTORY_CHARS = 6000
 _MAX_PLAN_BODY_CHARS = 16000
 
 SYSTEM_PROMPT = (

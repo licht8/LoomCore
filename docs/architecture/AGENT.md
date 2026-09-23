@@ -122,6 +122,10 @@ confirmation.
   frontend `WsMessage` union field-for-field and is **additive-only**.
 - Server to client: `plan_proposed`, `plan_step`, `plan_done` for plan mode;
   `tool_call`, `tool_response`, and `response` for both modes.
+- The planner's `reply` text and the plan summary stream as `delta` events
+  (`message_id`, `content`, optional `reset`); the final `response` carries the
+  same `message_id` so the client reconciles the streamed bubble. A `reset`
+  delta (emitted before a planner re-ask) replaces the partial text.
 - Client to server: `plan_approve`, `plan_edit`, `plan_reject` for plan cards.
 - Direct confirmation is an ordinary text message; the server parses it.
 - On reload, plan revisions are collapsed by `plan_id` (last one wins).

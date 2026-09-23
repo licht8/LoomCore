@@ -24,6 +24,8 @@ export type LlmSettings = {
   write_timeout: number
   pool_timeout: number
   max_retries: number
+  planner_max_tokens: number
+  summary_max_tokens: number
   configured: boolean
   api_key: ApiKeyStatus
 }
@@ -41,6 +43,8 @@ export type LlmSettingsUpdate = {
   write_timeout?: number
   pool_timeout?: number
   max_retries?: number
+  planner_max_tokens?: number
+  summary_max_tokens?: number
 }
 
 export type LlmTestResult = {

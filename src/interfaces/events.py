@@ -36,6 +36,14 @@ class ResponseEvent(_Event):
     type: Literal["response"] = "response"
     content: str | None = None
     text: str | None = None
+    message_id: str | None = None
+
+
+class DeltaEvent(_Event):
+    type: Literal["delta"] = "delta"
+    message_id: str | None = None
+    content: str | None = None
+    reset: bool = False
 
 
 class ToolCallEvent(_Event):
@@ -115,6 +123,7 @@ class ErrorEvent(_Event):
 EVENT_MODELS: dict[str, type[_Event]] = {
     "thinking": ThinkingEvent,
     "response": ResponseEvent,
+    "delta": DeltaEvent,
     "tool_call": ToolCallEvent,
     "tool_response": ToolResponseEvent,
     "plan_proposed": PlanProposedEvent,
@@ -142,8 +151,16 @@ def thinking_payload(status: str = "processing") -> dict:
     return event_payload(ThinkingEvent(status=status))
 
 
-def response_payload(content: str, text: str | None = None) -> dict:
-    return event_payload(ResponseEvent(content=content, text=text))
+def response_payload(
+    content: str, text: str | None = None, message_id: str | None = None
+) -> dict:
+    return event_payload(ResponseEvent(content=content, text=text, message_id=message_id))
+
+
+def delta_payload(message_id: str, content: str, reset: bool = False) -> dict:
+    return event_payload(
+        DeltaEvent(message_id=message_id, content=content, reset=reset)
+    )
 
 
 def schema_warning_payload(unavailable_plugins: list[str]) -> dict:

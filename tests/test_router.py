@@ -7,7 +7,7 @@ import pytest
 from src.core.agent import PLANNER_TOOLS, REPLY_TOOL
 from src.llm import router as router_module
 from src.llm.config import LlmConfig
-from src.llm.router import AIRouter
+from src.llm.router import AIRouter, _ReplyTextStream
 
 _TEST_CONFIG = LlmConfig(
     provider="custom",
@@ -78,6 +78,7 @@ def patched_router(monkeypatch):
         "tools": None,
         "tool_choice": None,
         "temperature": None,
+        "max_tokens": None,
         "last_messages": None,
         "purpose": None,
         "session_id": None,
@@ -119,6 +120,7 @@ def patched_router(monkeypatch):
         temperature=None,
         model=None,
         *,
+        max_tokens=None,
         purpose=None,
         session_id=None,
     ):
@@ -126,6 +128,7 @@ def patched_router(monkeypatch):
         state["tools"] = tools
         state["tool_choice"] = tool_choice
         state["temperature"] = temperature
+        state["max_tokens"] = max_tokens
         state["last_messages"] = messages
         state["purpose"] = purpose
         state["session_id"] = session_id
@@ -897,3 +900,198 @@ async def test_route_passes_planner_usage_context(patched_router):
 
     assert state["purpose"] == "planner"
     assert state["session_id"] == "sess-7"
+
+
+def _reply_args_fragments(text: str) -> list[tuple[str, str]]:
+    """Cumulative ``on_tool_delta`` payloads for a streamed ``reply`` call."""
+    full = json.dumps({"text": text})
+    return [(REPLY_TOOL, full[: i + 1]) for i in range(len(full))]
+
+
+def _install_stream_stub(
+    router,
+    state,
+    attempts: list[dict],
+):
+    """Replace ``stream_chat_completion`` with a scripted streaming fake.
+
+    Each entry in ``attempts`` is a dict with optional ``tool`` fragments
+    (list of ``(name, args_so_far)``), ``content`` fragments (list of str) and
+    a ``response`` dict returned to the caller.
+    """
+    remaining = list(attempts)
+
+    async def fake_stream(messages, **kwargs):
+        state["calls"] += 1
+        state["max_tokens"] = kwargs.get("max_tokens")
+        state["purpose"] = kwargs.get("purpose")
+        state["last_messages"] = messages
+        spec = remaining.pop(0)
+        on_tool_delta = kwargs.get("on_tool_delta")
+        on_content = kwargs.get("on_content")
+        for name, args in spec.get("tool", []):
+            if on_tool_delta is not None:
+                await on_tool_delta(name, args)
+        for fragment in spec.get("content", []):
+            if on_content is not None:
+                await on_content(fragment)
+        return spec["response"]
+
+    router.client.stream_chat_completion = fake_stream  # type: ignore[method-assign]
+
+
+def test_reply_text_stream_decodes_fragments():
+    text = 'say "hi"\nthen é'
+    raw = json.dumps({"text": text})
+    stream = _ReplyTextStream()
+    fragments = []
+    for index in range(1, len(raw) + 1):
+        fragment = stream.feed(REPLY_TOOL, raw[:index])
+        if fragment:
+            fragments.append(fragment)
+
+    assert "".join(fragments) == text
+    assert len(fragments) > 1
+    assert "\\u00e9" in raw
+    assert "\\n" in raw
+    assert '\\"' in raw
+
+
+def test_catalog_truncates_long_descriptions():
+    tools = [
+        {
+            "name": "big_tool",
+            "description": "d" * 500,
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+    ]
+
+    catalog = AIRouter._catalog_text(tools)
+
+    assert "…" in catalog
+    assert "d" * 500 not in catalog
+    assert "d" * 160 in catalog
+
+
+def test_reply_text_stream_ignores_agent_plan():
+    stream = _ReplyTextStream()
+    payload = json.dumps({"goal": "x", "steps": []})
+
+    assert stream.feed("agent_plan", payload) == ""
+
+
+def test_reply_text_stream_reset_restarts():
+    stream = _ReplyTextStream()
+    for _name, args in _reply_args_fragments("first"):
+        stream.feed(REPLY_TOOL, args)
+
+    stream.reset()
+
+    assert stream.feed(REPLY_TOOL, '{"text": "second"}') == "second"
+
+
+@pytest.mark.asyncio
+async def test_route_streams_reply_via_on_delta(patched_router):
+    router, state = patched_router
+    _install_stream_stub(
+        router,
+        state,
+        [
+            {
+                "tool": _reply_args_fragments("hello world"),
+                "response": _reply_response("hello world"),
+            }
+        ],
+    )
+    deltas: list[str] = []
+
+    async def on_delta(fragment, *, reset=False):
+        deltas.append(fragment)
+
+    result = await router.route("hi", "sess-1", on_delta=on_delta)
+
+    assert result["type"] == "text"
+    assert result["content"] == "hello world"
+    assert "".join(deltas) == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_route_resets_stream_on_reask(patched_router):
+    router, state = patched_router
+    _install_stream_stub(
+        router,
+        state,
+        [
+            {
+                "tool": _reply_args_fragments("draft"),
+                "response": _reply_response(""),
+            },
+            {
+                "tool": _reply_args_fragments("final answer"),
+                "response": _reply_response("final answer"),
+            },
+        ],
+    )
+    deltas: list[tuple[str, bool]] = []
+
+    async def on_delta(fragment, *, reset=False):
+        deltas.append((fragment, reset))
+
+    result = await router.route("hi", "sess-1", on_delta=on_delta)
+
+    assert result["content"] == "final answer"
+    assert state["calls"] == 2
+    assert ("", True) in deltas
+    reset_index = deltas.index(("", True))
+    text = "".join(fragment for fragment, _reset in deltas[reset_index + 1 :])
+    assert text == "final answer"
+
+
+@pytest.mark.asyncio
+async def test_summarize_plan_streams_when_on_delta(patched_router):
+    router, state = patched_router
+    _install_stream_stub(
+        router,
+        state,
+        [{"content": ["all ", "good"], "response": _text_response("all good")}],
+    )
+    deltas: list[str] = []
+
+    async def on_delta(fragment):
+        deltas.append(fragment)
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+        on_delta=on_delta,
+    )
+
+    assert summary == "all good"
+    assert deltas == ["all ", "good"]
+    assert state["purpose"] == "summary"
+
+
+@pytest.mark.asyncio
+async def test_route_passes_configured_max_tokens(patched_router, monkeypatch):
+    router, state = patched_router
+    config = LlmConfig(
+        provider="custom",
+        base_url="https://llm.test/v1",
+        model="test-model",
+        planner_max_tokens=333,
+        summary_max_tokens=111,
+    )
+    monkeypatch.setattr(router_module, "get_active", lambda: config)
+    state["queue"] = [_reply_response("Hi there!")]
+
+    await router.route("hi", "sess-1")
+    assert state["max_tokens"] == 333
+
+    state["queue"] = [_text_response("summary")]
+    await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+    assert state["max_tokens"] == 111

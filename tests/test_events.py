@@ -19,6 +19,7 @@ from src.interfaces.tool_events import (
 _EXPECTED_TYPES = {
     "thinking",
     "response",
+    "delta",
     "tool_call",
     "tool_response",
     "plan_proposed",
@@ -78,6 +79,29 @@ def test_response_payload_keeps_optional_text():
     payload = events_module.response_payload("hi", text="raw")
     assert payload["content"] == "hi"
     assert payload["text"] == "raw"
+
+
+def test_response_payload_includes_message_id():
+    payload = events_module.response_payload("hi", message_id="msg_1")
+    assert payload["content"] == "hi"
+    assert payload["message_id"] == "msg_1"
+
+
+def test_delta_payload_shape():
+    payload = events_module.delta_payload("msg_1", "frag")
+    assert payload == {
+        "type": "delta",
+        "message_id": "msg_1",
+        "content": "frag",
+        "reset": False,
+        "schema_version": 1,
+    }
+
+
+def test_delta_payload_reset_flag():
+    payload = events_module.delta_payload("msg_1", "", reset=True)
+    assert payload["reset"] is True
+    assert payload["content"] == ""
 
 
 def test_schema_warning_payload_lists_plugins():

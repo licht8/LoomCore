@@ -62,6 +62,8 @@ class LlmSettingsUpdate(BaseModel):
     write_timeout: float | None = Field(default=None, allow_inf_nan=False)
     pool_timeout: float | None = Field(default=None, allow_inf_nan=False)
     max_retries: int | None = None
+    planner_max_tokens: int | None = None
+    summary_max_tokens: int | None = None
 
 
 def _serialize(config: LlmConfig) -> dict:
@@ -78,6 +80,8 @@ def _serialize(config: LlmConfig) -> dict:
         "write_timeout": config.write_timeout,
         "pool_timeout": config.pool_timeout,
         "max_retries": config.max_retries,
+        "planner_max_tokens": config.planner_max_tokens,
+        "summary_max_tokens": config.summary_max_tokens,
         "configured": config.configured,
         "api_key": {
             "configured": bool(config.api_key),
@@ -121,6 +125,10 @@ def _merge(current: LlmConfig, data: dict) -> LlmConfig:
         if field in data and data[field] is not None and data[field] <= 0:
             raise HTTPException(status_code=400, detail=f"{field} must be positive")
 
+    for field in ("planner_max_tokens", "summary_max_tokens"):
+        if field in data and data[field] is not None and data[field] <= 0:
+            raise HTTPException(status_code=400, detail=f"{field} must be positive")
+
     if (
         "max_retries" in data
         and data["max_retries"] is not None
@@ -155,6 +163,12 @@ def _merge(current: LlmConfig, data: dict) -> LlmConfig:
         write_timeout=_unchanged(data, "write_timeout", current.write_timeout),
         pool_timeout=_unchanged(data, "pool_timeout", current.pool_timeout),
         max_retries=_unchanged(data, "max_retries", current.max_retries),
+        planner_max_tokens=_unchanged(
+            data, "planner_max_tokens", current.planner_max_tokens
+        ),
+        summary_max_tokens=_unchanged(
+            data, "summary_max_tokens", current.summary_max_tokens
+        ),
     )
 
 

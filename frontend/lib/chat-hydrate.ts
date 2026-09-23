@@ -103,6 +103,62 @@ export function finalizePendingTool(
   return updated
 }
 
+/**
+ * Apply a streamed assistant fragment to the message with `messageId`.
+ * When `reset` is true the content is replaced (a re-ask restarted); otherwise
+ * the fragment is appended. A missing message is appended, so a stream that
+ * begins before any bubble exists still renders.
+ */
+export function appendAssistantDelta(
+  messages: ChatMessage[],
+  messageId: string,
+  fragment: string,
+  reset = false,
+): ChatMessage[] {
+  const index = messages.findIndex((m) => m.id === messageId)
+  if (index === -1) {
+    return [
+      ...messages,
+      {
+        id: messageId,
+        role: "assistant",
+        content: fragment,
+        timestamp: formatTimestamp(),
+      },
+    ]
+  }
+  const updated = [...messages]
+  const current = updated[index]
+  updated[index] = {
+    ...current,
+    content: reset ? fragment : current.content + fragment,
+  }
+  return updated
+}
+
+/** Reconcile the final assistant text for a streamed message id. */
+export function finalizeAssistant(
+  messages: ChatMessage[],
+  messageId: string,
+  content: string,
+): ChatMessage[] {
+  const index = messages.findIndex((m) => m.id === messageId)
+  if (index === -1) {
+    return [
+      ...messages,
+      {
+        id: messageId,
+        role: "assistant",
+        content,
+        timestamp: formatTimestamp(),
+      },
+    ]
+  }
+  const updated = [...messages]
+  updated[index] = { ...updated[index], content }
+  return updated
+}
+
 /** Insert or replace the card for a plan (keyed by plan_id, so revisions collapse). */
 export function upsertPlanMessage(messages: ChatMessage[], plan: Plan): ChatMessage[] {
   const index = messages.findIndex(

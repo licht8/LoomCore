@@ -65,6 +65,8 @@ type FormState = {
   write_timeout: string
   pool_timeout: string
   max_retries: string
+  planner_max_tokens: string
+  summary_max_tokens: string
 }
 
 function toForm(settings: LlmSettings): FormState {
@@ -80,6 +82,8 @@ function toForm(settings: LlmSettings): FormState {
     write_timeout: String(settings.write_timeout),
     pool_timeout: String(settings.pool_timeout),
     max_retries: String(settings.max_retries),
+    planner_max_tokens: String(settings.planner_max_tokens),
+    summary_max_tokens: String(settings.summary_max_tokens),
   }
 }
 
@@ -347,6 +351,21 @@ export function SettingsView() {
         error: "Max retries must be zero or a positive integer.",
       }
     }
+    const plannerMaxTokens = Number(form.planner_max_tokens)
+    const summaryMaxTokens = Number(form.summary_max_tokens)
+    if (
+      !form.planner_max_tokens.trim() ||
+      !Number.isInteger(plannerMaxTokens) ||
+      plannerMaxTokens <= 0 ||
+      !form.summary_max_tokens.trim() ||
+      !Number.isInteger(summaryMaxTokens) ||
+      summaryMaxTokens <= 0
+    ) {
+      return {
+        update: null,
+        error: "Token caps must be positive integers.",
+      }
+    }
     const update: LlmSettingsUpdate = {
       base_url: form.base_url.trim(),
       model: form.model.trim(),
@@ -358,6 +377,8 @@ export function SettingsView() {
       write_timeout: Number(form.write_timeout),
       pool_timeout: Number(form.pool_timeout),
       max_retries: maxRetries,
+      planner_max_tokens: plannerMaxTokens,
+      summary_max_tokens: summaryMaxTokens,
     }
     if (!settings || form.provider !== settings.provider) {
       update.provider = form.provider
@@ -664,6 +685,24 @@ export function SettingsView() {
                     step="1"
                     value={form.max_retries}
                     onChange={(value) => updateForm({ max_retries: value })}
+                  />
+                  <NumberField
+                    label="Planner max tokens"
+                    min="1"
+                    step="1"
+                    value={form.planner_max_tokens}
+                    onChange={(value) =>
+                      updateForm({ planner_max_tokens: value })
+                    }
+                  />
+                  <NumberField
+                    label="Summary max tokens"
+                    min="1"
+                    step="1"
+                    value={form.summary_max_tokens}
+                    onChange={(value) =>
+                      updateForm({ summary_max_tokens: value })
+                    }
                   />
                 </div>
               </CardContent>

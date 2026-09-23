@@ -6,6 +6,7 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Awaitable, Callable
+from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -32,6 +33,7 @@ from src.db.session import add_assistant_message, ensure_session
 from src.interfaces.events import (
     busy_payload,
     cancelled_payload,
+    delta_payload,
     error_payload,
     response_payload,
     schema_warning_payload,
@@ -298,8 +300,17 @@ async def _run_plan(
     uses_llm_summary = _uses_llm_summary(
         final_plan, observations, raw_requested=raw_requested
     )
+    message_id = f"msg_{uuid4().hex}"
+
+    async def on_delta(fragment: str, *, reset: bool = False) -> None:
+        await send(delta_payload(message_id, fragment, reset=reset))
+
     summary = await _summarize(
-        user_text, final_plan, observations, raw_requested=raw_requested
+        user_text,
+        final_plan,
+        observations,
+        raw_requested=raw_requested,
+        on_delta=on_delta,
     )
     log_stage("summary", time.monotonic() - summary_started, llm=uses_llm_summary)
     if summary:
@@ -307,7 +318,7 @@ async def _run_plan(
             async with async_session_factory() as db:
                 await add_assistant_message(db, session_id, summary)
         with contextlib.suppress(Exception):
-            await send(response_payload(summary))
+            await send(response_payload(summary, message_id=message_id))
 
     # plan_done is terminal for the UI: send it only once the summary is out so
     # the client keeps the turn busy until the whole request has finished.
@@ -333,13 +344,15 @@ async def _summarize(
     observations: list[dict],
     *,
     raw_requested: bool = False,
+    on_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     """Summarize a finished plan in the assistant's own words.
 
     Raw tool text is surfaced when the user explicitly asked for it, when there
     is nothing to summarize, when the plan is a direct single-step action (its
     raw output already is the answer), or when the summary call fails or
-    contradicts the numbers in the observations.
+    contradicts the numbers in the observations. ``on_delta`` (if set) streams
+    the summary text; it is only forwarded on the LLM path.
     """
     if not _uses_llm_summary(plan, observations, raw_requested=raw_requested):
         if not observations:
@@ -347,7 +360,7 @@ async def _summarize(
         return _raw_summary(plan, observations)
     try:
         summary = await airouter_with_plugins.summarize_plan(
-            user_text, plan, observations
+            user_text, plan, observations, on_delta=on_delta
         )
     except asyncio.CancelledError:
         raise
@@ -463,9 +476,16 @@ async def _process_user_message(
         await send(thinking_payload())
         logger.info(f"🧠 Sending request to the LLM for session={session_id}...")
 
+        message_id = f"msg_{uuid4().hex}"
+
+        async def on_delta(fragment: str, *, reset: bool = False) -> None:
+            await send(delta_payload(message_id, fragment, reset=reset))
+
         route_started = time.monotonic()
         try:
-            result = await airouter_with_plugins.route(user_text, session_id)
+            result = await airouter_with_plugins.route(
+                user_text, session_id, on_delta=on_delta
+            )
             logger.info(
                 f"✅ LLM responded, type={result.get('type')}, session={session_id}"
             )
@@ -487,7 +507,9 @@ async def _process_user_message(
         answer_type = result.get("type")
 
         if answer_type == "text":
-            await send(response_payload(result.get("content", "")))
+            await send(
+                response_payload(result.get("content", ""), message_id=message_id)
+            )
             return
 
         if answer_type != "plan":

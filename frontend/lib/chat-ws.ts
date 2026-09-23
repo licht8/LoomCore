@@ -1,6 +1,8 @@
 import type { UseChatState, WsMessage } from "@/lib/chat-types"
 import {
+  appendAssistantDelta,
   applyPlanStep,
+  finalizeAssistant,
   finalizePendingTool,
   formatTimestamp,
   upsertPlanMessage,
@@ -37,16 +39,37 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         isSending: false,
         planRequest: null,
         error: null,
-        messages: [
-          ...state.messages,
-          {
-            id: `msg_${Date.now()}`,
-            role: "assistant",
-            content: msg.content || msg.text || "",
-            timestamp: formatTimestamp(),
-          },
-        ],
+        messages: msg.message_id
+          ? finalizeAssistant(
+              state.messages,
+              msg.message_id,
+              msg.content || msg.text || "",
+            )
+          : [
+              ...state.messages,
+              {
+                id: `msg_${Date.now()}`,
+                role: "assistant",
+                content: msg.content || msg.text || "",
+                timestamp: formatTimestamp(),
+              },
+            ],
       }
+
+    case "delta": {
+      if (!msg.message_id) return state
+      return {
+        ...state,
+        isThinking: true,
+        error: null,
+        messages: appendAssistantDelta(
+          state.messages,
+          msg.message_id,
+          msg.content ?? "",
+          msg.reset === true,
+        ),
+      }
+    }
 
     case "tool_call":
       return {

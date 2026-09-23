@@ -48,6 +48,8 @@ class LlmConfig:
     write_timeout: float = 30.0
     pool_timeout: float = 15.0
     max_retries: int = 1
+    planner_max_tokens: int = 1024
+    summary_max_tokens: int = 512
 
     @property
     def configured(self) -> bool:
@@ -77,6 +79,8 @@ def default_config() -> LlmConfig:
         write_timeout=settings.llm_write_timeout,
         pool_timeout=settings.llm_pool_timeout,
         max_retries=settings.llm_max_retries,
+        planner_max_tokens=settings.llm_planner_max_tokens,
+        summary_max_tokens=settings.llm_summary_max_tokens,
     )
 
 
@@ -112,6 +116,13 @@ def _as_int(value: object, fallback: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return fallback
     return value
+
+
+def _as_positive_int(value: object, fallback: int) -> int:
+    """Coerce ``value`` to a positive int, else ``fallback`` (never 0)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return fallback
+    return value if value > 0 else fallback
 
 
 def load_config(path: Path) -> LlmConfig:
@@ -158,6 +169,16 @@ def load_config(path: Path) -> LlmConfig:
         write_timeout=_as_float(data.get("write_timeout"), base.write_timeout),
         pool_timeout=_as_float(data.get("pool_timeout"), base.pool_timeout),
         max_retries=_as_int(data.get("max_retries"), base.max_retries),
+        planner_max_tokens=(
+            _as_positive_int(data.get("planner_max_tokens"), base.planner_max_tokens)
+            if "planner_max_tokens" in data
+            else base.planner_max_tokens
+        ),
+        summary_max_tokens=(
+            _as_positive_int(data.get("summary_max_tokens"), base.summary_max_tokens)
+            if "summary_max_tokens" in data
+            else base.summary_max_tokens
+        ),
     )
 
 

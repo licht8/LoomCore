@@ -106,7 +106,7 @@ def _patch_plan_runtime(
     async def fake_save_plan(session_id, plan):
         saved_plans.append(plan)
 
-    async def fake_summarize(user_text, plan, observations):
+    async def fake_summarize(user_text, plan, observations, **kwargs):
         return summarize
 
     async def fake_known():
@@ -195,7 +195,7 @@ async def test_execute_tool_routes_plugin_names_to_manager(monkeypatch):
 async def test_process_user_message_text_response(monkeypatch):
     sent, send = _collector()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "text", "content": "hello"}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -207,18 +207,17 @@ async def test_process_user_message_text_response(monkeypatch):
         "status": "processing",
         "schema_version": 1,
     }
-    assert sent[-1] == {
-        "type": "response",
-        "content": "hello",
-        "schema_version": 1,
-    }
+    assert sent[-1]["type"] == "response"
+    assert sent[-1]["content"] == "hello"
+    assert sent[-1]["schema_version"] == 1
+    assert sent[-1]["message_id"].startswith("msg_")
 
 
 @pytest.mark.asyncio
 async def test_process_user_message_reports_llm_error(monkeypatch):
     sent, send = _collector()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         raise LlmError("boom")
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -242,7 +241,7 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -277,10 +276,10 @@ async def test_direct_action_skips_llm_summary(monkeypatch):
     )
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
-    async def fake_summary(user_text, plan, observations):
+    async def fake_summary(user_text, plan, observations, **kwargs):
         calls.append((user_text, observations))
         return "All good — the core is healthy."
 
@@ -320,7 +319,7 @@ async def test_summary_replaces_a_raw_table(monkeypatch):
     async def fake_execute(tool_name, arguments=None, *, approved=False):
         return {"content": [{"type": "text", "text": table}], "data": {}}
 
-    async def fake_summary(user_text, plan, observations):
+    async def fake_summary(user_text, plan, observations, **kwargs):
         return "3 peers on wg0; one is online and two are offline."
 
     _patch_plan_runtime(monkeypatch)
@@ -347,13 +346,13 @@ async def test_explicit_raw_output_request_returns_the_table(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     async def fake_execute(tool_name, arguments=None, *, approved=False):
         return {"content": [{"type": "text", "text": table}], "data": {}}
 
-    async def boom_summary(user_text, plan, observations):
+    async def boom_summary(user_text, plan, observations, **kwargs):
         raise AssertionError("raw output requests must not call the LLM summary")
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -394,7 +393,7 @@ async def test_process_user_message_direct_dangerous_asks_in_text(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -423,7 +422,7 @@ async def test_process_user_message_reports_step_failure(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -466,7 +465,7 @@ async def test_websocket_plan_approve(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -505,7 +504,7 @@ async def test_websocket_plan_reject(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -541,7 +540,7 @@ async def test_websocket_plan_edit_auto_runs(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -581,7 +580,7 @@ async def test_websocket_plan_edit_rejects_unknown_tool(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -618,7 +617,7 @@ async def test_websocket_plan_edit_rejects_invalid_arguments(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -712,7 +711,7 @@ async def test_websocket_cancel_during_plan(monkeypatch):
         }
     )
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -773,7 +772,7 @@ async def test_websocket_direct_confirm_yes_runs(monkeypatch):
     saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
     plan = _dangerous_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -797,7 +796,7 @@ async def test_websocket_direct_confirm_no_rejects(monkeypatch):
     saved_tools, _ = _patch_plan_runtime(monkeypatch)
     plan = _dangerous_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -821,7 +820,7 @@ async def test_websocket_direct_unclear_reasks_then_resets(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     plan = _dangerous_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -847,7 +846,7 @@ async def test_websocket_direct_confirm_timeout_routes_new_message(monkeypatch):
     plan = _dangerous_plan()
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         calls.append(user_text)
         return {"type": "plan", "plan": plan}
 
@@ -868,7 +867,7 @@ async def test_websocket_yes_without_pending_routes_normally(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         calls.append(user_text)
         return {"type": "text", "content": "hello"}
 
@@ -880,11 +879,10 @@ async def test_websocket_yes_without_pending_routes_normally(monkeypatch):
     await ws_module.websocket_endpoint(ws, "sess")
 
     assert calls == ["yes"]
-    assert ws.sent[-1] == {
-        "type": "response",
-        "content": "hello",
-        "schema_version": 1,
-    }
+    assert ws.sent[-1]["type"] == "response"
+    assert ws.sent[-1]["content"] == "hello"
+    assert ws.sent[-1]["schema_version"] == 1
+    assert ws.sent[-1]["message_id"].startswith("msg_")
 
 
 @pytest.mark.asyncio
@@ -893,7 +891,7 @@ async def test_websocket_confirmation_isolated_per_session(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     plan = _dangerous_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -947,7 +945,7 @@ async def test_plan_proposed_auto_run_marks_approved(monkeypatch):
     sent, send = _collector()
     plan = _safe_two_step_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -971,7 +969,7 @@ async def test_plan_proposed_requires_approval_stays_proposed(monkeypatch):
     sent, send = _collector()
     plan = _risky_two_step_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -993,7 +991,7 @@ async def test_websocket_plan_approve_marks_approved(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     plan = _risky_two_step_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -1086,7 +1084,7 @@ async def test_websocket_typed_yes_approves_plan_card(monkeypatch):
     saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
     plan = _risky_two_step_plan()
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "plan", "plan": plan}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -1110,7 +1108,7 @@ async def test_websocket_unrelated_message_cancels_plan_card(monkeypatch):
     plan = _risky_two_step_plan()
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         calls.append(user_text)
         if len(calls) == 1:
             return {"type": "plan", "plan": plan}
@@ -1167,7 +1165,7 @@ async def test_websocket_ignores_non_string_message(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         calls.append(user_text)
         return {"type": "text", "content": "ok"}
 
@@ -1188,7 +1186,7 @@ async def test_websocket_ignores_non_dict_frame(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         calls.append(user_text)
         return {"type": "text", "content": "ok"}
 
@@ -1209,7 +1207,7 @@ async def test_websocket_skips_malformed_json_frame(monkeypatch):
     _patch_plan_runtime(monkeypatch)
     calls = []
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         calls.append(user_text)
         return {"type": "text", "content": "ok"}
 
@@ -1357,7 +1355,7 @@ def test_counts_mismatch_flags_changed_numbers():
 
 @pytest.mark.asyncio
 async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch):
-    async def fake_summarize(user_text, plan, observations):
+    async def fake_summarize(user_text, plan, observations, **kwargs):
         return "It is healthy: 0 critical, 0 warnings, 1 info."
 
     monkeypatch.setattr(
@@ -1425,7 +1423,7 @@ async def test_websocket_logs_payload_summary_not_content(monkeypatch, caplog):
     _patch_db(monkeypatch)
     _patch_plan_runtime(monkeypatch)
 
-    async def fake_route(user_text, session_id):
+    async def fake_route(user_text, session_id, **kwargs):
         return {"type": "text", "content": "ok"}
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
@@ -1456,3 +1454,92 @@ async def test_disconnect_keeps_the_shared_window(monkeypatch):
     # Closing a socket must not hand the client a fresh allowance: the window is
     # shared per identity, so the used slot survives the disconnect.
     assert ws_module._allow_ws_message("admin") is False
+
+
+# --------------------------------------------------------------------------- #
+# streaming deltas
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_run_plan_streams_summary_deltas(monkeypatch):
+    _patch_db(monkeypatch)
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "health",
+            "steps": [
+                {"tool": "core_health", "args": {}, "why": "baseline"},
+                {"tool": "wg_interface_status", "args": {}, "why": "interfaces"},
+            ],
+        }
+    )
+
+    async def fake_summary(user_text, plan, observations, **kwargs):
+        on_delta = kwargs.get("on_delta")
+        for fragment in ("all ", "good"):
+            if on_delta is not None:
+                await on_delta(fragment)
+        return "all good"
+
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", fake_summary)
+
+    await ws_module._run_plan(
+        send, "sess", "check health", plan, {"tool": None, "plan": None}
+    )
+
+    deltas = [p for p in sent if p["type"] == "delta"]
+    assert [p["content"] for p in deltas] == ["all ", "good"]
+    message_ids = {p["message_id"] for p in deltas}
+    assert len(message_ids) == 1
+    response = next(p for p in sent if p["type"] == "response")
+    assert response["content"] == "all good"
+    assert response["message_id"] in message_ids
+
+
+@pytest.mark.asyncio
+async def test_text_reply_streams_and_reconciles(monkeypatch):
+    _patch_db(monkeypatch)
+    sent, send = _collector()
+
+    async def fake_route(user_text, session_id, **kwargs):
+        on_delta = kwargs.get("on_delta")
+        if on_delta is not None:
+            await on_delta("he")
+            await on_delta("llo")
+        return {"type": "text", "content": "hello"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    await ws_module._process_user_message(send, "sess", "hi")
+
+    deltas = [p for p in sent if p["type"] == "delta"]
+    assert [p["content"] for p in deltas] == ["he", "llo"]
+    response = next(p for p in sent if p["type"] == "response")
+    assert response["content"] == "hello"
+    assert response["message_id"] == deltas[0]["message_id"]
+
+
+@pytest.mark.asyncio
+async def test_reply_reask_emits_reset_delta(monkeypatch):
+    _patch_db(monkeypatch)
+    sent, send = _collector()
+
+    async def fake_route(user_text, session_id, **kwargs):
+        on_delta = kwargs.get("on_delta")
+        if on_delta is not None:
+            await on_delta("draft")
+            await on_delta("", reset=True)
+            await on_delta("final")
+        return {"type": "text", "content": "final"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    await ws_module._process_user_message(send, "sess", "hi")
+
+    resets = [p for p in sent if p["type"] == "delta" and p.get("reset")]
+    assert len(resets) == 1
+    assert resets[0]["content"] == ""
+    response = next(p for p in sent if p["type"] == "response")
+    assert response["content"] == "final"

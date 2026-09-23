@@ -197,6 +197,58 @@ async def test_update_rejects_unresolvable_host(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["planner_max_tokens", "summary_max_tokens"])
+async def test_update_rejects_non_positive_max_tokens(monkeypatch, field):
+    _auth(monkeypatch)
+    async with _client() as client:
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={field: 0},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"{field} must be positive"
+
+
+@pytest.mark.asyncio
+async def test_update_round_trips_max_tokens(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        put = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(planner_max_tokens=333, summary_max_tokens=111),
+        )
+        get = await client.get("/api/llm/settings", headers=_AUTH)
+
+    assert put.status_code == 200
+    assert put.json()["planner_max_tokens"] == 333
+    assert put.json()["summary_max_tokens"] == 111
+    assert get.json()["planner_max_tokens"] == 333
+    assert get.json()["summary_max_tokens"] == 111
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_max_tokens_when_omitted(monkeypatch):
+    _auth(monkeypatch)
+    async with _client() as client:
+        await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json=_configured_payload(planner_max_tokens=333),
+        )
+        response = await client.put(
+            "/api/llm/settings",
+            headers=_AUTH,
+            json={"model": "gpt-4o"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["planner_max_tokens"] == 333
+
+
+@pytest.mark.asyncio
 async def test_update_rejects_negative_max_retries(monkeypatch):
     _auth(monkeypatch)
     async with _client() as client:

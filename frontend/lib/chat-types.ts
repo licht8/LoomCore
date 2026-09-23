@@ -60,7 +60,13 @@ export interface PlanRequest {
 /** Event arriving from the backend over WebSocket (discriminated on `type`). */
 export type WsMessage =
   | { type: "thinking" }
-  | { type: "response"; content?: string; text?: string }
+  | { type: "response"; content?: string; text?: string; message_id?: string }
+  | {
+      type: "delta"
+      message_id?: string
+      content?: string
+      reset?: boolean
+    }
   | {
       type: "tool_call"
       content?: string

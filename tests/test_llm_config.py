@@ -92,6 +92,50 @@ def test_load_config_summary_model_explicit_empty_clears(tmp_path, monkeypatch):
     assert load_config(path).summary_model == ""
 
 
+def test_max_tokens_from_env(monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_planner_max_tokens", 2048)
+    monkeypatch.setattr(config_module.settings, "llm_summary_max_tokens", 256)
+
+    config = default_config()
+    assert config.planner_max_tokens == 2048
+    assert config.summary_max_tokens == 256
+
+
+def test_load_config_max_tokens_rejects_nonpositive(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_planner_max_tokens", 2048)
+    monkeypatch.setattr(config_module.settings, "llm_summary_max_tokens", 256)
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "base_url": "https://x/v1",
+                "model": "m",
+                "planner_max_tokens": 0,
+                "summary_max_tokens": -5,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+    assert config.planner_max_tokens == 2048
+    assert config.summary_max_tokens == 256
+
+
+def test_load_config_max_tokens_falls_back_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_planner_max_tokens", 2048)
+    monkeypatch.setattr(config_module.settings, "llm_summary_max_tokens", 256)
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m"}),
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+    assert config.planner_max_tokens == 2048
+    assert config.summary_max_tokens == 256
+
+
 def test_load_missing_file_returns_default(tmp_path):
     assert load_config(tmp_path / "missing.json") == default_config()
 

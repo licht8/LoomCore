@@ -577,3 +577,274 @@ async def test_request_path_still_rejects_literal_internal_url(monkeypatch):
         await OpenAICompatClient(
             config=_config(base_url="http://10.0.0.5/v1")
         ).chat_completion([{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_included_only_when_set(monkeypatch):
+    fake = _install(monkeypatch, [_FakeResponse(), _FakeResponse()])
+
+    await OpenAICompatClient(config=_config()).chat_completion(
+        [{"role": "user", "content": "hi"}], max_tokens=64
+    )
+    await OpenAICompatClient(config=_config()).chat_completion(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert fake.requests[0]["json"]["max_tokens"] == 64
+    assert "max_tokens" not in fake.requests[1]["json"]
+
+
+class _FakeStreamResponse:
+    """A streaming response whose body is a scripted list of SSE lines."""
+
+    def __init__(self, lines, status_code=200, headers=None):
+        self._lines = lines
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.content = b""
+        self.text = ""
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self):
+        return b"stream error body"
+
+
+class _RaisingStreamResponse(_FakeStreamResponse):
+    """A stream that yields its lines and then raises mid-stream."""
+
+    def __init__(self, lines, exc):
+        super().__init__(lines)
+        self._exc = exc
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+        raise self._exc
+
+
+class _FakeStreamContext:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeStreamClient:
+    """Client whose ``stream()`` returns scripted SSE responses or raises."""
+
+    def __init__(self, outcomes):
+        self._outcomes = outcomes
+        self.calls = 0
+        self.requests = []
+
+    def stream(self, method, url, **kwargs):
+        self.requests.append(
+            {"method": method, "url": url, "json": kwargs.get("json")}
+        )
+        outcome = self._outcomes[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeStreamContext(outcome)
+
+    async def aclose(self):
+        pass
+
+
+def _sse(chunk: dict) -> str:
+    return "data: " + json.dumps(chunk)
+
+
+def _install_stream(monkeypatch, outcomes):
+    fake = _FakeStreamClient(outcomes)
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", lambda **kwargs: fake)
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_completion_emits_content_deltas(monkeypatch):
+    fake = _install_stream(
+        monkeypatch,
+        [
+            _FakeStreamResponse(
+                [
+                    _sse({"choices": [{"delta": {"content": "Hel"}}]}),
+                    _sse({"choices": [{"delta": {"content": "lo"}}]}),
+                    _sse(
+                        {
+                            "usage": {
+                                "prompt_tokens": 3,
+                                "completion_tokens": 2,
+                                "total_tokens": 5,
+                            }
+                        }
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+        ],
+    )
+    fragments: list[str] = []
+
+    async def on_content(fragment: str) -> None:
+        fragments.append(fragment)
+
+    result = await OpenAICompatClient(config=_config()).stream_chat_completion(
+        [{"role": "user", "content": "hi"}], on_content=on_content
+    )
+
+    assert fragments == ["Hel", "lo"]
+    assert result["choices"][0]["message"]["content"] == "Hello"
+    assert result["usage"]["total_tokens"] == 5
+    payload = fake.requests[0]["json"]
+    assert payload["stream"] is True
+    assert payload["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_completion_accumulates_tool_args(monkeypatch):
+    _install_stream(
+        monkeypatch,
+        [
+            _FakeStreamResponse(
+                [
+                    _sse(
+                        {
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": 0,
+                                                "id": "call_1",
+                                                "function": {
+                                                    "name": "reply",
+                                                    "arguments": '{"text"',
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ),
+                    _sse(
+                        {
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": 0,
+                                                "function": {
+                                                    "arguments": ': "hi"}'
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+        ],
+    )
+    seen: list[tuple[str | None, str]] = []
+
+    async def on_tool_delta(name, args_so_far):
+        seen.append((name, args_so_far))
+
+    result = await OpenAICompatClient(config=_config()).stream_chat_completion(
+        [{"role": "user", "content": "hi"}], on_tool_delta=on_tool_delta
+    )
+
+    assert seen[-1] == ("reply", '{"text": "hi"}')
+    call = result["choices"][0]["message"]["tool_calls"][0]
+    assert call["function"]["name"] == "reply"
+    assert call["function"]["arguments"] == '{"text": "hi"}'
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_after_first_delta(monkeypatch, _no_usage_db):
+    fake = _install_stream(
+        monkeypatch,
+        [
+            _RaisingStreamResponse(
+                [_sse({"choices": [{"delta": {"content": "partial"}}]})],
+                httpx.ReadTimeout("mid-stream"),
+            )
+        ],
+    )
+
+    with pytest.raises(LlmError, match="after partial output"):
+        await OpenAICompatClient(
+            config=_config(max_retries=3)
+        ).stream_chat_completion([{"role": "user", "content": "hi"}])
+
+    assert fake.calls == 1
+    _no_usage_db.assert_awaited_once()
+    assert _no_usage_db.await_args.kwargs["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_before_first_delta(monkeypatch):
+    sleeps = _record_sleeps(monkeypatch)
+    fake = _install_stream(
+        monkeypatch,
+        [
+            httpx.ConnectError("boom"),
+            _FakeStreamResponse(
+                [
+                    _sse({"choices": [{"delta": {"content": "ok"}}]}),
+                    "data: [DONE]",
+                ]
+            ),
+        ],
+    )
+    fragments: list[str] = []
+
+    async def on_content(fragment: str) -> None:
+        fragments.append(fragment)
+
+    result = await OpenAICompatClient(
+        config=_config(max_retries=1)
+    ).stream_chat_completion(
+        [{"role": "user", "content": "hi"}], on_content=on_content
+    )
+
+    assert fake.calls == 2
+    assert fragments == ["ok"]
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert sleeps == [1]
+
+
+@pytest.mark.asyncio
+async def test_stream_non_sse_json_fallback(monkeypatch):
+    body = json.dumps(
+        {
+            "choices": [{"message": {"content": "fallback"}}],
+            "usage": {"total_tokens": 2},
+        }
+    )
+    _install_stream(monkeypatch, [_FakeStreamResponse([body])])
+    fragments: list[str] = []
+
+    async def on_content(fragment: str) -> None:
+        fragments.append(fragment)
+
+    result = await OpenAICompatClient(config=_config()).stream_chat_completion(
+        [{"role": "user", "content": "hi"}], on_content=on_content
+    )
+
+    assert fragments == []
+    assert result["choices"][0]["message"]["content"] == "fallback"
+    assert result["usage"]["total_tokens"] == 2

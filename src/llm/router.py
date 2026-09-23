@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 
 from src.core.agent import (
     AGENT_PLAN_TOOL,
@@ -24,6 +24,10 @@ from src.llm.prompt import build_planner_messages, build_summary_messages
 from src.plugins.manager import PluginManager
 
 logger = logging.getLogger("loomcore.router")
+
+# Longest tool description rendered in the planner catalog (chars, before the
+# ellipsis); a verbose plugin description must not bloat the system prompt.
+_MAX_TOOL_DESC_CHARS = 160
 
 # A tool call the model wrote as plain text instead of a structured call.
 _TEXTUAL_CALL_RE = re.compile(r"\[tool\s+(?P<name>[A-Za-z0-9_]+)\s*\]")
@@ -179,6 +183,8 @@ class AIRouter:
         self,
         user_message: str,
         session_id: str,
+        *,
+        on_delta: Callable[..., Awaitable[None]] | None = None,
     ) -> dict:
         """Plan or answer a user request.
 
@@ -188,8 +194,13 @@ class AIRouter:
            the call is forced so an unstructured turn cannot slip through.
         4. Validate the plan; re-ask once when it is malformed.
         5. Persist and return the plan, or the plain-text answer.
+
+        When ``on_delta`` is set, the planner is streamed and the ``reply``
+        tool's ``text`` argument is forwarded incrementally; the streamer is
+        reset before every re-ask so two attempts never concatenate.
         """
-        if not get_active().configured:
+        config = get_active()
+        if not config.configured:
             # Persist the turn even without a provider: the user message and the
             # notice stay in history so they survive a reload and are valid
             # context once an admin configures a provider.
@@ -223,17 +234,35 @@ class AIRouter:
         bare_answer = False
         planner_started = time.monotonic()
         planner_attempts = 0
+        reply_stream = _ReplyTextStream() if on_delta is not None else None
         try:
             for attempt in range(PLANNER_REASK_LIMIT + 1):
                 planner_attempts += 1
-                llm_response = await self.client.chat_completion(
-                    messages,
-                    tools=PLANNER_TOOLS,
-                    tool_choice="required",
-                    temperature=0,
-                    purpose="planner",
-                    session_id=session_id,
-                )
+                if reply_stream is not None and attempt > 0:
+                    # A re-ask must not append to the previous attempt's text.
+                    reply_stream.reset()
+                    await on_delta("", reset=True)
+                if on_delta is not None:
+                    llm_response = await self.client.stream_chat_completion(
+                        messages,
+                        tools=PLANNER_TOOLS,
+                        tool_choice="required",
+                        temperature=0,
+                        max_tokens=config.planner_max_tokens,
+                        purpose="planner",
+                        session_id=session_id,
+                        on_tool_delta=_make_reply_streamer(reply_stream, on_delta),
+                    )
+                else:
+                    llm_response = await self.client.chat_completion(
+                        messages,
+                        tools=PLANNER_TOOLS,
+                        tool_choice="required",
+                        temperature=0,
+                        max_tokens=config.planner_max_tokens,
+                        purpose="planner",
+                        session_id=session_id,
+                    )
                 choices = llm_response.get("choices", [])
                 if not choices:
                     return {"type": "text", "content": "No response from the LLM"} | message_extra
@@ -350,16 +379,34 @@ class AIRouter:
         user_message: str,
         plan: dict,
         observations: list[dict],
+        *,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
-        """Produce the SOUL-voiced summary for a completed plan."""
+        """Produce the SOUL-voiced summary for a completed plan.
+
+        When ``on_delta`` is set the summary is streamed and each text fragment
+        is forwarded as it arrives.
+        """
         config = get_active()
         if not config.configured:
             return NOT_CONFIGURED_MESSAGE
         messages = build_summary_messages(user_message, plan, observations)
         async with span("summary_call", steps=len(plan.get("steps", []))):
-            llm_response = await self.client.chat_completion(
-                messages, model=config.summary_model or None, purpose="summary"
-            )
+            if on_delta is not None:
+                llm_response = await self.client.stream_chat_completion(
+                    messages,
+                    model=config.summary_model or None,
+                    max_tokens=config.summary_max_tokens,
+                    purpose="summary",
+                    on_content=on_delta,
+                )
+            else:
+                llm_response = await self.client.chat_completion(
+                    messages,
+                    model=config.summary_model or None,
+                    max_tokens=config.summary_max_tokens,
+                    purpose="summary",
+                )
             content, _tool_name, _tool_args, _raw = self._parse_completion(llm_response)
         return content
 
@@ -567,9 +614,10 @@ class AIRouter:
             schema = tool.get("inputSchema") or {}
             properties = schema.get("properties") if isinstance(schema, dict) else None
             arg_names = ", ".join(properties.keys()) if isinstance(properties, dict) else ""
-            lines.append(
-                f"- {tool.get('name')}({arg_names}): {tool.get('description', '')}"
-            )
+            description = str(tool.get("description", ""))
+            if len(description) > _MAX_TOOL_DESC_CHARS:
+                description = description[:_MAX_TOOL_DESC_CHARS] + "…"
+            lines.append(f"- {tool.get('name')}({arg_names}): {description}")
         return "\n".join(lines)
 
     @staticmethod
@@ -596,3 +644,100 @@ class AIRouter:
                 tool_args = {"_raw": args_str}
 
         return content, tool_name, tool_args, raw_tool_calls
+
+
+# The start of the ``text`` string value inside a streamed ``reply`` call's
+# JSON arguments (the opening quote is consumed by ``match.end()``).
+_REPLY_TEXT_KEY_RE = re.compile(r'"text"\s*:\s*"')
+
+
+def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int]:
+    """Decode a JSON string body from ``start`` (after the opening quote).
+
+    Returns ``(decoded, end_index)``; ``end_index`` is the closing-quote index,
+    or ``len(raw)`` while the string is still open. A trailing partial escape is
+    left undecoded for the next call.
+    """
+    simple = {
+        "n": "\n",
+        "t": "\t",
+        "r": "\r",
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+    }
+    out: list[str] = []
+    i, n = start, len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch == '"':
+            return "".join(out), i
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        if i + 1 >= n:
+            break
+        esc = raw[i + 1]
+        if esc in simple:
+            out.append(simple[esc])
+            i += 2
+        elif esc == "u":
+            if i + 6 > n:
+                break
+            try:
+                out.append(chr(int(raw[i + 2 : i + 6], 16)))
+            except ValueError:
+                out.append("\\u" + raw[i + 2 : i + 6])
+            i += 6
+        else:
+            out.append(esc)
+            i += 2
+    return "".join(out), n
+
+
+class _ReplyTextStream:
+    """Incrementally extract the ``text`` argument of a streamed ``reply``."""
+
+    def __init__(self) -> None:
+        self._active = False
+        self._emitted = 0
+        self._done = False
+
+    def reset(self) -> None:
+        """Discard state so a re-ask starts from a clean slate."""
+        self._active = False
+        self._emitted = 0
+        self._done = False
+
+    def feed(self, name: str | None, args_so_far: str) -> str:
+        """Return the newly decoded reply text for the accumulated arguments."""
+        if name is not None:
+            self._active = name == REPLY_TOOL
+        if not self._active or self._done:
+            return ""
+        match = _REPLY_TEXT_KEY_RE.search(args_so_far)
+        if match is None:
+            return ""
+        decoded, end = _decode_json_string_prefix(args_so_far, match.end())
+        if end < len(args_so_far):
+            self._done = True
+        delta = decoded[self._emitted :]
+        self._emitted = len(decoded)
+        return delta
+
+
+def _make_reply_streamer(
+    stream: _ReplyTextStream,
+    on_delta: Callable[[str], Awaitable[None]],
+) -> Callable[[str | None, str], Awaitable[None]]:
+    """Build the ``on_tool_delta`` callback that forwards reply text."""
+
+    async def _on_tool_delta(name: str | None, args_so_far: str) -> None:
+        fragment = stream.feed(name, args_so_far)
+        if fragment:
+            await on_delta(fragment)
+
+    return _on_tool_delta
