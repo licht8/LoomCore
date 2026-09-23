@@ -699,14 +699,20 @@ def _decode_json_string_prefix(raw: str, start: int) -> tuple[str, int, bool]:
                 i += 6
                 continue
             if 0xD800 <= value <= 0xDBFF:
-                # A high surrogate needs its low counterpart; wait for the next
-                # chunk when the pair is still incomplete.
-                if i + 12 > n:
+                # A high surrogate needs its low counterpart. Inspect what
+                # follows first: if it is not a ``\u`` escape at all, the
+                # surrogate is lone and must be replaced (not held back). Only
+                # wait for the next chunk when the following escape is itself
+                # incomplete.
+                nxt = raw[i + 6 : i + 8]
+                if len(nxt) < 2:
                     break
-                if raw[i + 6 : i + 8] != "\\u":
+                if nxt != "\\u":
                     out.append("\ufffd")
                     i += 6
                     continue
+                if i + 12 > n:
+                    break
                 try:
                     low = int(raw[i + 8 : i + 12], 16)
                 except ValueError:
@@ -741,12 +747,16 @@ class _ReplyTextStream:
         # Raw offset in the accumulated arguments to resume decoding from; None
         # until the ``text`` key has been seen.
         self._pos: int | None = None
+        # Length of the buffer seen on the previous call, used to detect a
+        # silent restart (see ``feed``).
+        self._seen = 0
 
     def reset(self) -> None:
         """Discard state so a re-ask starts from a clean slate."""
         self._active = False
         self._done = False
         self._pos = None
+        self._seen = 0
 
     def feed(self, name: str | None, args_so_far: str) -> str:
         """Return the newly decoded reply text for the accumulated arguments.
@@ -756,6 +766,13 @@ class _ReplyTextStream:
         """
         if name is not None:
             self._active = name == REPLY_TOOL
+        if len(args_so_far) < self._seen:
+            # The client restarted this call internally (a retry after tool
+            # deltas that never forwarded text) without notifying us, so the
+            # accumulated buffer shrank and the resume offset is stale.
+            self._pos = None
+            self._done = False
+        self._seen = len(args_so_far)
         if not self._active or self._done:
             return ""
         if self._pos is None:

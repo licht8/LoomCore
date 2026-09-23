@@ -1007,6 +1007,30 @@ def test_reply_text_stream_reset_restarts():
     assert stream.feed(REPLY_TOOL, '{"text": "second"}') == "second"
 
 
+def test_reply_text_stream_replaces_lone_high_surrogate():
+    raw = '{"text": "a\\ud83d"}'
+    stream = _ReplyTextStream()
+    fragments = []
+    for index in range(1, len(raw) + 1):
+        fragment = stream.feed(REPLY_TOOL, raw[:index])
+        if fragment:
+            fragments.append(fragment)
+
+    decoded = "".join(fragments)
+    assert decoded == "a\ufffd"
+    decoded.encode("utf-8")
+    assert stream._done
+
+
+def test_reply_text_stream_recovers_from_silent_restart():
+    stream = _ReplyTextStream()
+    # A client-internal retry restarts the buffer; nothing was forwarded yet
+    # because the first attempt only reached the opening quote of ``text``.
+    stream.feed(REPLY_TOOL, '{"note": "x", "text": "')
+    assert stream.feed(REPLY_TOOL, '{"text": "recovered"}') == "recovered"
+    assert stream._done
+
+
 @pytest.mark.asyncio
 async def test_route_streams_reply_via_on_delta(patched_router):
     router, state = patched_router
