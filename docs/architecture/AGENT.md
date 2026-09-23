@@ -53,7 +53,10 @@ so an edited or hand-crafted plan cannot slip past the planner. See
    - plan + any non-safe — waits for approve / edit / reject.
 4. **Execute** — the executor replays the stored steps verbatim: the approved
    `tool` and `args`, in order. It never re-asks between steps and never
-   paraphrases arguments. A failed step stops the plan.
+   paraphrases arguments. Consecutive `safe` steps marked `parallel: true` run
+   concurrently (results are collected in plan order); every other step runs
+   serially, and non-safe steps still require approval. A failed step stops the
+   plan.
 5. **Summarize** — every tool-backed turn, direct actions included, gets a second
    LLM call voiced by `src/llm/SOUL.md`. It answers in its own words using only
    the tool facts: it must not paste raw tables/JSON, but must copy status words
@@ -92,7 +95,7 @@ A plan proposed in plan mode is persisted in `messages.tool_calls` JSONB under
   "goal": "One line: what the plan achieves",
   "steps": [
     {"id": "s1", "tool": "ops_disk_usage", "args": {}, "why": "...",
-     "risk": "safe", "status": "pending"}
+     "risk": "safe", "parallel": false, "status": "pending"}
   ],
   "mode": "plan",
   "status": "proposed",
@@ -107,6 +110,12 @@ A plan proposed in plan mode is persisted in `messages.tool_calls` JSONB under
   (`next_revision`). A different goal is a new plan. A failed step stops the
   plan; there is no automatic re-planning.
 - Direct actions run without a plan card, so they are not persisted as a plan.
+- A step may set `parallel: true` (only safe, read-only steps that do not depend
+  on another step's output). The executor groups **consecutive** such steps and
+  runs each group concurrently; a run is never created from a non-safe step, so
+  approval and ordering semantics are unchanged. Because a plugin serializes its
+  own calls (`_PluginLock`), the wall-clock gain comes from steps that hit
+  different plugins.
 
 ## Safety invariant
 
@@ -130,6 +139,18 @@ confirmation.
 - Direct confirmation is an ordinary text message; the server parses it.
 - On reload, plan revisions are collapsed by `plan_id` (last one wins).
 
+## Latency
+
+- **Planner model** is the primary planning-latency lever. `planner_model` (env
+  `LLM_PLANNER_MODEL`, the settings file, or the Settings tab) routes the planner
+  call to a smaller/faster model while the main model keeps quality for
+  summaries. Empty means the main model is used for both.
+- Independent read-only steps marked `parallel: true` execute concurrently
+  (see Execute and Plan object above), so a multi-step status check costs one
+  round of latency instead of the sum of its steps.
+- The planner and summary calls are bounded by `LLM_PLANNER_MAX_TOKENS` /
+  `LLM_SUMMARY_MAX_TOKENS` and streamed as `delta` events.
+
 ## Files
 
 | File | Responsibility |
@@ -149,5 +170,7 @@ confirmation.
 ## Non-goals
 
 - No autonomous multi-turn loop; v1 stops at each step and on failure.
-- No token streaming, no parallel steps, no memory beyond chat history.
+- Parallel execution is opt-in, safe-only, and limited to consecutive steps; a
+  non-safe step always runs alone.
+- No memory beyond chat history.
 - SOUL never influences planning or safety.

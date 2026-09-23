@@ -866,6 +866,28 @@ def test_list_peers_reconciles_store_and_live(load_loomwg, monkeypatch, tmp_path
     assert result["data"]["clients"][0]["name"] == "alice"
     assert len(result["data"]["unmanaged"]) == 1
 
+    text = result["content"][0]["text"]
+    assert text.startswith("**Interface**: wg0")
+    assert "**Clients**: 1" in text
+    assert "- **alice**" in text
+    assert "- Unmanaged peers: 1" in text
+
+
+def test_list_interfaces_text_is_markdown(load_loomwg, monkeypatch):
+    tools = load_loomwg("tools")["tools"]
+    monkeypatch.setattr(tools, "active_interfaces", lambda: ["wg0"])
+    monkeypatch.setattr(tools, "configured_interfaces", lambda: ["wg0", "wg1"])
+
+    result = tools.list_interfaces({})
+
+    text = result["content"][0]["text"]
+    assert "- `wg0` — active, configured" in text
+    assert "- `wg1` — inactive, configured" in text
+    assert result["data"]["interfaces"] == [
+        {"name": "wg0", "active": True, "configured": True},
+        {"name": "wg1", "active": False, "configured": True},
+    ]
+
 
 # === wg_export_existing_clients ===
 

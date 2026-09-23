@@ -54,12 +54,11 @@ def list_interfaces(arguments: dict[str, Any]) -> dict[str, Any]:
     active = set(active_interfaces())
     configured = set(configured_interfaces())
     names = sorted(active | configured)
-    rows = ["Interface | Active | Config", "-" * 31]
+    rows = []
     for name in names:
-        rows.append(
-            f"{name:9} | {'yes' if name in active else 'no':6} | "
-            f"{'yes' if name in configured else 'no'}"
-        )
+        active_label = "active" if name in active else "inactive"
+        config_label = "configured" if name in configured else "not configured"
+        rows.append(f"- `{name}` — {active_label}, {config_label}")
     return text_result(
         "\n".join(rows) if names else "No WireGuard interfaces found",
         interfaces=[
@@ -79,7 +78,7 @@ def status(arguments: dict[str, Any]) -> dict[str, Any]:
         # Observation only: bringing the interface up is the caller's decision
         # (wg_interface_start / wg_setup_server), not a side effect of status.
         return text_result(
-            f"{interface}: DOWN\nPeers: 0\nOnline: 0\nOffline: 0",
+            f"**{interface}**: DOWN\n- Peers: 0\n- Online: 0\n- Offline: 0",
             interface=interface,
             active=False,
             peer_count=0,
@@ -90,11 +89,11 @@ def status(arguments: dict[str, Any]) -> dict[str, Any]:
     online = sum(peer_is_online(peer) for peer in details["peers"])
     peer_count = len(details["peers"])
     return text_result(
-        f"{interface}: UP\n"
-        f"Port: {details['listen_port']}\n"
-        f"Peers: {peer_count}\n"
-        f"Online: {online}\n"
-        f"Offline: {peer_count - online}",
+        f"**{interface}**: UP\n"
+        f"- Port: {details['listen_port']}\n"
+        f"- Peers: {peer_count}\n"
+        f"- Online: {online}\n"
+        f"- Offline: {peer_count - online}",
         **details,
         active=True,
         online_peers=online,
@@ -112,7 +111,7 @@ def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
 
     tracked_public_keys = {record.get("public_key") for record in store.values()}
     clients: list[dict[str, Any]] = []
-    rows: list[str] = [f"Interface: {interface}", f"Clients: {len(store)}", ""]
+    rows: list[str] = [f"**Interface**: {interface}", f"**Clients**: {len(store)}", ""]
     for name in sorted(store):
         record = store[name]
         public_key = str(record.get("public_key") or "")
@@ -135,9 +134,9 @@ def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
         clients.append(entry)
         state = "online" if online else ("offline" if peer else "stale")
         rows.append(
-            f"{name}: {state} | {public_key[:12]}... | "
-            f"conf={'yes' if entry['installed'] else 'no'} "
-            f"qr={'yes' if entry['qr_present'] else 'no'}"
+            f"- **{name}** — {state}, key `{public_key[:12]}...`, "
+            f"conf {'yes' if entry['installed'] else 'no'}, "
+            f"qr {'yes' if entry['qr_present'] else 'no'}"
         )
 
     unmanaged = [
@@ -154,10 +153,10 @@ def list_peers(arguments: dict[str, Any]) -> dict[str, Any]:
     ]
     if unmanaged:
         rows.append(
-            f"Unmanaged peers: {len(unmanaged)} — run wg_export_existing_clients to import"
+            f"- Unmanaged peers: {len(unmanaged)} — run wg_export_existing_clients to import"
         )
     if not store and not unmanaged:
-        rows.append("No clients")
+        rows.append("- No clients")
 
     return text_result(
         "\n".join(rows),

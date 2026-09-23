@@ -107,7 +107,9 @@ async def test_core_health_shape(fake_manager):
     assert data["status"] == "ok"
     assert data["uptime_seconds"] >= 0
     assert data["plugin_counts"] == {"total": 1, "enabled": 1, "healthy": 1}
-    assert "Plugins enabled: LoomOps." in result["content"][0]["text"]
+    text = result["content"][0]["text"]
+    assert "**Plugins enabled** (1):" in text
+    assert "- LoomOps" in text
 
 
 @pytest.mark.asyncio
@@ -156,8 +158,10 @@ async def test_core_list_tools_includes_core_and_plugin(fake_manager):
         {"name": "ops_disk_usage", "plugin": "LoomOps"}
     ]
     text = result["content"][0]["text"]
-    assert text.startswith("8 core tools: core_health, core_list_plugins")
-    assert "LoomOps (1): ops_disk_usage" in text
+    assert text.startswith("**Core tools** (8):")
+    assert "- `core_health`" in text
+    assert "**LoomOps** (1):" in text
+    assert "- `ops_disk_usage`" in text
 
 
 @pytest.mark.asyncio
@@ -271,8 +275,9 @@ async def test_list_tools_filtered_by_plugin(monkeypatch):
     data = result["data"]
     assert data["plugin_tools"] == [{"name": "ops_disk_usage", "plugin": "LoomOps"}]
     text = result["content"][0]["text"]
-    assert "LoomOps (1): ops_disk_usage" in text
-    assert "core tools" not in text
+    assert "**LoomOps** (1):" in text
+    assert "- `ops_disk_usage`" in text
+    assert "Core tools" not in text
     assert "LoomWG" not in text
 
 
@@ -302,3 +307,31 @@ async def test_list_tools_unfiltered_still_lists_all(fake_manager):
     data = result["data"]
     assert len(data["core_tools"]) == 8
     assert data["plugin_tools"] == [{"name": "ops_disk_usage", "plugin": "LoomOps"}]
+
+
+@pytest.mark.asyncio
+async def test_core_list_tools_text_is_markdown(fake_manager):
+    result = await core_tools.dispatch_core_tool("core_list_tools", {})
+    text = result["content"][0]["text"]
+
+    assert "- `core_health`" in text
+    assert "- `ops_disk_usage`" in text
+    # No comma-joined wall of text: tool names never share a line.
+    assert "core_health, core_list_plugins" not in text
+    assert "ops_disk_usage" not in text.splitlines()[0]
+
+    # The programmatic payload is unchanged.
+    assert len(result["data"]["core_tools"]) == 8
+    assert result["data"]["plugin_tools"] == [
+        {"name": "ops_disk_usage", "plugin": "LoomOps"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_core_health_text_lists_plugins_as_bullets(fake_manager):
+    result = await core_tools.dispatch_core_tool("core_health", {})
+    text = result["content"][0]["text"]
+
+    assert "**Plugins enabled** (1):" in text
+    assert "- LoomOps" in text
+    assert "Plugins enabled: LoomOps." not in text

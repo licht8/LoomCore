@@ -96,7 +96,7 @@ def failed_units() -> list[str]:
 
 def failed_units_handler(arguments: dict[str, Any]) -> dict[str, Any]:
     units = failed_units()
-    lines = [f"{unit}" for unit in units] or ["No failed systemd units"]
+    lines = [f"- `{unit}`" for unit in units] or ["- none"]
     return {"output": "\n".join(lines), "units": units, "count": len(units)}
 
 

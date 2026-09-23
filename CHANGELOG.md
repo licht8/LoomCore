@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Markdown output and parallel plan steps: tool `text` (core tools, LoomWG
+  peers/interfaces/stats, LoomOps failed units) and the summary/planner prompts
+  now emit Markdown bullet lists instead of comma-joined prose (`data` payloads
+  unchanged); consecutive read-only `parallel: true` plan steps run concurrently
+  via `asyncio.gather` (non-safe steps stay serial and approval-gated); and
+  `LLM_PLANNER_MODEL` is documented as the primary planning-latency lever.
 - Meta-listing fast-path and planner recovery: short tool/plugin listing
   requests (`show me tools for LoomOps`, `покажи инструменты для LoomCore`) are
   now answered deterministically without an LLM call, `core_list_tools` accepts

@@ -218,3 +218,15 @@ def test_build_planner_messages_trims_long_history():
     assert contents[-1] == "now"
     assert contents[-2] == "latest"
     assert len(messages) < 6
+
+
+def test_summary_instruction_requires_markdown():
+    lowered = SUMMARY_INSTRUCTION.lower()
+    assert "markdown" in lowered
+    assert "bullet" in lowered
+
+
+def test_planner_prompt_mentions_parallel_steps():
+    lowered = PLANNER_PROMPT.lower()
+    assert '"parallel": true' in lowered
+    assert "read-only" in lowered

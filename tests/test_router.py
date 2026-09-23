@@ -1246,3 +1246,20 @@ async def test_route_passes_configured_max_tokens(patched_router, monkeypatch):
         [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
     )
     assert state["max_tokens"] == 111
+
+
+@pytest.mark.asyncio
+async def test_route_has_no_meta_fast_path(patched_router):
+    router, state = patched_router
+    state["queue"] = [_reply_response("Here are the tools.")]
+
+    result = await router.route("show me the tools for LoomOps", "sess-1")
+
+    # No deterministic shortcut: a tool-listing utterance still reaches the
+    # planner LLM, which chooses how to answer.
+    assert state["calls"] == 1
+    assert result["type"] == "text"
+    assert result["content"] == "Here are the tools."
+    # The removed fast-path must not creep back in.
+    assert not hasattr(router_module, "dispatch_core_tool")
+    assert not hasattr(router, "_meta_fast_path")

@@ -7,6 +7,7 @@ an injected dispatcher. Plan-first is therefore structural, not prompt work.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -72,6 +73,15 @@ AGENT_PLAN_SCHEMA: dict = {
                             "tool": {"type": "string"},
                             "args": {"type": "object"},
                             "why": {"type": "string"},
+                            "parallel": {
+                                "type": "boolean",
+                                "description": (
+                                    "Set true only for a read-only step that does "
+                                    "not depend on another step's output; such "
+                                    "steps may run concurrently. Omit or false when "
+                                    "a later step needs an earlier step's result."
+                                ),
+                            },
                         },
                         "required": ["tool", "why"],
                     },
@@ -125,6 +135,7 @@ def _normalize_step(
         "args": args if isinstance(args, dict) else {},
         "why": str(raw.get("why") or "").strip(),
         "risk": resolve_risk(tool),
+        "parallel": raw.get("parallel") is True,
         "status": "pending",
     }
 
@@ -228,6 +239,32 @@ def plan_is_direct(plan: dict) -> bool:
     return plan.get("mode") == "direct" and len(plan.get("steps", [])) == 1
 
 
+def _is_parallel_step(step: dict) -> bool:
+    """A step may run concurrently only when it is safe and marked parallel."""
+    return step.get("risk") == "safe" and step.get("parallel") is True
+
+
+def _plan_runs(steps: list[dict]) -> list[list[dict]]:
+    """Group consecutive safe parallel steps; every other step runs alone.
+
+    Only safe steps can join a concurrent run, so a run never contains a step
+    that needs approval. Runs preserve plan order.
+    """
+    runs: list[list[dict]] = []
+    current: list[dict] = []
+    for step in steps:
+        if _is_parallel_step(step):
+            current.append(step)
+            continue
+        if current:
+            runs.append(current)
+            current = []
+        runs.append([step])
+    if current:
+        runs.append(current)
+    return runs
+
+
 async def execute_plan(
     plan: dict,
     *,
@@ -256,45 +293,89 @@ async def execute_plan(
         return {"plan": plan, "results": []}
     results: list[dict] = []
 
-    for step in all_steps:
-        if step.get("risk") != "safe" and not approved:
-            step["status"] = "blocked"
-            plan["status"] = "failed"
+    for run in _plan_runs(all_steps):
+        if len(run) == 1:
+            step = run[0]
+            if step.get("risk") != "safe" and not approved:
+                step["status"] = "blocked"
+                plan["status"] = "failed"
+                await emit(
+                    {
+                        "type": "plan_step",
+                        "phase": "failed",
+                        "step": dict(step),
+                        "error": "step requires approval",
+                    }
+                )
+                return {"plan": plan, "results": results}
+
+            step["status"] = "running"
+            plan["status"] = "running"
+            await emit({"type": "plan_step", "phase": "started", "step": dict(step)})
+            try:
+                raw = await dispatch(step["tool"], step["args"], approved=approved)
+            except Exception as exc:  # noqa: BLE001 - surface any tool failure
+                logger.warning(f"Plan step {step.get('id')} failed: {exc}")
+                step["status"] = "failed"
+                step["error"] = str(exc)
+                plan["status"] = "failed"
+                await emit(
+                    {
+                        "type": "plan_step",
+                        "phase": "failed",
+                        "step": dict(step),
+                        "error": str(exc),
+                    }
+                )
+                return {"plan": plan, "results": results}
+
+            step["status"] = "done"
             await emit(
                 {
                     "type": "plan_step",
-                    "phase": "failed",
+                    "phase": "done",
                     "step": dict(step),
-                    "error": "step requires approval",
+                    "result": raw,
                 }
             )
-            return {"plan": plan, "results": results}
+            results.append({"step": step, "result": raw})
+            continue
 
-        step["status"] = "running"
+        # Concurrent run: every step is safe and independent.
         plan["status"] = "running"
-        await emit({"type": "plan_step", "phase": "started", "step": dict(step)})
-        try:
-            raw = await dispatch(step["tool"], step["args"], approved=approved)
-        except Exception as exc:  # noqa: BLE001 - surface any tool failure
-            logger.warning(f"Plan step {step.get('id')} failed: {exc}")
-            step["status"] = "failed"
-            step["error"] = str(exc)
-            plan["status"] = "failed"
+        for step in run:
+            step["status"] = "running"
+        for step in run:
+            await emit({"type": "plan_step", "phase": "started", "step": dict(step)})
+        outcomes = await asyncio.gather(
+            *(dispatch(step["tool"], step["args"], approved=approved) for step in run),
+            return_exceptions=True,
+        )
+        for step, outcome in zip(run, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                logger.warning(f"Plan step {step.get('id')} failed: {outcome}")
+                step["status"] = "failed"
+                step["error"] = str(outcome)
+                plan["status"] = "failed"
+                await emit(
+                    {
+                        "type": "plan_step",
+                        "phase": "failed",
+                        "step": dict(step),
+                        "error": str(outcome),
+                    }
+                )
+                return {"plan": plan, "results": results}
+            step["status"] = "done"
             await emit(
                 {
                     "type": "plan_step",
-                    "phase": "failed",
+                    "phase": "done",
                     "step": dict(step),
-                    "error": str(exc),
+                    "result": outcome,
                 }
             )
-            return {"plan": plan, "results": results}
-
-        step["status"] = "done"
-        await emit(
-            {"type": "plan_step", "phase": "done", "step": dict(step), "result": raw}
-        )
-        results.append({"step": step, "result": raw})
+            results.append({"step": step, "result": outcome})
 
     plan["status"] = "done"
     return {"plan": plan, "results": results}

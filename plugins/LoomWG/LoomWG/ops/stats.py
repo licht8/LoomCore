@@ -35,18 +35,18 @@ def stats(arguments: dict[str, Any]) -> dict[str, Any]:
     top = sorted(peers, key=lambda peer: peer["total_bytes"], reverse=True)[:top_n]
 
     lines = [
-        f"Interface: {interface}",
-        f"Link: {'up' if has_link(interface) else 'down'}",
-        f"Peers: {len(peers)} ({online} online / {len(peers) - online} offline)",
-        f"Total: RX {total_rx} B / TX {total_tx} B",
+        f"**Interface**: {interface}",
+        f"- Link: {'up' if has_link(interface) else 'down'}",
+        f"- Peers: {len(peers)} ({online} online / {len(peers) - online} offline)",
+        f"- Total: RX {total_rx} B / TX {total_tx} B",
         "",
-        f"Top {len(top)} peers by traffic:",
+        f"**Top {len(top)} peers by traffic:**",
     ]
     for peer in top:
         lines.append(
-            f"  {peer['public_key'][:12]}...  "
-            f"RX {peer['receive_bytes']} B / TX {peer['transmit_bytes']} B  "
-            f"({peer['share']}%)  {'online' if peer['online'] else 'offline'}"
+            f"- `{peer['public_key'][:12]}...` — "
+            f"RX {peer['receive_bytes']} B / TX {peer['transmit_bytes']} B, "
+            f"{peer['share']}%, {'online' if peer['online'] else 'offline'}"
         )
 
     return text_result(

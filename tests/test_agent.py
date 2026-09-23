@@ -1,5 +1,8 @@
 """Unit tests for the plan-and-execute agent core."""
 
+import asyncio
+import time
+
 import pytest
 
 from src.core import agent
@@ -329,3 +332,142 @@ async def test_execute_plan_emits_immutable_step_snapshots():
     assert started[0]["step"]["status"] == "running"
     assert started[0]["step"] is not plan["steps"][0]
     assert plan["steps"][0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_runs_parallel_safe_steps_concurrently():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1", "parallel": True},
+                {"tool": "core_list_plugins", "why": "w2", "parallel": True},
+                {"tool": "core_capabilities", "why": "w3", "parallel": True},
+            ],
+        }
+    )
+    barrier = asyncio.Event()
+    entered: list[str] = []
+    started_at = time.monotonic()
+
+    async def dispatch(tool, args, *, approved=False):
+        entered.append(tool)
+        if len(entered) == 3:
+            barrier.set()
+        # Serial execution would block here until the timeout; concurrency lets
+        # all three pass the barrier.
+        await asyncio.wait_for(barrier.wait(), timeout=1.0)
+        return {"content": [], "data": {"tool": tool}}
+
+    async def emit(event):
+        return None
+
+    result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
+
+    assert set(entered) == {"core_health", "core_list_plugins", "core_capabilities"}
+    assert result["plan"]["status"] == "done"
+    assert [step["status"] for step in result["plan"]["steps"]] == [
+        "done",
+        "done",
+        "done",
+    ]
+    assert time.monotonic() - started_at < 1.0
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_serial_when_parallel_unset():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1"},
+                {"tool": "core_list_plugins", "why": "w2"},
+            ],
+        }
+    )
+    order: list[str] = []
+
+    async def dispatch(tool, args, *, approved=False):
+        order.append(f"start:{tool}")
+        await asyncio.sleep(0)
+        order.append(f"end:{tool}")
+        return {"content": [], "data": {}}
+
+    async def emit(event):
+        return None
+
+    result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
+
+    assert order == [
+        "start:core_health",
+        "end:core_health",
+        "start:core_list_plugins",
+        "end:core_list_plugins",
+    ]
+    assert result["plan"]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_does_not_parallelize_unsafe_steps():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1", "parallel": True},
+                {
+                    "tool": "ops_run_command",
+                    "args": {"command": "ls"},
+                    "why": "w2",
+                    "parallel": True,
+                },
+            ],
+        }
+    )
+    dispatched: list[str] = []
+
+    async def dispatch(tool, args, *, approved=False):
+        dispatched.append(tool)
+        return {"content": [], "data": {}}
+
+    async def emit(event):
+        return None
+
+    result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
+
+    # The unsafe step runs alone and is blocked without approval.
+    assert dispatched == ["core_health"]
+    assert result["plan"]["status"] == "failed"
+    assert result["plan"]["steps"][1]["status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_stops_on_parallel_failure():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1", "parallel": True},
+                {"tool": "core_list_plugins", "why": "w2", "parallel": True},
+                {"tool": "core_capabilities", "why": "w3"},
+            ],
+        }
+    )
+    dispatched: list[str] = []
+
+    async def dispatch(tool, args, *, approved=False):
+        dispatched.append(tool)
+        if tool == "core_list_plugins":
+            raise RuntimeError("boom")
+        return {"content": [], "data": {}}
+
+    async def emit(event):
+        return None
+
+    result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
+
+    assert set(dispatched) == {"core_health", "core_list_plugins"}
+    assert "core_capabilities" not in dispatched
+    assert result["plan"]["status"] == "failed"
+    assert result["plan"]["steps"][1]["status"] == "failed"
+    assert result["plan"]["steps"][1]["error"] == "boom"
+    assert result["plan"]["steps"][2]["status"] == "pending"

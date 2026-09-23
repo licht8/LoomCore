@@ -186,8 +186,8 @@ async def _core_health(arguments: dict) -> dict:
         f"Core is healthy. {len(enabled)}/{len(names)} plugins enabled, "
         f"{len(healthy)} healthy."
     )
-    if enabled:
-        text += " Plugins enabled: " + ", ".join(enabled) + "."
+    text += f"\n\n**Plugins enabled** ({len(enabled)}):\n"
+    text += "\n".join(f"- {name}" for name in enabled) if enabled else "- none"
     return _result(text, **data)
 
 
@@ -236,7 +236,9 @@ async def _core_plugin_status(arguments: dict) -> dict:
         f"enabled={data['enabled']}, healthy={status['is_healthy']}."
     )
     if warnings:
-        text += " Warnings: " + "; ".join(warnings)
+        text += "\n\n**Warnings:**\n" + "\n".join(
+            f"- {warning}" for warning in warnings
+        )
     return _result(text, **data)
 
 
@@ -247,8 +249,8 @@ async def _core_list_tools(arguments: dict) -> dict:
         for tool in CORE_TOOLS_SCHEMA
     ]
     core_line = (
-        f"{len(core_tools)} core tools: "
-        + ", ".join(tool["name"] for tool in core_tools)
+        f"**Core tools** ({len(core_tools)}):\n"
+        + "\n".join(f"- `{tool['name']}`" for tool in core_tools)
     )
 
     # The core's own meta-tools: no plugin round trip is needed.
@@ -267,7 +269,7 @@ async def _core_list_tools(arguments: dict) -> dict:
     plugin_tools: list[dict] = []
     for name in plugin_names:
         if not plugin_manager.is_enabled(name):
-            lines.append(f"{name} (disabled)")
+            lines.append(f"- {name} (disabled)")
             continue
         try:
             if plugin_manager.tools_indexed():
@@ -291,12 +293,15 @@ async def _core_list_tools(arguments: dict) -> dict:
                 ]
         except Exception as exc:  # noqa: BLE001 - best-effort catalog
             logger.warning(f"Cannot list tools of plugin '{name}': {exc}")
-            lines.append(f"{name} (unavailable)")
+            lines.append(f"- {name} (unavailable)")
             continue
         plugin_tools.extend(
             {"name": tool_name, "plugin": name} for tool_name in names
         )
-        lines.append(f"{name} ({len(names)}): " + ", ".join(names))
+        lines.append(
+            f"**{name}** ({len(names)}):\n"
+            + "\n".join(f"- `{tool_name}`" for tool_name in names)
+        )
     text = "\n".join(lines)
     return _result(text, core_tools=core_tools, plugin_tools=plugin_tools)
 
