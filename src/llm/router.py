@@ -747,16 +747,16 @@ class _ReplyTextStream:
         # Raw offset in the accumulated arguments to resume decoding from; None
         # until the ``text`` key has been seen.
         self._pos: int | None = None
-        # Length of the buffer seen on the previous call, used to detect a
-        # silent restart (see ``feed``).
-        self._seen = 0
+        # Buffer seen on the previous call, used to detect a silent restart
+        # (see ``feed``).
+        self._buf = ""
 
     def reset(self) -> None:
         """Discard state so a re-ask starts from a clean slate."""
         self._active = False
         self._done = False
         self._pos = None
-        self._seen = 0
+        self._buf = ""
 
     def feed(self, name: str | None, args_so_far: str) -> str:
         """Return the newly decoded reply text for the accumulated arguments.
@@ -766,13 +766,14 @@ class _ReplyTextStream:
         """
         if name is not None:
             self._active = name == REPLY_TOOL
-        if len(args_so_far) < self._seen:
+        if not args_so_far.startswith(self._buf):
             # The client restarted this call internally (a retry after tool
-            # deltas that never forwarded text) without notifying us, so the
-            # accumulated buffer shrank and the resume offset is stale.
+            # deltas that never forwarded text) without notifying us. The new
+            # buffer is not an extension of the old one, so the resume offset is
+            # stale and decoding must restart from the beginning.
             self._pos = None
             self._done = False
-        self._seen = len(args_so_far)
+        self._buf = args_so_far
         if not self._active or self._done:
             return ""
         if self._pos is None:

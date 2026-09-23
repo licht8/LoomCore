@@ -1031,6 +1031,19 @@ def test_reply_text_stream_recovers_from_silent_restart():
     assert stream._done
 
 
+def test_reply_text_stream_restarts_when_new_buffer_is_longer():
+    stream = _ReplyTextStream()
+    # Attempt 1 reached the ``text`` quote after an extra key, so ``_pos`` sits
+    # deep in the buffer. Attempt 2 restarts and its first callback is already
+    # longer than attempt 1's buffer, so a length test alone would miss it.
+    stream.feed(REPLY_TOOL, '{"reasoning": "because", "text": "')
+    assert (
+        stream.feed(REPLY_TOOL, '{"text": "Hello, how can I help you today?"}')
+        == "Hello, how can I help you today?"
+    )
+    assert stream._done
+
+
 @pytest.mark.asyncio
 async def test_route_streams_reply_via_on_delta(patched_router):
     router, state = patched_router
