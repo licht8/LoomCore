@@ -13,7 +13,7 @@ from src.core.agent import (
     plan_is_direct,
     validate_plan,
 )
-from src.core.core_tools import CORE_TOOLS_SCHEMA, dispatch_core_tool, resolve_tool_risk
+from src.core.core_tools import CORE_TOOLS_SCHEMA, resolve_tool_risk
 from src.core.timing import log_stage, span
 from src.db import session as db_session
 from src.db.database import async_session_factory
@@ -63,26 +63,6 @@ _MALFORMED_NUDGE = (
 )
 _CONFUSED_REPLY = "Sorry, I didn't quite catch that — could you rephrase your request?"
 
-# Meta fast-path: answer short, explicit tool/plugin-listing requests without an
-# LLM call. Deliberately conservative — anything longer or less explicit falls
-# through to the planner.
-_META_MAX_CHARS = 120
-_META_TOOLS_RE = re.compile(
-    r"(?:list|show|see|which|what)\b[^?]*\btools?\b"
-    r"|\btools?\s+(?:for|of)\b"
-    r"|(?:какие|покажи|список)\s+инструмент",
-    re.IGNORECASE,
-)
-_META_PLUGINS_RE = re.compile(
-    r"(?:list|show|which|what)\b[^?]*\bplugins?\b"
-    r"|(?:какие|покажи|список)\s+плагин",
-    re.IGNORECASE,
-)
-_META_PLUGIN_TOKEN_RE = re.compile(r"\b(LoomOps|LoomWG|LoomCore)\b", re.IGNORECASE)
-_META_PLUGIN_AFTER_RE = re.compile(
-    r"(?:for|of|для)\s+([A-Za-z_][\w-]*)", re.IGNORECASE
-)
-
 
 def _strip_tool_prefix(text: str) -> str:
     """Remove a leading planner tool-name marker from assistant text."""
@@ -111,20 +91,6 @@ def _bare_tool_name(text: str, known_tools: Iterable[str] = ()) -> str | None:
     if cleaned in _BARE_TOOL_NAMES or cleaned in known_tools:
         return cleaned
     return None
-
-
-def _tool_text(result: object) -> str | None:
-    """Return the text of an MCP-shaped tool result, or None when malformed."""
-    if not isinstance(result, dict):
-        return None
-    content = result.get("content")
-    if not isinstance(content, list) or not content:
-        return None
-    first = content[0]
-    if not isinstance(first, dict):
-        return None
-    text = first.get("text")
-    return text if isinstance(text, str) and text else None
 
 
 def _plan_reply_step_text(raw_args: object) -> str | None:
@@ -245,39 +211,6 @@ class AIRouter:
         """Close the router's shared HTTP client."""
         await self.client.aclose()
 
-    async def _meta_fast_path(self, user_message: str) -> str | None:
-        """Answer a short tool/plugin-listing request without an LLM call.
-
-        Returns the rendered text, or None to let the planner handle the turn
-        (unknown intent, too long, or any error while listing).
-        """
-        if len(user_message) > _META_MAX_CHARS:
-            return None
-        if _META_TOOLS_RE.search(user_message):
-            tool_name = "core_list_tools"
-        elif _META_PLUGINS_RE.search(user_message):
-            tool_name = "core_list_plugins"
-        else:
-            return None
-
-        token = ""
-        match = _META_PLUGIN_TOKEN_RE.search(user_message)
-        if match:
-            token = match.group(1)
-        else:
-            after = _META_PLUGIN_AFTER_RE.search(user_message)
-            if after:
-                token = after.group(1)
-        if token.lower() == "loomcore":
-            token = "core"
-        arguments = {"plugin": token} if (token and tool_name == "core_list_tools") else {}
-        try:
-            result = await dispatch_core_tool(tool_name, arguments)
-        except Exception as exc:  # noqa: BLE001 - fall back to the planner
-            logger.warning(f"Meta fast-path lookup failed: {exc}")
-            return None
-        return _tool_text(result)
-
     async def route(
         self,
         user_message: str,
@@ -309,12 +242,6 @@ class AIRouter:
 
         route_started = time.monotonic()
         history_dicts = await self._begin_turn(session_id, user_message)
-
-        # High-confidence tool/plugin listings never need an LLM turn.
-        fast = await self._meta_fast_path(user_message)
-        if fast:
-            await self._persist_assistant(session_id, fast, None)
-            return {"type": "text", "content": fast}
 
         collect_started = time.monotonic()
         tools_schema, message_extra = await self._collect_tools()

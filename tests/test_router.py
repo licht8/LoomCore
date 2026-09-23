@@ -870,61 +870,6 @@ async def test_bare_known_tool_missing_args_reasks(patched_router):
 
 
 @pytest.mark.asyncio
-async def test_meta_fast_path_tools_en(patched_router, monkeypatch):
-    router, state = patched_router
-    calls: list[tuple[str, dict]] = []
-
-    async def fake_dispatch(name, arguments=None, *, approved=False):
-        calls.append((name, arguments))
-        return {
-            "content": [{"type": "text", "text": "LoomOps (2): a, b"}],
-            "data": {},
-        }
-
-    monkeypatch.setattr(router_module, "dispatch_core_tool", fake_dispatch)
-
-    result = await router.route("show me tools for LoomOps", "sess-1")
-
-    assert result == {"type": "text", "content": "LoomOps (2): a, b"}
-    assert state["calls"] == 0
-    assert calls == [("core_list_tools", {"plugin": "LoomOps"})]
-
-
-@pytest.mark.asyncio
-async def test_meta_fast_path_tools_ru(patched_router, monkeypatch):
-    router, state = patched_router
-    calls: list[tuple[str, dict]] = []
-
-    async def fake_dispatch(name, arguments=None, *, approved=False):
-        calls.append((name, arguments))
-        return {"content": [{"type": "text", "text": "8 core tools: ..."}], "data": {}}
-
-    monkeypatch.setattr(router_module, "dispatch_core_tool", fake_dispatch)
-
-    result = await router.route("покажи инструменты для LoomCore", "sess-1")
-
-    assert result["type"] == "text"
-    assert state["calls"] == 0
-    assert calls == [("core_list_tools", {"plugin": "core"})]
-
-
-@pytest.mark.asyncio
-async def test_meta_fast_path_skips_what_can_you_do(patched_router, monkeypatch):
-    router, state = patched_router
-
-    async def boom(*args, **kwargs):
-        raise AssertionError("fast path must not run for capability questions")
-
-    monkeypatch.setattr(router_module, "dispatch_core_tool", boom)
-    state["queue"] = [_text_response("I can help with lots of things.")]
-
-    result = await router.route("что ты умеешь", "sess-1")
-
-    assert result["content"] == "I can help with lots of things."
-    assert state["calls"] == 1
-
-
-@pytest.mark.asyncio
 async def test_route_passes_configured_planner_model(patched_router, monkeypatch):
     router, state = patched_router
     monkeypatch.setattr(
