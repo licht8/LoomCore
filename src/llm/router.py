@@ -761,8 +761,10 @@ class _ReplyTextStream:
     def feed(self, name: str | None, args_so_far: str) -> str:
         """Return the newly decoded reply text for the accumulated arguments.
 
-        Only the suffix appended since the previous call is decoded, so the cost
-        is linear in the reply length rather than quadratic.
+        Decoding itself is linear overall: only the suffix appended since the
+        previous call is decoded. Detecting a silent restart additionally compares
+        the whole buffer against the previous one, which is O(n) per delta, but
+        reply text is bounded by the configured max tokens, so this stays cheap.
         """
         if name is not None:
             self._active = name == REPLY_TOOL
