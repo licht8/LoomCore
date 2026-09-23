@@ -88,6 +88,8 @@ export type WsMessage =
       summary?: string
       code?: string
       artifacts?: ArtifactLink[]
+      format?: "markdown" | "text"
+      compact?: boolean
     }
   | {
       type: "plan_proposed"
@@ -133,6 +135,10 @@ export interface ChatMessage {
   toolSummary?: string
   toolCode?: string
   artifacts?: ArtifactLink[]
+  // Tool-card rendering: Markdown body, and a compact card (header only) when
+  // the raw output is already shown in the assistant bubble.
+  format?: "markdown" | "text"
+  compact?: boolean
   // For plan messages:
   plan?: Plan
 }
@@ -155,6 +161,8 @@ export interface StoredToolCall {
   summary?: string
   risk?: string
   artifacts?: ArtifactLink[]
+  format?: "markdown" | "text"
+  compact?: boolean
 }
 
 /** A stored message row returned by GET /api/sessions/{id}/messages. */

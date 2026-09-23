@@ -157,9 +157,16 @@ errors and then returns a clear message. Tune via `.env` (seconds / count):
 | `LLM_DAILY_CALL_LIMIT` | `1000` |
 
 `LLM_DAILY_CALL_LIMIT` is a process-wide daily ceiling on LLM HTTP calls (`0`
-disables it). It counts calls, not turns: a multi-step turn uses 2 (planner +
-summary) — a direct single-step action skips the summary and uses 1 — plus 1 per
-planner re-ask and 1 per transport retry. It resets at UTC midnight.
+disables it). It counts calls, not turns: a turn uses 2 (planner + summary) —
+but an all-report plan or an explicit raw-output request skips the summary and
+uses 1 — plus 1 per planner re-ask and 1 per transport retry. It resets at UTC
+midnight.
+
+These defaults (`LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
+`LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`) are the intended
+values; the Settings UI must not silently re-override them back to `90`/`2`.
+Set `LLM_PLANNER_MODEL` / `LLM_SUMMARY_MODEL` to a smaller model (empty = main
+model) — a small planner is the primary latency lever.
 
 The 30s read timeout is a safety bound: with thinking disabled a full turn is a
 few seconds, so a request that hangs this long is a provider stall, not real work.

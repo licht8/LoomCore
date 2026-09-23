@@ -24,6 +24,7 @@ from src.core.confirmations import (
 )
 from src.core.core_tools import (
     CORE_TOOL_NAMES,
+    _is_report_tool,
     dispatch_core_tool,
     resolve_tool_risk,
 )
@@ -179,6 +180,12 @@ async def _run_plan(
     # without a user-facing plan artifact or plan events.
     show_plan = not plan_is_direct(plan)
 
+    # Whether the raw tool output is the answer is known up front (it depends
+    # only on the steps and the raw-output request), so the cards can be marked
+    # compact before execution starts and the summary decision stays consistent.
+    raw_requested = _wants_raw_output(user_text)
+    answers_with_raw = _plan_answers_with_raw(plan, raw_requested=raw_requested)
+
     async def audit_step(step: dict, status: str, error: str | None = None) -> None:
         """Record a tamper-evident audit row for every mutating step.
 
@@ -218,6 +225,7 @@ async def _run_plan(
             raw = event.get("result")
             content = _extract_text(raw)
             artifacts = _build_artifacts(raw)
+            tool_format = "markdown" if _is_report_tool(step["tool"]) else "text"
             try:
                 await _save_tool_message(
                     session_id,
@@ -228,6 +236,8 @@ async def _run_plan(
                     summary="Done",
                     risk=step.get("risk"),
                     artifacts=artifacts,
+                    format=tool_format,
+                    compact=answers_with_raw,
                 )
             except Exception as exc:
                 logger.warning(
@@ -236,13 +246,21 @@ async def _run_plan(
                     exc,
                 )
             await send(
-                tool_success_payload(step["tool"], content, step.get("risk"), artifacts)
+                tool_success_payload(
+                    step["tool"],
+                    content,
+                    step.get("risk"),
+                    artifacts,
+                    format=tool_format,
+                    compact=answers_with_raw,
+                )
             )
             await audit_step(step, "success")
         elif phase == "failed":
             if tracker is not None:
                 tracker["tool"] = None
             message = event.get("error") or f"Step failed: {step.get('tool')}"
+            tool_format = "markdown" if _is_report_tool(step["tool"]) else "text"
             try:
                 await _save_tool_message(
                     session_id,
@@ -252,6 +270,8 @@ async def _run_plan(
                     status="error",
                     summary="Error",
                     risk=step.get("risk"),
+                    format=tool_format,
+                    compact=answers_with_raw,
                 )
             except Exception as exc:
                 logger.warning(
@@ -259,7 +279,15 @@ async def _run_plan(
                     step["tool"],
                     exc,
                 )
-            await send(_tool_error_payload(step["tool"], message, step.get("risk")))
+            await send(
+                _tool_error_payload(
+                    step["tool"],
+                    message,
+                    step.get("risk"),
+                    format=tool_format,
+                    compact=answers_with_raw,
+                )
+            )
             await audit_step(step, "failed", message)
         if show_plan:
             await send(plan_step_payload(plan, step, phase))
@@ -299,10 +327,8 @@ async def _run_plan(
         log_stage("save_plan", time.monotonic() - persist_started)
 
     summary_started = time.monotonic()
-    # Multi-step plans are answered in the assistant's own words; a direct
-    # single-step action, an explicit raw-output request, or an empty result is
-    # answered with the raw tool output.
-    raw_requested = _wants_raw_output(user_text)
+    # Report turns and explicit raw-output requests are answered with the raw
+    # tool output; everything else is answered in the assistant's own words.
     uses_llm_summary = _uses_llm_summary(
         final_plan, observations, raw_requested=raw_requested
     )
@@ -337,11 +363,24 @@ async def _run_plan(
     log_stage("plan_total", time.monotonic() - plan_started, show_plan=show_plan)
 
 
+def _plan_is_all_reports(plan: dict) -> bool:
+    """True when every step of a non-empty plan is a report/listing tool."""
+    steps = plan.get("steps", [])
+    return bool(steps) and all(_is_report_tool(step.get("tool", "")) for step in steps)
+
+
+def _plan_answers_with_raw(plan: dict, *, raw_requested: bool) -> bool:
+    """True when the raw tool output is the answer (no LLM summary needed)."""
+    return raw_requested or _plan_is_all_reports(plan)
+
+
 def _uses_llm_summary(
     plan: dict, observations: list[dict], *, raw_requested: bool
 ) -> bool:
     """True when the turn needs an LLM summary instead of raw tool output."""
-    return bool(observations) and not raw_requested and not plan_is_direct(plan)
+    return bool(observations) and not _plan_answers_with_raw(
+        plan, raw_requested=raw_requested
+    )
 
 
 async def _summarize(
@@ -354,9 +393,9 @@ async def _summarize(
 ) -> str:
     """Summarize a finished plan in the assistant's own words.
 
-    Raw tool text is surfaced when the user explicitly asked for it, when there
-    is nothing to summarize, when the plan is a direct single-step action (its
-    raw output already is the answer), or when the summary call fails or
+    Raw tool text is surfaced when the user explicitly asked for it, when the
+    plan is an all-report plan (its raw output already is the answer), when
+    there is nothing to summarize, or when the summary call fails or
     contradicts the numbers in the observations. ``on_delta`` (if set) streams
     the summary text; it is only forwarded on the LLM path.
     """

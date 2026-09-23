@@ -69,6 +69,8 @@ class ToolResponseEvent(_Event):
     artifacts: list[dict[str, Any]] | None = None
     tool: str | None = None
     risk: str | None = None
+    format: Literal["markdown", "text"] = "text"
+    compact: bool = False
 
 
 class PlanProposedEvent(_Event):

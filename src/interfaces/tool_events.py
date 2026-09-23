@@ -95,17 +95,22 @@ async def save_tool_message(
     summary: str = "Done",
     risk: str | None = None,
     artifacts: list[dict] | None = None,
+    format: str = "text",
+    compact: bool = False,
 ) -> None:
     """Save a tool call and its terminal state to the session history.
 
     The UI restores tool cards from ``tool_calls`` after a reload, so status,
-    summary, risk and artifacts all live inside that JSON (no schema change).
+    summary, risk, artifacts, format and compactness all live inside that JSON
+    (no schema change).
     """
     entry: dict = {
         "name": tool_name,
         "arguments": arguments,
         "status": status,
         "summary": summary,
+        "format": format,
+        "compact": compact,
     }
     if risk:
         entry["risk"] = risk
@@ -131,6 +136,9 @@ def tool_success_payload(
     content: str,
     risk: str | None = None,
     artifacts: list[dict] | None = None,
+    *,
+    format: str = "text",
+    compact: bool = False,
 ) -> dict:
     """Terminal tool_response marking a tool call as successful."""
     return event_payload(
@@ -141,12 +149,19 @@ def tool_success_payload(
             summary="Done",
             artifacts=artifacts,
             risk=risk,
+            format=format,
+            compact=compact,
         )
     )
 
 
 def tool_error_payload(
-    tool_name: str, message: str, risk: str | None = None
+    tool_name: str,
+    message: str,
+    risk: str | None = None,
+    *,
+    format: str = "text",
+    compact: bool = False,
 ) -> dict:
     """Terminal tool_response marking a tool call as failed."""
     return event_payload(
@@ -156,6 +171,8 @@ def tool_error_payload(
             status="error",
             summary="Error",
             risk=risk,
+            format=format,
+            compact=compact,
         )
     )
 

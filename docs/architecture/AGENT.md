@@ -150,6 +150,13 @@ confirmation.
   round of latency instead of the sum of its steps.
 - The planner and summary calls are bounded by `LLM_PLANNER_MAX_TOKENS` /
   `LLM_SUMMARY_MAX_TOKENS` and streamed as `delta` events.
+- **All-report plans skip the summary**: when every step is a report/listing tool
+  (`_is_report_tool`), the raw Markdown output is the answer, so no summary call
+  runs and the tool cards render compact. Mixed (report + command) plans still
+  summarize and render non-compact (accepted v1 trade-off).
+- Intended defaults are `LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
+  `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`; the Settings UI
+  must not silently re-override them to `90`/`2`.
 
 ## Files
 

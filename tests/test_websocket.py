@@ -266,7 +266,7 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_direct_action_skips_llm_summary(monkeypatch):
+async def test_direct_report_action_skips_llm_summary(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
@@ -297,6 +297,93 @@ async def test_direct_action_skips_llm_summary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_report_turn_emits_compact_cards(monkeypatch):
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "check",
+            "steps": [{"tool": "core_health", "args": {}, "why": "health"}],
+        }
+    )
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    saved_tools, _ = _patch_plan_runtime(monkeypatch)
+
+    await ws_module._process_user_message(send, "sess", "check")
+
+    tool_response = next(p for p in sent if p["type"] == "tool_response")
+    assert tool_response["compact"] is True
+    assert tool_response["format"] == "markdown"
+    assert saved_tools[0]["compact"] is True
+    assert saved_tools[0]["format"] == "markdown"
+
+
+@pytest.mark.asyncio
+async def test_command_turn_emits_text_format(monkeypatch):
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "read config",
+            "steps": [{"tool": "ops_read_file", "args": {}, "why": "read"}],
+        }
+    )
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    saved_tools, _ = _patch_plan_runtime(monkeypatch)
+
+    await ws_module._process_user_message(send, "sess", "read config")
+
+    tool_response = next(p for p in sent if p["type"] == "tool_response")
+    assert tool_response["format"] == "text"
+    assert tool_response["compact"] is False
+    assert saved_tools[0]["format"] == "text"
+    assert saved_tools[0]["compact"] is False
+    assert sent[-1]["type"] == "response"
+    assert sent[-1]["content"] == "Summary"
+
+
+@pytest.mark.asyncio
+async def test_mixed_plan_uses_llm_summary_and_non_compact_cards(monkeypatch):
+    sent, send = _collector()
+    plan = build_plan(
+        {
+            "goal": "check and read",
+            "steps": [
+                {"tool": "core_health", "args": {}, "why": "health"},
+                {"tool": "ops_read_file", "args": {}, "why": "read"},
+            ],
+        }
+    )
+    calls = []
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    async def fake_summary(user_text, plan, observations, **kwargs):
+        calls.append(user_text)
+        return "All done."
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", fake_summary)
+
+    await ws_module._process_user_message(send, "sess", "check and read")
+
+    assert calls == ["check and read"]
+    responses = [p for p in sent if p["type"] == "tool_response"]
+    assert len(responses) == 2
+    assert all(p["compact"] is False for p in responses)
+    summary = next(p for p in sent if p["type"] == "response")
+    assert summary["content"] == "All done."
+
+
+@pytest.mark.asyncio
 async def test_summary_replaces_a_raw_table(monkeypatch):
     _patch_db(monkeypatch)
     sent, send = _collector()
@@ -310,8 +397,8 @@ async def test_summary_replaces_a_raw_table(monkeypatch):
         {
             "goal": "list peers",
             "steps": [
-                {"tool": "wg_list_peers", "args": {}, "why": "peers"},
-                {"tool": "wg_interface_status", "args": {}, "why": "interfaces"},
+                {"tool": "ops_read_file", "args": {}, "why": "peers"},
+                {"tool": "ops_log_search", "args": {}, "why": "interfaces"},
             ],
         }
     )
@@ -1382,16 +1469,19 @@ async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_summarize_skips_llm_for_direct_plan(monkeypatch):
+async def test_summarize_skips_llm_for_all_report_plan(monkeypatch):
     async def boom(*args, **kwargs):
-        raise AssertionError("summarize_plan must not be called for a direct plan")
+        raise AssertionError("summarize_plan must not be called for an all-report plan")
 
     monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom)
     plan = build_plan(
         {
-            "mode": "direct",
+            "mode": "plan",
             "goal": "disk usage",
-            "steps": [{"tool": "ops_disk_usage", "args": {}, "why": "x"}],
+            "steps": [
+                {"tool": "ops_disk_usage", "args": {}, "why": "x"},
+                {"tool": "ops_system_metrics", "args": {}, "why": "y"},
+            ],
         }
     )
     observations = _health_observation("disk 42% used")
@@ -1399,6 +1489,32 @@ async def test_summarize_skips_llm_for_direct_plan(monkeypatch):
     summary = await ws_module._summarize("disk usage", plan, observations)
 
     assert "disk 42% used" in summary
+
+
+@pytest.mark.asyncio
+async def test_summarize_runs_for_direct_command_plan(monkeypatch):
+    calls = []
+
+    async def fake_summarize(user_text, plan, observations, **kwargs):
+        calls.append(user_text)
+        return "The file was read."
+
+    monkeypatch.setattr(
+        ws_module.airouter_with_plugins, "summarize_plan", fake_summarize
+    )
+    plan = build_plan(
+        {
+            "mode": "direct",
+            "goal": "read the config",
+            "steps": [{"tool": "ops_read_file", "args": {}, "why": "x"}],
+        }
+    )
+    observations = _health_observation("line one\nline two")
+
+    summary = await ws_module._summarize("read the config", plan, observations)
+
+    assert calls == ["read the config"]
+    assert summary == "The file was read."
 
 
 # --------------------------------------------------------------------------- #
@@ -1467,11 +1583,11 @@ async def test_run_plan_streams_summary_deltas(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
-            "goal": "health",
-            "steps": [
-                {"tool": "core_health", "args": {}, "why": "baseline"},
-                {"tool": "wg_interface_status", "args": {}, "why": "interfaces"},
-            ],
+                "goal": "health",
+                "steps": [
+                    {"tool": "core_health", "args": {}, "why": "baseline"},
+                    {"tool": "ops_read_file", "args": {}, "why": "interfaces"},
+                ],
         }
     )
 
@@ -1504,11 +1620,11 @@ async def test_plan_reuses_routing_message_id(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
-            "goal": "health",
-            "steps": [
-                {"tool": "core_health", "args": {}, "why": "baseline"},
-                {"tool": "wg_interface_status", "args": {}, "why": "interfaces"},
-            ],
+                "goal": "health",
+                "steps": [
+                    {"tool": "core_health", "args": {}, "why": "baseline"},
+                    {"tool": "ops_read_file", "args": {}, "why": "interfaces"},
+                ],
         }
     )
 

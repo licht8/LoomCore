@@ -206,6 +206,8 @@ export function toolCardFromRow(row: SessionMessage, timestamp: string): ChatMes
       (status === "error" ? "Error" : status === "cancelled" ? "Cancelled" : "Done"),
     toolCode: row.tool_result || "",
     artifacts: meta?.artifacts,
+    format: meta?.format,
+    compact: meta?.compact,
   }
 }
 

@@ -229,10 +229,17 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
               )}
             </span>
           </div>
-          {/* Body with the code/result */}
-          <pre className="overflow-x-auto bg-[oklch(0.28_0.06_285)] px-4 py-3 font-mono text-xs leading-relaxed text-[oklch(0.92_0.05_310)]">
-            <code>{message.toolCode || message.content}</code>
-          </pre>
+          {/* Body with the code/result. A compact card (report tools whose
+              output is already shown in the assistant bubble) omits the body. */}
+          {message.compact ? null : message.format === "markdown" ? (
+            <div className="border-t border-border px-4 py-3 text-sm leading-relaxed text-card-foreground">
+              <Markdown content={message.toolCode || message.content} />
+            </div>
+          ) : (
+            <pre className="overflow-x-auto bg-[oklch(0.28_0.06_285)] px-4 py-3 font-mono text-xs leading-relaxed text-[oklch(0.92_0.05_310)]">
+              <code>{message.toolCode || message.content}</code>
+            </pre>
+          )}
           {message.artifacts && (
             <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
               {message.artifacts.map((artifact) => (

@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Report tools answer with their raw output once: an all-report plan (every step
+  a listing/report tool, per the curated `_is_report_tool` set) skips the summary
+  LLM call and renders its tool cards compact, so the Markdown output appears only
+  in the assistant bubble; command/action tools still get an own-words summary
+  with the raw output on the card. Tool cards now carry `format` (markdown/text)
+  and `compact` (persisted in `tool_calls`), rendered by the frontend.
 - Markdown output and parallel plan steps: tool `text` (core tools, LoomWG
   peers/interfaces/stats, LoomOps failed units) and the summary/planner prompts
   now emit Markdown bullet lists instead of comma-joined prose (`data` payloads

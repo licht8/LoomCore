@@ -102,6 +102,8 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
           toolCode: msg.code,
           artifacts: msg.artifacts,
           content: msg.content,
+          format: msg.format,
+          compact: msg.compact,
         }),
         error:
           msg.status === "error"

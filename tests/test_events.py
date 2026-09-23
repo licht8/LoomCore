@@ -155,6 +155,19 @@ def test_tool_error_payload_is_registered():
     assert payload["content"] == "boom"
 
 
+def test_tool_response_payload_format_and_compact():
+    payload = tool_success_payload(
+        "core_list_tools", "ok", format="markdown", compact=True
+    )
+    assert payload["type"] == "tool_response"
+    assert payload["format"] == "markdown"
+    assert payload["compact"] is True
+
+    default = tool_success_payload("ops_run_command", "ok")
+    assert default["format"] == "text"
+    assert default["compact"] is False
+
+
 def test_tool_call_payload_is_registered():
     payload = tool_call_payload("core_health", {"x": 1})
     assert payload["type"] == "tool_call"

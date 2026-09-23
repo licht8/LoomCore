@@ -135,6 +135,43 @@ def resolve_tool_risk(tool_name: str) -> str:
     return classify_tool_risk(tool_name, declared)
 
 
+# Tools whose raw output already is the answer: a table/list of facts the user
+# reads directly. Their turn skips the summary LLM call and the tool card is
+# rendered compact (the assistant bubble shows the output once). This is a
+# curated v1 list -- a plugin-manifest ``report`` flag is the planned follow-up.
+_REPORT_TOOLS = frozenset(
+    {
+        # core meta-tools
+        "core_health",
+        "core_list_plugins",
+        "core_plugin_status",
+        "core_list_tools",
+        "core_capabilities",
+        # LoomWG listings/reports
+        "wg_list_interfaces",
+        "wg_list_peers",
+        "wg_interface_status",
+        "wg_show_interface_config",
+        "wg_stats",
+        "wg_diagnostics",
+        # LoomOps listings/reports
+        "ops_list_processes",
+        "ops_failed_units",
+        "ops_scan_health",
+        "ops_network_status",
+        "ops_dmesg",
+        "ops_disk_usage",
+        "ops_system_metrics",
+    }
+)
+
+
+def _is_report_tool(name: str) -> bool:
+    """True when a tool returns a report/list whose raw output is the answer."""
+    return name in _REPORT_TOOLS
+
+
+
 def _result(text: str, **data) -> dict:
     return {"content": [{"type": "text", "text": text}], "data": data}
 
@@ -302,7 +339,7 @@ async def _core_list_tools(arguments: dict) -> dict:
             f"**{name}** ({len(names)}):\n"
             + "\n".join(f"- `{tool_name}`" for tool_name in names)
         )
-    text = "\n".join(lines)
+    text = "\n\n".join(lines)
     return _result(text, core_tools=core_tools, plugin_tools=plugin_tools)
 
 

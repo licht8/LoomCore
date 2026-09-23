@@ -335,3 +335,40 @@ async def test_core_health_text_lists_plugins_as_bullets(fake_manager):
     assert "**Plugins enabled** (1):" in text
     assert "- LoomOps" in text
     assert "Plugins enabled: LoomOps." not in text
+
+
+def test_is_report_tool_membership():
+    for name in (
+        "core_health",
+        "core_list_plugins",
+        "core_plugin_status",
+        "core_list_tools",
+        "core_capabilities",
+        "wg_list_interfaces",
+        "wg_list_peers",
+        "wg_interface_status",
+        "wg_show_interface_config",
+        "wg_stats",
+        "wg_diagnostics",
+        "ops_list_processes",
+        "ops_failed_units",
+        "ops_scan_health",
+        "ops_network_status",
+        "ops_dmesg",
+        "ops_disk_usage",
+        "ops_system_metrics",
+    ):
+        assert core_tools._is_report_tool(name) is True
+
+    for name in ("ops_run_command", "wg_create_peer", "core_enable_plugin"):
+        assert core_tools._is_report_tool(name) is False
+
+
+@pytest.mark.asyncio
+async def test_core_list_tools_blank_line_between_sections(fake_manager):
+    result = await core_tools.dispatch_core_tool("core_list_tools", {})
+    text = result["content"][0]["text"]
+
+    # The plugin section header is separated from the previous block by a blank
+    # line, so a plain (non-Markdown) rendering stays readable.
+    assert "\n\n**LoomOps**" in text
