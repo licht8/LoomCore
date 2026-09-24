@@ -1064,11 +1064,10 @@ def test_reply_text_stream_ignores_agent_plan():
 
 
 @pytest.mark.asyncio
-async def test_goal_stream_forwards_agent_plan_goal(patched_router):
+async def test_route_does_not_stream_agent_plan_goal(patched_router):
     router, state = patched_router
-    goal = "Check the core health"
     plan_args = {
-        "goal": goal,
+        "goal": "Check the core health",
         "mode": "direct",
         "steps": [{"tool": "core_health", "args": {}, "why": "x"}],
     }
@@ -1085,13 +1084,14 @@ async def test_goal_stream_forwards_agent_plan_goal(patched_router):
     deltas: list[str] = []
 
     async def on_delta(fragment, *, reset=False):
-        if fragment:
-            deltas.append(fragment)
+        deltas.append(fragment)
 
     result = await router.route("hi", "sess-1", on_delta=on_delta)
 
     assert result["type"] == "plan"
-    assert "".join(deltas) == goal
+    # The plan goal is not streamed: the assistant bubble appears only after the
+    # tools run (the post-tools summary response).
+    assert deltas == []
 
 
 def test_reply_text_stream_reset_restarts():

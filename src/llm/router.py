@@ -267,7 +267,6 @@ class AIRouter:
         planner_started = time.monotonic()
         planner_attempts = 0
         reply_stream = _ReplyTextStream() if on_delta is not None else None
-        goal_stream = _GoalTextStream() if on_delta is not None else None
         try:
             for attempt in range(PLANNER_REASK_LIMIT + 1):
                 planner_attempts += 1
@@ -275,7 +274,6 @@ class AIRouter:
                 if reply_stream is not None and attempt > 0:
                     # A re-ask must not append to the previous attempt's text.
                     reply_stream.reset()
-                    goal_stream.reset()
                     await on_delta("", reset=True)
                 if on_delta is not None:
                     llm_response = await self.client.stream_chat_completion(
@@ -287,9 +285,7 @@ class AIRouter:
                         max_tokens=config.planner_max_tokens,
                         purpose="planner",
                         session_id=session_id,
-                        on_tool_delta=_make_reply_streamer(
-                            reply_stream, goal_stream, on_delta
-                        ),
+                        on_tool_delta=_make_reply_streamer(reply_stream, on_delta),
                     )
                 else:
                     llm_response = await self.client.chat_completion(
@@ -877,28 +873,18 @@ class _ReplyTextStream(_ToolFieldStream):
         super().__init__(REPLY_TOOL, "text")
 
 
-class _GoalTextStream(_ToolFieldStream):
-    """Incrementally extract the ``goal`` of a streamed ``agent_plan``."""
-
-    def __init__(self) -> None:
-        super().__init__(AGENT_PLAN_TOOL, "goal")
-
-
 def _make_reply_streamer(
     reply_stream: _ReplyTextStream,
-    goal_stream: _GoalTextStream,
     on_delta: Callable[[str], Awaitable[None]],
 ) -> Callable[[str | None, str], Awaitable[bool]]:
     """Build the ``on_tool_delta`` callback.
 
-    ``reply`` streams its ``text``; ``agent_plan`` streams its ``goal``. Only one
-    is active for a given tool call, so the first stream that yields text wins.
+    Only a ``reply`` streams its ``text``; a streamed ``agent_plan`` emits no
+    deltas, so the assistant message appears only after the tools run.
     """
 
     async def _on_tool_delta(name: str | None, args_so_far: str) -> bool:
         fragment = reply_stream.feed(name, args_so_far)
-        if not fragment:
-            fragment = goal_stream.feed(name, args_so_far)
         if fragment:
             await on_delta(fragment)
             return True
