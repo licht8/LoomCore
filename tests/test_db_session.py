@@ -215,3 +215,97 @@ async def test_ensure_session_reraises_when_user_recovery_finds_nothing():
         await db_session.ensure_session(db, "sess-user-race")
 
     assert db.rolled_back == 1
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_shapes_rows_with_title_and_preview():
+    rows = [
+        SimpleNamespace(
+            session_id="s1", message_count=2, last_message_at="2026-02-01T00:00:00+00:00"
+        )
+    ]
+    db = _FakeSession(
+        results=[
+            _FakeResult(scalars=rows),
+            _FakeResult(scalars=[("s1", "first user message")]),
+            _FakeResult(scalars=[("s1", "latest user message")]),
+        ]
+    )
+
+    result = await db_session.list_sessions(db, limit=10)
+
+    assert result == [
+        {
+            "session_id": "s1",
+            "title": "first user message",
+            "preview": "latest user message",
+            "message_count": 2,
+            "last_message_at": "2026-02-01T00:00:00+00:00",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_empty_returns_early():
+    db = _FakeSession(results=[_FakeResult(scalars=[])])
+
+    assert await db_session.list_sessions(db) == []
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_truncates_long_bodies():
+    long_body = "x" * 200
+    rows = [SimpleNamespace(session_id="s1", message_count=1, last_message_at="t")]
+    db = _FakeSession(
+        results=[
+            _FakeResult(scalars=rows),
+            _FakeResult(scalars=[("s1", long_body)]),
+            _FakeResult(scalars=[("s1", long_body)]),
+        ]
+    )
+
+    result = await db_session.list_sessions(db)
+
+    assert len(result[0]["title"]) == 120
+    assert len(result[0]["preview"]) == 120
+
+
+def _plan_row(plan_id, revision, risks, created_at):
+    return SimpleNamespace(
+        session_id="sess",
+        content=f"goal {revision}",
+        created_at=created_at,
+        tool_calls=[
+            {
+                "plan_id": plan_id,
+                "revision": revision,
+                "steps": [{"risk": risk} for risk in risks],
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_pending_plans_dedupes_to_newest_revision():
+    newest = _plan_row("pl_1", 2, ["dangerous", "safe"], "2026-02-01T00:00:00+00:00")
+    other = _plan_row("pl_2", 1, ["moderate"], "2026-01-15T00:00:00+00:00")
+    older = _plan_row("pl_1", 1, ["safe"], "2026-01-01T00:00:00+00:00")
+    db = _FakeSession(results=[_FakeResult(scalars=[newest, other, older])])
+
+    result = await db_session.list_pending_plans(db)
+
+    assert [plan["plan_id"] for plan in result] == ["pl_1", "pl_2"]
+    assert result[0]["revision"] == 2
+    assert result[0]["step_count"] == 2
+    assert result[0]["risks"] == ["dangerous", "safe"]
+    assert result[0]["goal"] == "goal 2"
+
+
+@pytest.mark.asyncio
+async def test_list_pending_plans_skips_rows_without_plan_id():
+    bad = SimpleNamespace(
+        session_id="sess", content="x", created_at="t", tool_calls=[{}]
+    )
+    db = _FakeSession(results=[_FakeResult(scalars=[bad])])
+
+    assert await db_session.list_pending_plans(db) == []

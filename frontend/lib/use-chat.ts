@@ -2,36 +2,65 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import type { PlanStep, UseChatState, WsMessage } from "@/lib/chat-types"
-import { clearSessionHistory, fetchSessionHistory, getSessionId } from "@/lib/chat-api"
+import {
+  clearSessionHistory,
+  fetchSessionHistory,
+  getSessionId,
+  newSessionId,
+  setSessionId as persistSessionId,
+} from "@/lib/chat-api"
+import { fetchSessions } from "@/lib/sessions-api"
 import { finalizePendingTool, formatTimestamp, hydrateMessages } from "@/lib/chat-hydrate"
 import { applyWsMessage, buildChatWsProtocols, buildChatWsUrl } from "@/lib/chat-ws"
 
+/** Initial feed/plan state when (re)loading or switching a session. */
+const EMPTY_TURN: Pick<
+  UseChatState,
+  "messages" | "isThinking" | "isSending" | "planProgress" | "planRequest"
+> = {
+  messages: [],
+  isThinking: false,
+  isSending: false,
+  planProgress: "",
+  planRequest: null,
+}
+
 /**
  * Custom hook managing the WebSocket connection and chat state.
- * Connection/URL logic lives in `chat-ws`, REST in `chat-api` and the
- * stored-row mapping in `chat-hydrate`.
+ * Connection/URL logic lives in `chat-ws`, REST in `chat-api`/`sessions-api`
+ * and the stored-row mapping in `chat-hydrate`.
  */
-export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject") => void) {
+export function useChat(
+  initialSessionId?: string,
+  onPlanResponse?: (action: "approve" | "edit" | "reject") => void,
+) {
   const [state, setState] = useState<UseChatState>({
-    messages: [],
-    isThinking: false,
-    planProgress: "",
-    planRequest: null,
+    ...EMPTY_TURN,
     error: null,
-    isSending: false,
     wsReady: false,
+    sessions: [],
+    sessionsLoading: true,
   })
 
+  const [sessionId, setSessionId] = useState<string>(
+    () => initialSessionId || getSessionId(),
+  )
+
   const wsRef = useRef<WebSocket | null>(null)
-  const sessionId = useRef<string>(getSessionId())
   const onPlanRef = useRef(onPlanResponse)
+  const busyRef = useRef(false)
 
   // Sync the callback ref
   useEffect(() => {
     onPlanRef.current = onPlanResponse
   }, [onPlanResponse])
 
-  // === Open the WebSocket connection ===
+  // Mirror the busy flag so switch/new/delete can read it without a stale closure.
+  useEffect(() => {
+    busyRef.current = state.isThinking || state.isSending
+  }, [state.isThinking, state.isSending])
+
+  // === Open the WebSocket connection (reconnects on session switch) ===
   useEffect(() => {
     let isActive = true
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -40,7 +69,7 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
 
     const connect = () => {
       if (!isActive) return
-      const url = buildChatWsUrl(sessionId.current)
+      const url = buildChatWsUrl(sessionId)
       console.log("Connecting to WS:", url)
 
       const socket = new WebSocket(url, buildChatWsProtocols())
@@ -116,7 +145,7 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
 
     connect()
 
-    // Cleanup on unmount
+    // Cleanup on unmount or session switch
     return () => {
       isActive = false
       if (reconnectTimer) clearTimeout(reconnectTimer)
@@ -127,15 +156,15 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
         ws.close()
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [sessionId])
 
-  // === Restore stored history on mount (survives a page reload) ===
+  // === Restore stored history on mount or after a session switch ===
   useEffect(() => {
     let active = true
+    setState((prev) => ({ ...prev, ...EMPTY_TURN, error: null }))
 
     async function loadHistory() {
-      const rows = await fetchSessionHistory(sessionId.current)
+      const rows = await fetchSessionHistory(sessionId)
       if (!active || !rows) return
       setState((prev) =>
         prev.messages.length ? prev : { ...prev, messages: hydrateMessages(rows) },
@@ -146,7 +175,31 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
     return () => {
       active = false
     }
+  }, [sessionId])
+
+  /** Reload the session list (title/preview per session). */
+  const refreshSessions = useCallback(async () => {
+    try {
+      const list = await fetchSessions()
+      setState((prev) => ({ ...prev, sessions: list, sessionsLoading: false }))
+    } catch (err) {
+      console.error("Failed to load sessions:", err)
+      setState((prev) => ({ ...prev, sessionsLoading: false }))
+    }
   }, [])
+
+  // Initial session-list load.
+  useEffect(() => {
+    refreshSessions()
+  }, [refreshSessions])
+
+  // Refresh the list whenever a turn finishes.
+  const wasBusy = useRef(false)
+  useEffect(() => {
+    const busy = state.isThinking || state.isSending
+    if (wasBusy.current && !busy) refreshSessions()
+    wasBusy.current = busy
+  }, [state.isThinking, state.isSending, refreshSessions])
 
   /**
    * Send a user message over the WebSocket.
@@ -249,16 +302,39 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
 
   /** Delete this session's stored history and clear the feed. */
   const clearConversation = useCallback(async () => {
-    await clearSessionHistory(sessionId.current)
-    setState((prev) => ({
-      ...prev,
-      messages: [],
-      isThinking: false,
-      isSending: false,
-      planRequest: null,
-      error: null,
-    }))
+    await clearSessionHistory(sessionId)
+    setState((prev) => ({ ...prev, ...EMPTY_TURN, error: null }))
+    refreshSessions()
+  }, [sessionId, refreshSessions])
+
+  /** Switch to an existing session (no-op while a turn is in flight). */
+  const selectSession = useCallback((id: string) => {
+    if (busyRef.current) return
+    persistSessionId(id)
+    setSessionId(id)
   }, [])
+
+  /** Create and switch to a fresh session. */
+  const createSession = useCallback(() => {
+    if (busyRef.current) return
+    const id = newSessionId()
+    setState((prev) => ({ ...prev, ...EMPTY_TURN, error: null }))
+    setSessionId(id)
+    refreshSessions()
+  }, [refreshSessions])
+
+  /** Delete a session's stored history, clearing the feed when it is active. */
+  const deleteSession = useCallback(
+    async (id: string) => {
+      if (busyRef.current) return
+      await clearSessionHistory(id)
+      if (id === sessionId) {
+        setState((prev) => ({ ...prev, ...EMPTY_TURN, error: null }))
+      }
+      refreshSessions()
+    },
+    [sessionId, refreshSessions],
+  )
 
   return {
     messages: state.messages,
@@ -268,9 +344,16 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
     error: state.error,
     isSending: state.isSending,
     wsReady: state.wsReady,
+    sessions: state.sessions,
+    sessionsLoading: state.sessionsLoading,
+    sessionId,
     sendMessage,
     sendPlanResponse,
     cancelRequest,
     clearConversation,
+    selectSession,
+    createSession,
+    deleteSession,
+    refreshSessions,
   }
 }

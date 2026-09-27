@@ -21,6 +21,19 @@ export function getSessionId(): string {
   return sid
 }
 
+/** Persist the session ID that the app is currently using. */
+export function setSessionId(id: string): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(SESSION_STORAGE_KEY, id)
+}
+
+/** Generate and persist a fresh session ID. */
+export function newSessionId(): string {
+  const sid = generateSessionId()
+  setSessionId(sid)
+  return sid
+}
+
 /** Base URL for REST calls (empty string means same-origin via nginx). */
 export function getApiBase(): string {
   if (typeof window === "undefined") return ""

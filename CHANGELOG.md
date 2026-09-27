@@ -5,6 +5,14 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Frontend gaps: added read-only admin surfaces backed by four thin API routes —
+  `GET /api/sessions` (session list with title/preview/count served by the new
+  in-chat conversations rail), `GET /api/audit` + `GET /api/audit/verify`
+  (hash-chain browser and verify), `GET /api/overview` (curated host/plugin
+  aggregate, each section null on failure), and `GET /api/approvals` (pending
+  proposed plans, read-only). New `/tools`, `/audit`, `/overview`, `/approvals`
+  pages, a `?session=` deep link, and a Tools catalog. No migration, no WS/schema
+  change.
 - Perceived-latency pass: the plan goal now streams as a transient
   `plan_progress` status line ("Planning: …") above the composer (never an
   assistant bubble; cleared when a tool card or the response arrives), report

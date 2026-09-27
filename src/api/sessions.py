@@ -6,8 +6,9 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Path, Query, Request
 
 from src.api.deps import require_admin_token_from_request
+from src.core.rate_limit import limiter
 from src.db.database import async_session_factory
-from src.db.session import clear_session_history, get_session_history
+from src.db.session import clear_session_history, get_session_history, list_sessions
 
 logger = logging.getLogger("loomcore.api.sessions")
 
@@ -28,6 +29,20 @@ def _serialize(message) -> dict:
         "tool_calls": message.tool_calls,
         "tool_result": message.tool_result,
     }
+
+
+@router.get("/sessions")
+@limiter.limit("60 per 60 seconds")
+async def list_sessions_route(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=200),
+    authorization: str | None = Header(default=None),
+):
+    """List chat sessions with title/preview/count (newest first)."""
+    require_admin_token_from_request(request, authorization)
+    async with async_session_factory() as db:
+        sessions = await list_sessions(db, limit=limit)
+    return {"sessions": sessions}
 
 
 @router.get("/sessions/{session_id}/messages")

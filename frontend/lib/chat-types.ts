@@ -149,6 +149,15 @@ export interface ChatMessage {
   plan?: Plan
 }
 
+/** One chat session summary returned by GET /api/sessions. */
+export interface SessionSummary {
+  session_id: string
+  title: string
+  preview: string
+  message_count: number
+  last_message_at: string
+}
+
 /** Internal state of the useChat hook (not exported to the UI) */
 export interface UseChatState {
   messages: ChatMessage[]
@@ -158,6 +167,8 @@ export interface UseChatState {
   error: string | null
   isSending: boolean
   wsReady: boolean
+  sessions: SessionSummary[]
+  sessionsLoading: boolean
 }
 
 /** Metadata stored inside a persisted message's `tool_calls` JSON. */

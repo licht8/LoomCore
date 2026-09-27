@@ -2,7 +2,16 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart3, MessageSquare, Puzzle, Settings } from "lucide-react"
+import {
+  BarChart3,
+  Inbox,
+  LayoutDashboard,
+  MessageSquare,
+  Puzzle,
+  ScrollText,
+  Settings,
+  Wrench,
+} from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 
@@ -22,6 +31,10 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: "AI Assistant", href: "/", icon: MessageSquare },
+  { label: "Overview", href: "/overview", icon: LayoutDashboard },
+  { label: "Tools", href: "/tools", icon: Wrench },
+  { label: "Approvals", href: "/approvals", icon: Inbox },
+  { label: "Audit log", href: "/audit", icon: ScrollText },
   { label: "Plugins", href: "/plugins", icon: Puzzle },
   { label: "Usage", href: "/usage", icon: BarChart3 },
 ]
@@ -91,7 +104,6 @@ export function DashboardSidebar() {
         {navItems.map((item) => (
           <NavLink key={item.href} item={item} active={isActive(item.href)} />
         ))}
-        {/* System Status — hidden until functional */}
       </nav>
 
       <div className="mt-auto flex flex-col py-4">

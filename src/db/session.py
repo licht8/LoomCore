@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -180,6 +180,118 @@ async def clear_session_history(
     )
     await session_db.commit()
     return result.rowcount or 0
+
+
+def _truncate(value: str | None, limit: int = 120) -> str:
+    """Clamp a message body to a one-line-ish preview."""
+    text = value or ""
+    return text if len(text) <= limit else text[:limit]
+
+
+async def list_sessions(session_db: AsyncSession, limit: int = 100) -> list[dict]:
+    """List sessions that have at least one user message (newest first).
+
+    ``title`` is the first user message and ``preview`` the last, each clamped
+    to 120 chars; ``message_count`` counts the user messages. The aggregate is
+    bounded by ``limit`` sessions; the first/last bodies are fetched with two
+    small aggregate joins (no per-session round trip).
+    """
+    aggregate = (
+        select(
+            Message.session_id.label("session_id"),
+            func.count().label("message_count"),
+            func.max(Message.created_at).label("last_message_at"),
+        )
+        .where(Message.role == "user")
+        .group_by(Message.session_id)
+        .order_by(func.max(Message.created_at).desc())
+        .limit(limit)
+    )
+    rows = (await session_db.execute(aggregate)).all()
+    if not rows:
+        return []
+
+    session_ids = [row.session_id for row in rows]
+    bounds = (
+        select(
+            Message.session_id.label("sid"),
+            func.min(Message.created_at).label("first_at"),
+            func.max(Message.created_at).label("last_at"),
+        )
+        .where(Message.role == "user", Message.session_id.in_(session_ids))
+        .group_by(Message.session_id)
+        .subquery()
+    )
+
+    async def _bodies(column) -> dict[str, str]:
+        result = await session_db.execute(
+            select(Message.session_id, Message.content)
+            .join(
+                bounds,
+                and_(
+                    Message.session_id == bounds.c.sid,
+                    Message.created_at == column,
+                ),
+            )
+            .where(Message.role == "user")
+        )
+        return {session_id: content for session_id, content in result.all()}
+
+    titles = await _bodies(bounds.c.first_at)
+    previews = await _bodies(bounds.c.last_at)
+
+    return [
+        {
+            "session_id": row.session_id,
+            "title": _truncate(titles.get(row.session_id)),
+            "preview": _truncate(previews.get(row.session_id)),
+            "message_count": row.message_count,
+            "last_message_at": row.last_message_at,
+        }
+        for row in rows
+    ]
+
+
+async def list_pending_plans(session_db: AsyncSession, limit: int = 100) -> list[dict]:
+    """List plans awaiting approval, newest revision per ``plan_id`` first.
+
+    Considers only ``role="plan"`` rows whose stored JSONB status is
+    ``"proposed"`` (Postgres JSONB operators; the project targets Postgres).
+    A plan re-asked into a new revision leaves older ``proposed`` rows behind,
+    so rows are ordered newest-first and deduped by ``plan_id``.
+    """
+    status_prop = Message.tool_calls[0]["status"]
+    stmt = (
+        select(Message)
+        .where(Message.role == "plan", status_prop.as_string() == "proposed")
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await session_db.execute(stmt)).scalars().all()
+
+    seen: set[str] = set()
+    pending: list[dict] = []
+    for row in rows:
+        plan = (row.tool_calls or [{}])[0]
+        plan_id = plan.get("plan_id")
+        if not plan_id or plan_id in seen:
+            continue
+        seen.add(plan_id)
+        steps = plan.get("steps") or []
+        pending.append(
+            {
+                "plan_id": plan_id,
+                "session_id": row.session_id,
+                "goal": row.content,
+                "revision": plan.get("revision"),
+                "step_count": len(steps),
+                "risks": sorted(
+                    {step.get("risk") for step in steps if step.get("risk")}
+                ),
+                "created_at": row.created_at,
+            }
+        )
+    return pending
 
 
 async def add_llm_usage(
