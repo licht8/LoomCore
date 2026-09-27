@@ -46,6 +46,13 @@ class DeltaEvent(_Event):
     reset: bool = False
 
 
+class PlanProgressEvent(_Event):
+    type: Literal["plan_progress"] = "plan_progress"
+    message_id: str | None = None
+    content: str | None = None
+    reset: bool = False
+
+
 class ToolCallEvent(_Event):
     type: Literal["tool_call"] = "tool_call"
     content: str | None = None
@@ -126,6 +133,7 @@ EVENT_MODELS: dict[str, type[_Event]] = {
     "thinking": ThinkingEvent,
     "response": ResponseEvent,
     "delta": DeltaEvent,
+    "plan_progress": PlanProgressEvent,
     "tool_call": ToolCallEvent,
     "tool_response": ToolResponseEvent,
     "plan_proposed": PlanProposedEvent,
@@ -162,6 +170,14 @@ def response_payload(
 def delta_payload(message_id: str, content: str, reset: bool = False) -> dict:
     return event_payload(
         DeltaEvent(message_id=message_id, content=content, reset=reset)
+    )
+
+
+def plan_progress_payload(
+    message_id: str, content: str, reset: bool = False
+) -> dict:
+    return event_payload(
+        PlanProgressEvent(message_id=message_id, content=content, reset=reset)
     )
 
 

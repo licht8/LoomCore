@@ -135,6 +135,10 @@ confirmation.
   (`message_id`, `content`, optional `reset`); the final `response` carries the
   same `message_id` so the client reconciles the streamed bubble. A `reset`
   delta (emitted before a planner re-ask) replaces the partial text.
+- The `agent_plan` goal streams as `plan_progress` events (`message_id`,
+  `content`, optional `reset`) — a transient "Planning: …" status line, never an
+  assistant message. It is cleared when a tool card or the final `response`
+  arrives, so the assistant bubble still appears only after the tools run.
 - Client to server: `plan_approve`, `plan_edit`, `plan_reject` for plan cards.
 - Direct confirmation is an ordinary text message; the server parses it.
 - On reload, plan revisions are collapsed by `plan_id` (last one wins).
@@ -150,10 +154,14 @@ confirmation.
   round of latency instead of the sum of its steps.
 - The planner and summary calls are bounded by `LLM_PLANNER_MAX_TOKENS` /
   `LLM_SUMMARY_MAX_TOKENS` and streamed as `delta` events.
-- **All-report plans skip the summary**: when every step is a report/listing tool
-  (`_is_report_tool`), the raw Markdown output is the answer, so no summary call
-  runs and the tool cards render compact. Mixed (report + command) plans still
-  summarize and render non-compact (accepted v1 trade-off).
+- **All-report plans skip the summary**: report-ness is declarative — core
+  meta-tools set `report: true`, plugins declare `report`/`report_arg` in their
+  `TOOLS_SCHEMA` (read into `plugin_manager`), so the core never hardcodes plugin
+  tool names. When every step is a report, the raw Markdown output is the answer,
+  so no summary call runs and the tool cards render compact. An allow-listed
+  read-only command (`LOOMCORE_REPORT_COMMANDS`, empty by default) counts too.
+  Mixed (report + command) plans still summarize and render non-compact
+  (accepted v1 trade-off).
 - Intended defaults are `LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
   `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`; the Settings UI
   must not silently re-override them to `90`/`2`.

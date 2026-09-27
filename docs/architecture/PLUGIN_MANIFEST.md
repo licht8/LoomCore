@@ -93,7 +93,7 @@ instead of raising. The runtime check likewise reports a `cap_add`,
 
 ### Tool declarations
 
-Each entry in the plugin's `TOOLS_SCHEMA` (returned by `tools/list`) may carry two
+Each entry in the plugin's `TOOLS_SCHEMA` (returned by `tools/list`) may carry
 core-facing keys alongside `name`/`description`/`inputSchema`:
 
 - `risk` — `"safe"`, `"moderate"` or `"dangerous"`. The core uses it verbatim to
@@ -106,6 +106,15 @@ core-facing keys alongside `name`/`description`/`inputSchema`:
   entry is stale), so a new tool can never be advertised as safe by accident.
 - `internal` — `true` marks a tool the LLM must never see; it is callable only by
   the core. `internal_tools` in the manifest is the declarative counterpart.
+- `report` — `true` marks a listing/report tool whose raw output already is the
+  answer. Such a turn skips the post-run summary LLM call and the tool card is
+  rendered compact. This only affects summarization/rendering, never whether the
+  tool runs or needs approval. Omitting it falls back to "summarize" (safe).
+- `report_arg` — the name of an argument whose value, when a read-only command,
+  makes the tool a report (e.g. `ops_run_command` with `"report_arg": "command"`).
+  The core only treats it as a report when the command's basename is in
+  `LOOMCORE_REPORT_COMMANDS` and the command has no shell metacharacters, so the
+  read-only classification is opt-in and best-effort.
 
 ## Adding a plugin
 

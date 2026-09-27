@@ -15,6 +15,7 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
   const [state, setState] = useState<UseChatState>({
     messages: [],
     isThinking: false,
+    planProgress: "",
     planRequest: null,
     error: null,
     isSending: false,
@@ -262,6 +263,7 @@ export function useChat(onPlanResponse?: (action: "approve" | "edit" | "reject")
   return {
     messages: state.messages,
     isThinking: state.isThinking,
+    planProgress: state.planProgress,
     planRequest: state.planRequest,
     error: state.error,
     isSending: state.isSending,

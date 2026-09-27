@@ -68,6 +68,12 @@ export type WsMessage =
       reset?: boolean
     }
   | {
+      type: "plan_progress"
+      message_id?: string
+      content?: string
+      reset?: boolean
+    }
+  | {
       type: "tool_call"
       content?: string
       text?: string
@@ -147,6 +153,7 @@ export interface ChatMessage {
 export interface UseChatState {
   messages: ChatMessage[]
   isThinking: boolean
+  planProgress: string
   planRequest: PlanRequest | null
   error: string | null
   isSending: boolean

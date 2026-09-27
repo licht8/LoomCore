@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import re
 import time
 import traceback
@@ -10,6 +11,7 @@ from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from src.config import settings
 from src.core.agent import (
     execute_plan,
     next_revision,
@@ -25,6 +27,7 @@ from src.core.confirmations import (
 from src.core.core_tools import (
     CORE_TOOL_NAMES,
     _is_report_tool,
+    _report_arg_for,
     dispatch_core_tool,
     resolve_tool_risk,
 )
@@ -36,6 +39,7 @@ from src.interfaces.events import (
     cancelled_payload,
     delta_payload,
     error_payload,
+    plan_progress_payload,
     response_payload,
     schema_warning_payload,
     thinking_payload,
@@ -363,15 +367,49 @@ async def _run_plan(
     log_stage("plan_total", time.monotonic() - plan_started, show_plan=show_plan)
 
 
-def _plan_is_all_reports(plan: dict) -> bool:
-    """True when every step of a non-empty plan is a report/listing tool."""
+def _read_only_commands() -> frozenset[str]:
+    """Parse the ``LOOMCORE_REPORT_COMMANDS`` allow-list (comma/space separated)."""
+    raw = settings.report_commands or ""
+    return frozenset(raw.replace(",", " ").split())
+
+
+# Shell metacharacters that make a command un-classifiable as read-only, so
+# ``uptime; rm -rf /`` can never skip the summary.
+_SHELL_METACHARACTERS = frozenset(";|&><$`()\n\r")
+
+
+def _command_is_read_only(command: str) -> bool:
+    """True when the command's basename is allow-listed as read-only."""
+    if not command or any(ch in _SHELL_METACHARACTERS for ch in command):
+        return False
+    tokens = command.split()
+    if not tokens:
+        return False
+    return os.path.basename(tokens[0]) in _read_only_commands()
+
+
+def _step_answers_with_raw(step: dict) -> bool:
+    """True when a step's raw output already is the answer."""
+    name = step.get("tool", "")
+    if _is_report_tool(name):
+        return True
+    arg = _report_arg_for(name)
+    if arg:
+        value = step.get("args", {}).get(arg)
+        if isinstance(value, str):
+            return _command_is_read_only(value)
+    return False
+
+
+def _plan_steps_answer_with_raw(plan: dict) -> bool:
+    """True when every step of a non-empty plan answers with raw output."""
     steps = plan.get("steps", [])
-    return bool(steps) and all(_is_report_tool(step.get("tool", "")) for step in steps)
+    return bool(steps) and all(_step_answers_with_raw(step) for step in steps)
 
 
 def _plan_answers_with_raw(plan: dict, *, raw_requested: bool) -> bool:
     """True when the raw tool output is the answer (no LLM summary needed)."""
-    return raw_requested or _plan_is_all_reports(plan)
+    return raw_requested or _plan_steps_answer_with_raw(plan)
 
 
 def _uses_llm_summary(
@@ -526,10 +564,16 @@ async def _process_user_message(
         async def on_delta(fragment: str, *, reset: bool = False) -> None:
             await send(delta_payload(message_id, fragment, reset=reset))
 
+        async def on_progress(fragment: str, *, reset: bool = False) -> None:
+            await send(plan_progress_payload(message_id, fragment, reset=reset))
+
         route_started = time.monotonic()
         try:
             result = await airouter_with_plugins.route(
-                user_text, session_id, on_delta=on_delta
+                user_text,
+                session_id,
+                on_delta=on_delta,
+                on_progress=on_progress,
             )
             logger.info(
                 f"✅ LLM responded, type={result.get('type')}, session={session_id}"

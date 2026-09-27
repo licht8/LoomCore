@@ -13,6 +13,7 @@ class _FakeManager:
         self.enabled = enabled
         self.healthy = healthy
         self.calls: list[tuple[str, str]] = []
+        self.report_kinds: dict[str, str] = {}
 
     def plugin_names(self):
         return list(self.names)
@@ -52,6 +53,9 @@ class _FakeManager:
 
     def plugin_for_tool(self, tool_name):
         return "LoomOps"
+
+    def report_kind(self, tool_name):
+        return self.report_kinds.get(tool_name, "")
 
     async def enable_plugin(self, name):
         self.calls.append(("enable", name))
@@ -337,31 +341,41 @@ async def test_core_health_text_lists_plugins_as_bullets(fake_manager):
     assert "Plugins enabled: LoomOps." not in text
 
 
-def test_is_report_tool_membership():
+def test_is_report_tool_core_declarations(fake_manager):
     for name in (
         "core_health",
         "core_list_plugins",
         "core_plugin_status",
         "core_list_tools",
         "core_capabilities",
-        "wg_list_interfaces",
-        "wg_list_peers",
-        "wg_interface_status",
-        "wg_show_interface_config",
-        "wg_stats",
-        "wg_diagnostics",
-        "ops_list_processes",
-        "ops_failed_units",
-        "ops_scan_health",
-        "ops_network_status",
-        "ops_dmesg",
-        "ops_disk_usage",
-        "ops_system_metrics",
     ):
         assert core_tools._is_report_tool(name) is True
 
     for name in ("ops_run_command", "wg_create_peer", "core_enable_plugin"):
         assert core_tools._is_report_tool(name) is False
+
+
+def test_is_report_tool_consults_plugin_declarations(fake_manager):
+    fake_manager.report_kinds = {
+        "wg_list_peers": "always",
+        "ops_run_command": "command",
+    }
+
+    assert core_tools._is_report_tool("wg_list_peers") is True
+    # A report_arg tool is not an always-report: the argument gates it.
+    assert core_tools._is_report_tool("ops_run_command") is False
+    assert core_tools._is_report_tool("wg_create_peer") is False
+
+
+def test_report_arg_for(fake_manager):
+    fake_manager.report_kinds = {
+        "wg_list_peers": "always",
+        "ops_run_command": "command",
+    }
+
+    assert core_tools._report_arg_for("ops_run_command") == "command"
+    assert core_tools._report_arg_for("wg_list_peers") == ""
+    assert core_tools._report_arg_for("nope") == ""
 
 
 @pytest.mark.asyncio

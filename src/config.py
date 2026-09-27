@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     plugins_state_file: str = ""
     confirmations_file: str = ""
     timing_enabled: bool = Field(default=False, validation_alias="LOOMCORE_TIMING")
+    # Comma/space-separated allow-list of read-only command basenames whose
+    # ops_run_command turn skips the summary. Empty (default) disables it.
+    report_commands: str = Field(
+        default="", validation_alias="LOOMCORE_REPORT_COMMANDS"
+    )
     model_config = {"env_file": ".env"}
 
     @field_validator("cors_origins", mode="before")

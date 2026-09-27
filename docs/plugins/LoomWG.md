@@ -106,6 +106,11 @@ exists — use `wg_create_peer` + `wg_export_existing_clients`. The plugin refus
 to start if any advertised tool lacks an explicit risk entry, so no tool can be
 advertised as safe by accident.
 
+The read-only listings (`wg_list_interfaces`, `wg_list_peers`,
+`wg_interface_status`, `wg_show_interface_config`, `wg_stats`, `wg_diagnostics`)
+are declared with `report: true`, so a turn that only runs them skips the
+summary LLM call and their cards render compact.
+
 ## Parameters
 
 - `wg_create_peer`: `name` (required), `interface`, `public_key` (optional → keys are

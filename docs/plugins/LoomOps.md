@@ -76,6 +76,14 @@ approval before running. Every other tool is read-only and runs without approval
 The plugin refuses to start if any advertised tool lacks an explicit risk entry,
 so no tool can be advertised as safe by accident.
 
+The read-only listings (`ops_list_processes`, `ops_failed_units`,
+`ops_scan_health`, `ops_network_status`, `ops_dmesg`, `ops_disk_usage`,
+`ops_system_metrics`) are declared with `report: true`, so a turn that only runs
+them skips the summary LLM call and their cards render compact. `ops_run_command`
+is declared with `report_arg: "command"`: it is treated as a report only when the
+command's basename is in the opt-in `LOOMCORE_REPORT_COMMANDS` allow-list and the
+command has no shell metacharacters.
+
 ## Safety model
 
 - **No shell.** `ops_run_command` splits the command with `shlex` and runs the argv

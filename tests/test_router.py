@@ -1094,6 +1094,112 @@ async def test_route_does_not_stream_agent_plan_goal(patched_router):
     assert deltas == []
 
 
+@pytest.mark.asyncio
+async def test_route_forwards_plan_goal_to_on_progress(patched_router):
+    router, state = patched_router
+    plan_args = {
+        "goal": "Check disk and memory",
+        "mode": "plan",
+        "steps": [
+            {"tool": "core_health", "args": {}, "why": "x"},
+            {"tool": "core_list_plugins", "args": {}, "why": "y"},
+        ],
+    }
+    _install_stream_stub(
+        router,
+        state,
+        [
+            {
+                "tool": _goal_args_fragments(plan_args),
+                "response": _plan_response(plan_args),
+            }
+        ],
+    )
+    deltas: list[str] = []
+    progress: list[str] = []
+
+    async def on_delta(fragment, *, reset=False):
+        deltas.append(fragment)
+
+    async def on_progress(fragment, *, reset=False):
+        progress.append(fragment)
+
+    result = await router.route(
+        "hi", "sess-1", on_delta=on_delta, on_progress=on_progress
+    )
+
+    assert result["type"] == "plan"
+    # The goal is progress, never an assistant delta.
+    assert deltas == []
+    assert "".join(progress) == "Check disk and memory"
+
+
+@pytest.mark.asyncio
+async def test_route_does_not_forward_goal_without_on_progress(patched_router):
+    router, state = patched_router
+    plan_args = {
+        "goal": "Check the core health",
+        "mode": "direct",
+        "steps": [{"tool": "core_health", "args": {}, "why": "x"}],
+    }
+    _install_stream_stub(
+        router,
+        state,
+        [
+            {
+                "tool": _goal_args_fragments(plan_args),
+                "response": _plan_response(plan_args),
+            }
+        ],
+    )
+    deltas: list[str] = []
+
+    async def on_delta(fragment, *, reset=False):
+        deltas.append(fragment)
+
+    result = await router.route("hi", "sess-1", on_delta=on_delta)
+
+    assert result["type"] == "plan"
+    assert deltas == []
+
+
+@pytest.mark.asyncio
+async def test_route_resets_progress_on_reask(patched_router):
+    router, state = patched_router
+    first = {"goal": "draft goal", "steps": [{"tool": "ghost", "why": "x"}]}
+    second = {
+        "goal": "final goal",
+        "steps": [{"tool": "core_health", "why": "x"}],
+    }
+    _install_stream_stub(
+        router,
+        state,
+        [
+            {
+                "tool": _goal_args_fragments(first),
+                "response": _plan_response(first),
+            },
+            {
+                "tool": _goal_args_fragments(second),
+                "response": _plan_response(second),
+            },
+        ],
+    )
+    progress: list[tuple[str, bool]] = []
+
+    async def on_progress(fragment, *, reset=False):
+        progress.append((fragment, reset))
+
+    result = await router.route("hi", "sess-1", on_progress=on_progress)
+
+    assert result["plan"]["goal"] == "final goal"
+    assert state["calls"] == 2
+    assert ("", True) in progress
+    reset_index = progress.index(("", True))
+    text = "".join(fragment for fragment, _reset in progress[reset_index + 1 :])
+    assert text == "final goal"
+
+
 def test_reply_text_stream_reset_restarts():
     stream = _ReplyTextStream()
     for _name, args in _reply_args_fragments("first"):

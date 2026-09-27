@@ -142,6 +142,9 @@ class PluginManager:
         self._tool_schemas: dict[str, dict] = {}
         # Per-tool risk declared by the plugin (name -> safe/moderate/dangerous).
         self._tool_risk: dict[str, str] = {}
+        # Per-tool report declaration: "always" for ``report: true``, otherwise
+        # the name of the argument whose read-only value makes it a report.
+        self._tool_report: dict[str, str] = {}
         # True once the external tool catalog has been indexed at least once.
         self._tools_indexed: bool = False
 
@@ -371,6 +374,10 @@ class PluginManager:
     def tool_risk(self, tool_name: str) -> str:
         """Return the plugin-declared risk for a tool ('' when undeclared)."""
         return self._tool_risk.get(tool_name, "")
+
+    def report_kind(self, tool_name: str) -> str:
+        """Return the report declaration ('' none, 'always', or an arg name)."""
+        return self._tool_report.get(tool_name, "")
 
     async def disable_plugin(self, plugin_name: str) -> bool:
         """Stop a plugin and persist its disabled state."""
@@ -644,6 +651,12 @@ class PluginManager:
             risk = _normalize_risk(tool.get("risk"))
             if risk:
                 self._tool_risk[tool_name] = risk
+            if tool.get("report") is True:
+                self._tool_report[tool_name] = "always"
+            else:
+                report_arg = tool.get("report_arg")
+                if isinstance(report_arg, str) and report_arg:
+                    self._tool_report[tool_name] = report_arg
             if tool.get("internal"):
                 self._internal_tools[tool_name] = plugin_name
             else:
@@ -665,6 +678,7 @@ class PluginManager:
             self._internal_tools.pop(name, None)
             self._tool_schemas.pop(name, None)
             self._tool_risk.pop(name, None)
+            self._tool_report.pop(name, None)
 
         # Add new ones: internal — core only, the rest — for the LLM
         return self._index_tools(plugin_name, tools)

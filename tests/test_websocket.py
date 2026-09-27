@@ -8,9 +8,51 @@ import logging
 import pytest
 from fastapi import WebSocketDisconnect
 
+from src.core import core_tools
 from src.core.agent import build_plan
 from src.interfaces import websocket as ws_module
 from src.llm.client import LlmError
+
+
+class _FakeReportManager:
+    """Report declarations of the bundled plugins, as discovery would index them."""
+
+    _KINDS = {
+        "wg_list_interfaces": "always",
+        "wg_list_peers": "always",
+        "wg_interface_status": "always",
+        "wg_show_interface_config": "always",
+        "wg_stats": "always",
+        "wg_diagnostics": "always",
+        "ops_list_processes": "always",
+        "ops_failed_units": "always",
+        "ops_scan_health": "always",
+        "ops_network_status": "always",
+        "ops_dmesg": "always",
+        "ops_disk_usage": "always",
+        "ops_system_metrics": "always",
+        "ops_run_command": "command",
+    }
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def report_kind(self, tool_name):
+        return self._KINDS.get(tool_name, "")
+
+
+@pytest.fixture(autouse=True)
+def _bundled_report_tools(monkeypatch):
+    """At runtime ``discover_plugins`` indexes the plugin report declarations."""
+    monkeypatch.setattr(
+        core_tools,
+        "plugin_manager",
+        _FakeReportManager(core_tools.plugin_manager),
+    )
+
 
 
 @pytest.fixture(autouse=True)
@@ -346,6 +388,41 @@ async def test_command_turn_emits_text_format(monkeypatch):
     assert saved_tools[0]["compact"] is False
     assert sent[-1]["type"] == "response"
     assert sent[-1]["content"] == "Summary"
+
+
+@pytest.mark.asyncio
+async def test_allowlisted_command_turn_skips_summary(monkeypatch):
+    sent, send = _collector()
+    monkeypatch.setattr(ws_module.settings, "report_commands", "uptime")
+    plan = build_plan(
+        {
+            "goal": "uptime",
+            "steps": [
+                {
+                    "tool": "ops_run_command",
+                    "args": {"command": "uptime"},
+                    "why": "check uptime",
+                }
+            ],
+        }
+    )
+    plan["status"] = "approved"
+
+    async def boom_summary(user_text, plan, observations, **kwargs):
+        raise AssertionError("a read-only command turn must not call the summary")
+
+    _patch_plan_runtime(monkeypatch)
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom_summary)
+
+    await ws_module._run_plan(
+        send, "sess", "uptime", plan, {"tool": None, "plan": None}
+    )
+
+    tool_response = next(p for p in sent if p["type"] == "tool_response")
+    assert tool_response["format"] == "text"
+    assert tool_response["compact"] is True
+    assert sent[-1]["type"] == "response"
+    assert sent[-1]["content"] == "ops_run_command ok"
 
 
 @pytest.mark.asyncio
@@ -1515,6 +1592,103 @@ async def test_summarize_runs_for_direct_command_plan(monkeypatch):
 
     assert calls == ["read the config"]
     assert summary == "The file was read."
+
+
+def test_step_answers_with_raw_report_tool():
+    assert (
+        ws_module._step_answers_with_raw({"tool": "ops_disk_usage", "args": {}})
+        is True
+    )
+    assert ws_module._step_answers_with_raw({"tool": "core_health", "args": {}}) is True
+    assert (
+        ws_module._step_answers_with_raw({"tool": "ops_read_file", "args": {}})
+        is False
+    )
+
+
+def test_step_answers_with_raw_read_only_command(monkeypatch):
+    monkeypatch.setattr(ws_module.settings, "report_commands", "uptime, df")
+
+    assert (
+        ws_module._step_answers_with_raw(
+            {"tool": "ops_run_command", "args": {"command": "uptime"}}
+        )
+        is True
+    )
+    assert (
+        ws_module._step_answers_with_raw(
+            {"tool": "ops_run_command", "args": {"command": "/usr/bin/df -h"}}
+        )
+        is True
+    )
+    # Not allow-listed.
+    assert (
+        ws_module._step_answers_with_raw(
+            {"tool": "ops_run_command", "args": {"command": "rm -rf /"}}
+        )
+        is False
+    )
+    # Shell metacharacters are rejected even for an allow-listed basename.
+    assert (
+        ws_module._step_answers_with_raw(
+            {"tool": "ops_run_command", "args": {"command": "uptime; rm -rf /"}}
+        )
+        is False
+    )
+    assert (
+        ws_module._step_answers_with_raw(
+            {"tool": "ops_run_command", "args": {"command": "df -h | grep x"}}
+        )
+        is False
+    )
+
+
+def test_step_answers_with_raw_without_allowlist(monkeypatch):
+    monkeypatch.setattr(ws_module.settings, "report_commands", "")
+
+    assert (
+        ws_module._step_answers_with_raw(
+            {"tool": "ops_run_command", "args": {"command": "uptime"}}
+        )
+        is False
+    )
+
+
+def test_uses_llm_summary_false_for_read_only_command_plan(monkeypatch):
+    monkeypatch.setattr(ws_module.settings, "report_commands", "uptime")
+    plan = build_plan(
+        {
+            "mode": "direct",
+            "goal": "uptime",
+            "steps": [
+                {"tool": "ops_run_command", "args": {"command": "uptime"}, "why": "x"}
+            ],
+        }
+    )
+    observations = _health_observation("up 3 days")
+
+    assert (
+        ws_module._uses_llm_summary(plan, observations, raw_requested=False) is False
+    )
+
+
+def test_uses_llm_summary_true_for_mixed_plan(monkeypatch):
+    monkeypatch.setattr(ws_module.settings, "report_commands", "uptime")
+    plan = build_plan(
+        {
+            "mode": "plan",
+            "goal": "health and config",
+            "steps": [
+                {"tool": "core_health", "args": {}, "why": "x"},
+                {"tool": "ops_read_file", "args": {}, "why": "y"},
+            ],
+        }
+    )
+    observations = _health_observation("disk 42% used")
+
+    assert (
+        ws_module._uses_llm_summary(plan, observations, raw_requested=False) is True
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -278,6 +278,24 @@ def _declare_risk(tools: list[dict], risk: dict[str, str]) -> None:
         tool["risk"] = risk[tool["name"]]
 
 
+def _declare_report(tools: list[dict], report: set[str]) -> None:
+    """Mark the listed tools as reports; refuse stale names.
+
+    Report-ness is opt-in (unlike ``_declare_risk``), so tools not listed stay
+    untouched. A declared name without a matching tool means the declaration
+    went stale and is an error.
+    """
+    names = {tool["name"] for tool in tools}
+    unknown = sorted(report - names)
+    if unknown:
+        raise RuntimeError(
+            f"Report declarations reference unknown tools: {unknown}"
+        )
+    for tool in tools:
+        if tool["name"] in report:
+            tool["report"] = True
+
+
 # Per-tool risk declared to the core (Phase 1b). Read-only tools are safe,
 # tracking a new client is moderate, and anything that changes the interface,
 # keys or autostart is dangerous.
@@ -303,3 +321,16 @@ _TOOL_RISK = {
 }
 
 _declare_risk(TOOLS_SCHEMA, _TOOL_RISK)
+
+# Listings/reports whose raw output already is the answer: the turn skips the
+# summary LLM call. These are all safe read-only tools.
+_REPORT_TOOLS = {
+    "wg_list_interfaces",
+    "wg_list_peers",
+    "wg_interface_status",
+    "wg_show_interface_config",
+    "wg_stats",
+    "wg_diagnostics",
+}
+
+_declare_report(TOOLS_SCHEMA, _REPORT_TOOLS)

@@ -60,6 +60,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
         ),
         "inputSchema": _NO_ARGS_SCHEMA,
         "risk": "safe",
+        "report": True,
     },
     {
         "name": "core_list_plugins",
@@ -68,12 +69,14 @@ CORE_TOOLS_SCHEMA: list[dict] = [
         ),
         "inputSchema": _NO_ARGS_SCHEMA,
         "risk": "safe",
+        "report": True,
     },
     {
         "name": "core_plugin_status",
         "description": "Return detailed status, version and warnings for a single plugin.",
         "inputSchema": _PLUGIN_ARG_SCHEMA,
         "risk": "safe",
+        "report": True,
     },
     {
         "name": "core_list_tools",
@@ -83,6 +86,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
         ),
         "inputSchema": _OPTIONAL_PLUGIN_SCHEMA,
         "risk": "safe",
+        "report": True,
     },
     {
         "name": "core_capabilities",
@@ -91,6 +95,7 @@ CORE_TOOLS_SCHEMA: list[dict] = [
         ),
         "inputSchema": _NO_ARGS_SCHEMA,
         "risk": "safe",
+        "report": True,
     },
     {
         "name": "core_enable_plugin",
@@ -137,38 +142,27 @@ def resolve_tool_risk(tool_name: str) -> str:
 
 # Tools whose raw output already is the answer: a table/list of facts the user
 # reads directly. Their turn skips the summary LLM call and the tool card is
-# rendered compact (the assistant bubble shows the output once). This is a
-# curated v1 list -- a plugin-manifest ``report`` flag is the planned follow-up.
+# rendered compact (the assistant bubble shows the output once). Report-ness is
+# declarative: core meta-tools opt in via ``"report": True`` here, and plugins
+# declare ``report`` / ``report_arg`` in their own ``TOOLS_SCHEMA`` (read into
+# ``plugin_manager``), so the core never hardcodes plugin tool names.
 _REPORT_TOOLS = frozenset(
-    {
-        # core meta-tools
-        "core_health",
-        "core_list_plugins",
-        "core_plugin_status",
-        "core_list_tools",
-        "core_capabilities",
-        # LoomWG listings/reports
-        "wg_list_interfaces",
-        "wg_list_peers",
-        "wg_interface_status",
-        "wg_show_interface_config",
-        "wg_stats",
-        "wg_diagnostics",
-        # LoomOps listings/reports
-        "ops_list_processes",
-        "ops_failed_units",
-        "ops_scan_health",
-        "ops_network_status",
-        "ops_dmesg",
-        "ops_disk_usage",
-        "ops_system_metrics",
-    }
+    tool["name"] for tool in CORE_TOOLS_SCHEMA if tool.get("report") is True
 )
 
 
 def _is_report_tool(name: str) -> bool:
-    """True when a tool returns a report/list whose raw output is the answer."""
-    return name in _REPORT_TOOLS
+    """True when a tool always returns a report/list whose raw output is the answer."""
+    return name in _REPORT_TOOLS or plugin_manager.report_kind(name) == "always"
+
+
+def _report_arg_for(name: str) -> str:
+    """Return the argument whose read-only value makes a tool a report.
+
+    Empty for an always-report tool (``report: true``) or an undeclared tool.
+    """
+    kind = plugin_manager.report_kind(name)
+    return "" if kind == "always" else kind
 
 
 

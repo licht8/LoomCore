@@ -223,6 +223,30 @@ def _declare_risk(tools: list[dict], risk: dict[str, str]) -> None:
         tool["risk"] = risk[tool["name"]]
 
 
+def _declare_report(
+    tools: list[dict], report: set[str], report_arg: dict[str, str] | None = None
+) -> None:
+    """Mark report tools; refuse stale names.
+
+    ``report`` names carry ``report: true``. ``report_arg`` maps a tool name to
+    the argument whose read-only value makes that tool a report. Both are
+    opt-in, so tools not listed stay untouched, but a declared name without a
+    matching tool means the declaration went stale and is an error.
+    """
+    names = {tool["name"] for tool in tools}
+    declared = set(report) | set(report_arg or {})
+    unknown = sorted(declared - names)
+    if unknown:
+        raise RuntimeError(
+            f"Report declarations reference unknown tools: {unknown}"
+        )
+    for tool in tools:
+        if tool["name"] in report:
+            tool["report"] = True
+        elif report_arg and tool["name"] in report_arg:
+            tool["report_arg"] = report_arg[tool["name"]]
+
+
 # Per-tool risk declared to the core (Phase 1b). Observation tools are safe;
 # anything that mutates the host is dangerous.
 _TOOL_RISK = {
@@ -244,3 +268,20 @@ _TOOL_RISK = {
 }
 
 _declare_risk(TOOLS_SCHEMA, _TOOL_RISK)
+
+# Read-only listings/reports whose raw output already is the answer: the turn
+# skips the summary LLM call. ``ops_run_command`` is a report only when its
+# command is allow-listed as read-only (see LOOMCORE_REPORT_COMMANDS).
+_REPORT_TOOLS = {
+    "ops_list_processes",
+    "ops_failed_units",
+    "ops_scan_health",
+    "ops_network_status",
+    "ops_dmesg",
+    "ops_disk_usage",
+    "ops_system_metrics",
+}
+
+_declare_report(
+    TOOLS_SCHEMA, _REPORT_TOOLS, {"ops_run_command": "command"}
+)

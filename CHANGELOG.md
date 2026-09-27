@@ -5,6 +5,13 @@ task report (RULES 14).
 
 ## 2026-09-22
 
+- Perceived-latency pass: the plan goal now streams as a transient
+  `plan_progress` status line ("Planning: …") above the composer (never an
+  assistant bubble; cleared when a tool card or the response arrives), report
+  tools are declared by the plugins (`report` / `report_arg` in `TOOLS_SCHEMA`,
+  read into the plugin manager — the core no longer hardcodes LoomWG/LoomOps
+  names), and an allow-listed read-only `ops_run_command`
+  (`LOOMCORE_REPORT_COMMANDS`, empty default) skips the summary LLM call.
 - Report tools answer with their raw output once: an all-report plan (every step
   a listing/report tool, per the curated `_is_report_tool` set) skips the summary
   LLM call and renders its tool cards compact, so the Markdown output appears only

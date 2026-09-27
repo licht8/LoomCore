@@ -107,3 +107,13 @@ def test_database_url_default_has_no_embedded_credentials():
 
 def test_database_url_default_is_the_placeholder():
     assert _settings().database_url == DEFAULT_DATABASE_URL
+
+
+def test_report_commands_parsed_from_env(monkeypatch):
+    monkeypatch.setenv("LOOMCORE_REPORT_COMMANDS", "uptime, df")
+    assert _settings().report_commands == "uptime, df"
+
+
+def test_report_commands_default_empty(monkeypatch):
+    monkeypatch.delenv("LOOMCORE_REPORT_COMMANDS", raising=False)
+    assert _settings().report_commands == ""

@@ -217,6 +217,7 @@ class AIRouter:
         session_id: str,
         *,
         on_delta: Callable[..., Awaitable[None]] | None = None,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
     ) -> dict:
         """Plan or answer a user request.
 
@@ -229,7 +230,9 @@ class AIRouter:
 
         When ``on_delta`` is set, the planner is streamed and the ``reply``
         tool's ``text`` argument is forwarded incrementally; the streamer is
-        reset before every re-ask so two attempts never concatenate.
+        reset before every re-ask so two attempts never concatenate. When
+        ``on_progress`` is set, the ``agent_plan`` goal is forwarded as a
+        transient progress signal (never as an assistant message).
         """
         config = get_active()
         if not config.configured:
@@ -267,15 +270,20 @@ class AIRouter:
         planner_started = time.monotonic()
         planner_attempts = 0
         reply_stream = _ReplyTextStream() if on_delta is not None else None
+        goal_stream = _GoalTextStream() if on_progress is not None else None
         try:
             for attempt in range(PLANNER_REASK_LIMIT + 1):
                 planner_attempts += 1
                 reask_nudge: str | None = None
-                if reply_stream is not None and attempt > 0:
+                if attempt > 0:
                     # A re-ask must not append to the previous attempt's text.
-                    reply_stream.reset()
-                    await on_delta("", reset=True)
-                if on_delta is not None:
+                    if reply_stream is not None:
+                        reply_stream.reset()
+                        await on_delta("", reset=True)
+                    if goal_stream is not None:
+                        goal_stream.reset()
+                        await on_progress("", reset=True)
+                if on_delta is not None or on_progress is not None:
                     llm_response = await self.client.stream_chat_completion(
                         messages,
                         tools=PLANNER_TOOLS,
@@ -285,7 +293,9 @@ class AIRouter:
                         max_tokens=config.planner_max_tokens,
                         purpose="planner",
                         session_id=session_id,
-                        on_tool_delta=_make_reply_streamer(reply_stream, on_delta),
+                        on_tool_delta=_make_reply_streamer(
+                            reply_stream, goal_stream, on_delta, on_progress
+                        ),
                     )
                 else:
                     llm_response = await self.client.chat_completion(
@@ -873,21 +883,39 @@ class _ReplyTextStream(_ToolFieldStream):
         super().__init__(REPLY_TOOL, "text")
 
 
+class _GoalTextStream(_ToolFieldStream):
+    """Incrementally extract the ``goal`` argument of a streamed ``agent_plan``."""
+
+    def __init__(self) -> None:
+        super().__init__(AGENT_PLAN_TOOL, "goal")
+
+
 def _make_reply_streamer(
-    reply_stream: _ReplyTextStream,
-    on_delta: Callable[[str], Awaitable[None]],
+    reply_stream: _ReplyTextStream | None,
+    goal_stream: _GoalTextStream | None,
+    on_delta: Callable[[str], Awaitable[None]] | None,
+    on_progress: Callable[[str], Awaitable[None]] | None,
 ) -> Callable[[str | None, str], Awaitable[bool]]:
     """Build the ``on_tool_delta`` callback.
 
-    Only a ``reply`` streams its ``text``; a streamed ``agent_plan`` emits no
-    deltas, so the assistant message appears only after the tools run.
+    A streamed ``reply`` forwards its ``text`` to ``on_delta`` (an assistant
+    delta); a streamed ``agent_plan`` forwards its ``goal`` to ``on_progress``
+    (a transient status line, never an assistant message). Any forwarded
+    fragment counts as emitted, so the client will not retry mid-stream.
     """
 
     async def _on_tool_delta(name: str | None, args_so_far: str) -> bool:
-        fragment = reply_stream.feed(name, args_so_far)
-        if fragment:
-            await on_delta(fragment)
-            return True
-        return False
+        forwarded = False
+        if reply_stream is not None and on_delta is not None:
+            fragment = reply_stream.feed(name, args_so_far)
+            if fragment:
+                await on_delta(fragment)
+                forwarded = True
+        if goal_stream is not None and on_progress is not None:
+            fragment = goal_stream.feed(name, args_so_far)
+            if fragment:
+                await on_progress(fragment)
+                forwarded = True
+        return forwarded
 
     return _on_tool_delta

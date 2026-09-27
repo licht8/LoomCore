@@ -108,6 +108,33 @@ def test_risk_declaration_fails_closed(load_loomops):
         )
 
 
+def test_report_tools_are_declared(load_loomops):
+    schemas = load_loomops("loomops.schemas")["loomops.schemas"]
+    reports = {
+        tool["name"] for tool in schemas.TOOLS_SCHEMA if tool.get("report") is True
+    }
+    assert reports == {
+        "ops_list_processes",
+        "ops_failed_units",
+        "ops_scan_health",
+        "ops_network_status",
+        "ops_dmesg",
+        "ops_disk_usage",
+        "ops_system_metrics",
+    }
+    command = next(
+        tool for tool in schemas.TOOLS_SCHEMA if tool["name"] == "ops_run_command"
+    )
+    assert command["report_arg"] == "command"
+    assert command.get("report") is not True
+
+
+def test_report_declaration_fails_closed(load_loomops):
+    schemas = load_loomops("loomops.schemas")["loomops.schemas"]
+    with pytest.raises(RuntimeError, match=r"\['ghost'\]"):
+        schemas._declare_report([{"name": "present"}], set(), {"ghost": "command"})
+
+
 def test_handler_returns_mcp_shape(load_loomops, tmp_path):
     tools = load_loomops("loomops.tools")["loomops.tools"]
     result = tools.HANDLERS["ops_disk_usage"]({"path": str(tmp_path)})

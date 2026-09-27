@@ -131,6 +131,33 @@ def test_tool_accessors_default_for_unknown():
     manager = PluginManager()
     assert manager.tool_schema("nope") == {}
     assert manager.tool_risk("nope") == ""
+    assert manager.report_kind("nope") == ""
+
+
+def test_report_kind_records_always_and_arg():
+    manager = PluginManager()
+    manager._rebuild_tool_cache(
+        "demo",
+        [
+            {"name": "report_tool", "report": True},
+            {"name": "cmd_tool", "report_arg": "command"},
+            {"name": "plain_tool"},
+        ],
+    )
+
+    assert manager.report_kind("report_tool") == "always"
+    assert manager.report_kind("cmd_tool") == "command"
+    assert manager.report_kind("plain_tool") == ""
+
+
+def test_rebuild_cache_clears_stale_reports():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [{"name": "report_tool", "report": True}])
+
+    manager._rebuild_tool_cache("demo", [{"name": "new"}])
+
+    assert manager.report_kind("report_tool") == ""
+    assert manager._tool_report == {}
 
 
 def test_index_tools_ignores_unknown_risk_values():

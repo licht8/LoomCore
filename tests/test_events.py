@@ -20,6 +20,7 @@ _EXPECTED_TYPES = {
     "thinking",
     "response",
     "delta",
+    "plan_progress",
     "tool_call",
     "tool_response",
     "plan_proposed",
@@ -100,6 +101,23 @@ def test_delta_payload_shape():
 
 def test_delta_payload_reset_flag():
     payload = events_module.delta_payload("msg_1", "", reset=True)
+    assert payload["reset"] is True
+    assert payload["content"] == ""
+
+
+def test_plan_progress_payload_shape():
+    payload = events_module.plan_progress_payload("msg_1", "check disk")
+    assert payload == {
+        "type": "plan_progress",
+        "message_id": "msg_1",
+        "content": "check disk",
+        "reset": False,
+        "schema_version": 1,
+    }
+
+
+def test_plan_progress_payload_reset_flag():
+    payload = events_module.plan_progress_payload("msg_1", "", reset=True)
     assert payload["reset"] is True
     assert payload["content"] == ""
 

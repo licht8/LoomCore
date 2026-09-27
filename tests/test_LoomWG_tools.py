@@ -76,6 +76,28 @@ def test_risk_declaration_fails_closed(load_loomwg):
         )
 
 
+def test_report_tools_are_declared(load_loomwg):
+    schemas = load_loomwg("schemas")["schemas"]
+    reports = {
+        tool["name"] for tool in schemas.TOOLS_SCHEMA if tool.get("report") is True
+    }
+    assert reports == {
+        "wg_list_interfaces",
+        "wg_list_peers",
+        "wg_interface_status",
+        "wg_show_interface_config",
+        "wg_stats",
+        "wg_diagnostics",
+    }
+    assert all("report_arg" not in tool for tool in schemas.TOOLS_SCHEMA)
+
+
+def test_report_declaration_fails_closed(load_loomwg):
+    schemas = load_loomwg("schemas")["schemas"]
+    with pytest.raises(RuntimeError, match=r"\['ghost'\]"):
+        schemas._declare_report([{"name": "present"}], {"ghost"})
+
+
 # === clients_store ===
 
 def test_store_roundtrip(load_loomwg, monkeypatch, tmp_path):

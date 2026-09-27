@@ -38,6 +38,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         isThinking: false,
         isSending: false,
         planRequest: null,
+        planProgress: "",
         error: null,
         messages: msg.message_id
           ? finalizeAssistant(
@@ -71,11 +72,25 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
       }
     }
 
+    case "plan_progress": {
+      if (!msg.message_id) return state
+      return {
+        ...state,
+        isThinking: true,
+        error: null,
+        planProgress:
+          msg.reset === true
+            ? msg.content ?? ""
+            : state.planProgress + (msg.content ?? ""),
+      }
+    }
+
     case "tool_call":
       return {
         ...state,
         isThinking: true,
         error: null,
+        planProgress: "",
         messages: [
           ...state.messages,
           {
@@ -139,6 +154,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         ...state,
         isThinking: false,
         isSending: false,
+        planProgress: "",
         planRequest:
           state.planRequest && state.planRequest.plan.plan_id === planId
             ? null
@@ -153,6 +169,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         isThinking: false,
         isSending: false,
         planRequest: null,
+        planProgress: "",
         messages: finalizePendingTool(state.messages, {
           toolStatus: "error",
           toolSummary: "Error",
@@ -166,6 +183,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
         isThinking: false,
         isSending: false,
         planRequest: null,
+        planProgress: "",
         messages: finalizePendingTool(state.messages, {
           toolStatus: "cancelled",
           toolSummary: "Cancelled",
@@ -176,6 +194,7 @@ export function applyWsMessage(state: UseChatState, msg: WsMessage): UseChatStat
       return {
         ...state,
         isSending: false,
+        planProgress: "",
         error: "A request is already running. Pause it before sending another.",
       }
 

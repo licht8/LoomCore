@@ -21,6 +21,7 @@ interface ChatInputProps {
   onClear?: () => void
   isThinking?: boolean
   isSending?: boolean
+  planProgress?: string
   planRequest?: PlanRequest | null
   onPlanResponse?: (action: "approve" | "edit" | "reject", steps?: PlanStep[]) => void
   error?: string | null
@@ -42,6 +43,7 @@ export function ChatInput({
   onClear,
   isThinking = false,
   isSending = false,
+  planProgress = "",
   planRequest,
   onPlanResponse,
   error,
@@ -209,6 +211,14 @@ export function ChatInput({
           )}
         </div>
       )}
+
+      {/* Planning progress — transient, above the composer while the planner
+          streams the goal; cleared when a tool card or the response arrives. */}
+      {isThinking && planProgress ? (
+        <div className="relative z-10 mx-auto mb-2 max-w-3xl truncate rounded-xl border border-border/60 bg-background/50 px-4 py-2 text-center text-xs text-muted-foreground shadow-sm backdrop-blur-md">
+          Planning: {planProgress}
+        </div>
+      ) : null}
 
       {/* Error banner — in-flow, snug above the input, glass-styled */}
       {error ? (
