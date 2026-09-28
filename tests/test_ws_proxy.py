@@ -72,6 +72,28 @@ async def test_proxy_token_mode_authorized(monkeypatch, captured):
 
 
 @pytest.mark.asyncio
+async def test_proxy_rejects_invalid_session_id(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    websocket = _FakeWebSocket(headers=_auth_header("secret"))
+
+    await ws_api.ws_proxy(websocket, "bad id!")
+
+    assert captured == []
+    assert websocket.closed == (1008, "Invalid session id")
+
+
+@pytest.mark.asyncio
+async def test_proxy_rejects_oversized_session_id(monkeypatch, captured):
+    _token_mode(monkeypatch)
+    websocket = _FakeWebSocket(headers=_auth_header("secret"))
+
+    await ws_api.ws_proxy(websocket, "a" * 65)
+
+    assert captured == []
+    assert websocket.closed == (1008, "Invalid session id")
+
+
+@pytest.mark.asyncio
 async def test_proxy_token_mode_rejects_wrong_token(monkeypatch, captured):
     _token_mode(monkeypatch)
     websocket = _FakeWebSocket(headers=_auth_header("wrong"))

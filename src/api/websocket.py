@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import logging
+import re
 import secrets
 
 from fastapi import APIRouter, WebSocket
@@ -20,6 +21,10 @@ logger = logging.getLogger("loomcore.api.websocket")
 router = APIRouter()
 
 _AUTH_SUBPROTOCOL_PREFIX = "loomcore.auth."
+
+# Mirrors the REST path constraint (src/api/sessions.py) so an oversized or
+# malformed id cannot reach the DB (sessions.id is String(64)).
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # How often a live socket re-checks that its credential is still valid. A JWT
 # can expire or be revoked after the handshake; a socket must not outlive it.
@@ -112,6 +117,15 @@ async def ws_proxy(websocket: WebSocket, session_id: str):
             "ws_auth_failure", client=client_ip(websocket), session_id=session_id
         )
         await websocket.close(code=1008, reason="Admin token required")
+        return
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        log_security_event(
+            "ws_auth_failure",
+            reason="invalid_session_id",
+            client=client_ip(websocket),
+            session_id=session_id,
+        )
+        await websocket.close(code=1008, reason="Invalid session id")
         return
     watchdog = asyncio.create_task(_watch_auth(websocket, cookie, token))
     try:

@@ -49,7 +49,14 @@ async def test_tools_endpoint_returns_tools(monkeypatch):
     async def fake_tools():
         return [{"name": "wg_interface_status"}]
 
-    monkeypatch.setattr(plugins_api.plugin_manager, "get_all_tools", fake_tools)
+    monkeypatch.setattr(
+        plugins_api.plugin_manager, "get_tools_for_routing", fake_tools
+    )
+
+    async def no_live_fanout():
+        raise AssertionError("get_all_tools must not be used by /api/tools")
+
+    monkeypatch.setattr(plugins_api.plugin_manager, "get_all_tools", no_live_fanout)
 
     async with _client() as client:
         response = await client.get("/api/tools", headers=_AUTH)
@@ -67,7 +74,7 @@ async def test_tools_endpoint_returns_500_on_failure(monkeypatch, caplog):
     async def boom():
         raise RuntimeError("plugin down")
 
-    monkeypatch.setattr(plugins_api.plugin_manager, "get_all_tools", boom)
+    monkeypatch.setattr(plugins_api.plugin_manager, "get_tools_for_routing", boom)
 
     with caplog.at_level(logging.ERROR, logger="loomcore.api.plugins"):
         async with _client() as client:

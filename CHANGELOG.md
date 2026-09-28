@@ -11,6 +11,10 @@ task report (RULES 14).
   forwards `LOOMCORE_PLUGINS_ALLOWED`/`TRUSTED_PROXIES`/`LOOMCORE_REPORT_COMMANDS`
   and the plugin allow-list is read from Settings instead of raw `os.environ`;
   plugin subprocesses are terminated on shutdown (`PluginManager.terminate_all`).
+- Read-path hardening: `GET /api/tools` is served from the indexed plugin cache
+  (`get_tools_for_routing`) instead of a live JSON-RPC fan-out, and the WebSocket
+  handshake validates `session_id` (`[A-Za-z0-9_-]{1,64}`) before accept,
+  closing 1008 on a malformed or oversized id.
 
 ## 2026-09-22
 

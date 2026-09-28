@@ -42,7 +42,7 @@ async def list_plugins_tools(
     """Return the tool schemas of all plugins (for Swagger/UI)."""
     require_admin_token(extract_admin_token(request, authorization), request)
     try:
-        tools = list(CORE_TOOLS_SCHEMA) + await plugin_manager.get_all_tools()
+        tools = list(CORE_TOOLS_SCHEMA) + await plugin_manager.get_tools_for_routing()
     except Exception as exc:
         logger.exception("Failed to collect plugin tool schemas")
         raise HTTPException(
