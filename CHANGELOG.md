@@ -38,6 +38,10 @@ task report (RULES 14).
   `created_at`/`updated_at`/`title` (migration `010`, backfilled from messages)
   and `list_sessions` reads them directly instead of timestamp-equality joins,
   ordering by last activity.
+- Planner argument grounding: the tool catalog now renders each property's
+  `enum`/`default` constraints (e.g. `source [auto|journal|journald|files,
+  default auto]`), so the planner no longer guesses invalid values; LoomOps
+  `ops_log_search` accepts `journald` as an alias for `journal`.
 
 ## 2026-09-22
 

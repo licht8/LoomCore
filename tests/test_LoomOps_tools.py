@@ -1230,6 +1230,17 @@ def test_log_search_journal(load_loomops, monkeypatch):
     assert result["count"] == 2
 
 
+def test_log_search_accepts_journald_alias(load_loomops, monkeypatch):
+    logs = load_loomops("loomops.logs")["loomops.logs"]
+    monkeypatch.setattr(logs, "journal_available", lambda: True)
+    monkeypatch.setattr(logs, "_run_journal", lambda args: "only line\n")
+
+    result = logs.log_search({"source": "journald"})
+
+    assert result["source"] == "journal"
+    assert result["count"] == 1
+
+
 def test_log_search_journal_unavailable_raises(load_loomops, monkeypatch):
     logs = load_loomops("loomops.logs")["loomops.logs"]
     monkeypatch.setattr(logs, "journal_available", lambda: False)

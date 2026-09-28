@@ -137,14 +137,15 @@ TOOLS_SCHEMA = [
         "name": "ops_log_search",
         "description": (
             "Search host logs — journald when reachable, otherwise files under "
-            "LOOMOPS_LOG_ROOTS. Read-only."
+            "LOOMOPS_LOG_ROOTS. 'journald' is accepted as an alias for 'journal'. "
+            "Read-only."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "source": {
                     "type": "string",
-                    "enum": ["auto", "journal", "files"],
+                    "enum": ["auto", "journal", "journald", "files"],
                     "default": "auto",
                 },
                 "query": {"type": "string"},

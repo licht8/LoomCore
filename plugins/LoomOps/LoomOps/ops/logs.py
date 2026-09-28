@@ -34,6 +34,9 @@ NO_ENTRIES_MARKER = "-- No entries --"
 
 _ERROR_MARKERS = ("error", "fail", "critical", "panic", "fatal", "segfault", "oom")
 
+# Natural spellings the model/user reaches for; normalized to the schema values.
+_SOURCE_ALIASES = {"journald": "journal", "journalctl": "journal"}
+
 
 def log_roots() -> list[Path]:
     raw = os.environ.get("LOOMOPS_LOG_ROOTS", "")
@@ -187,6 +190,7 @@ def _iter_log_files(limit: int = 100):
 
 def log_search(arguments: dict[str, Any]) -> dict[str, Any]:
     source = str(arguments.get("source") or "auto").lower()
+    source = _SOURCE_ALIASES.get(source, source)
     limit = bounded_int(arguments.get("limit"), max_log_lines(), MAX_LINES)
     query = str(arguments.get("query") or "")
     since = str(arguments.get("since") or "")
