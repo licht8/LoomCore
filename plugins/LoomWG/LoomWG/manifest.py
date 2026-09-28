@@ -1,8 +1,9 @@
 """Manifest loading and runtime permission validation for the LoomWG plugin.
 
-The manifest is plugin-local metadata (see docs/architecture/PLUGIN_MANIFEST.md).
-The core does not read it: the plugin validates it against its own runtime and
-warns about mismatches so a misconfigured deployment is visible immediately.
+The manifest is shared metadata (see docs/architecture/PLUGIN_MANIFEST.md).
+The core reads and validates the manifest during discovery; this plugin
+re-validates it against its own runtime and warns about mismatches so a
+misconfigured deployment is visible immediately.
 Validation never blocks startup — it only logs/propagates warnings.
 """
 

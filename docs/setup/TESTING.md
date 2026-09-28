@@ -109,11 +109,11 @@ checklist below.
 3. Configure auth in `.env` (JWT or `ADMIN_TOKEN`) and restart.
 4. `wg_install_dependencies` (with admin approval) — loads the kernel module and installs missing container tools.
 5. `wg_setup_server` (with admin approval) — creates `wg0.conf`, forwarding, firewall/NAT.
-6. `wg_create_client` — create a client.
-6. Download the config and QR: `/api/artifacts/<token>/{config,qr}`.
-7. Connect a real client (phone/PC) with the config.
-8. `wg_list_peers` — confirm the peer is `online` (has a handshake).
-9. `wg_remove_peer` — verify peer and client files are removed.
+6. `wg_create_peer` — create a client.
+7. Download the config and QR: `/api/artifacts/<name>/{config,qr}`.
+8. Connect a real client (phone/PC) with the config.
+9. `wg_list_peers` — confirm the peer is `online` (has a handshake).
+10. `wg_remove_peer` — verify peer and client files are removed.
 
 For a full Rocky Linux 10 runbook see [VDS_RUNBOOK.md](VDS_RUNBOOK.md).
 

@@ -12,8 +12,9 @@ plugins/<PluginId>/
 The core reads and validates the manifest (identity, version, permissions and
 `default_enabled`) during discovery and **warns** on mismatch — a manifest issue
 never blocks startup, except that a structurally invalid manifest causes the
-plugin to be skipped. The plugin additionally validates it against its own
-runtime (see `manifest.py`) and logs warnings so a misconfigured deployment is
+plugin to be skipped. A plugin may additionally validate it against its own
+runtime (e.g. `plugins/LoomWG/LoomWG/manifest.py`) and log warnings so a
+misconfigured deployment is
 visible immediately. This keeps the core thin (RULES 1) while giving every plugin
 one place to declare identity, permissions and environment.
 

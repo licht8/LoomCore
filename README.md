@@ -14,15 +14,19 @@
 ```bash
 cp .env.example .env
 chmod 600 .env
-# Fill in POSTGRES_PASSWORD and ADMIN_TOKEN, then pick an LLM provider in Settings
+# Fill in POSTGRES_PASSWORD, configure auth (see below), then pick an LLM provider in Settings
 nano .env
 sudo bash deploy/install.sh          # or: docker compose up -d --build
 docker compose exec hub alembic upgrade head
 ```
 
-After that the UI is available at `http://SERVER_IP/`. Log in on the **Token**
-tab with `ADMIN_TOKEN`. The backend and PostgreSQL are not published publicly;
-Nginx is the only public entrypoint, and it also proxies the WebSocket.
+After that the UI is available behind Nginx at `http://SERVER_IP/`. The
+recommended login is your admin password + TOTP (JWT). The static `ADMIN_TOKEN`
+also works, but with the default `REQUIRE_TLS=true` it is accepted only over
+HTTPS (or behind a proxy that sets `X-Forwarded-Proto: https`); set
+`REQUIRE_TLS=false` only for local/testing HTTP. The backend and PostgreSQL are
+not published publicly; Nginx is the only public entrypoint, and it also proxies
+the WebSocket.
 
 LoomCore loads plugins from `plugins/<name>/main.py` automatically. A plugin runs
 on the same Linux host in a host-networked container and can use the provided

@@ -358,8 +358,9 @@ management.
 The assistant is a conversational-first plan-and-execute agent. These are
 structural guarantees, not prompt behaviour (see `docs/architecture/AGENT.md`):
 
-- The planner LLM is offered exactly **one** callable tool, `agent_plan`; the
-  real tool catalog is passed as context only.
+- The planner LLM is offered exactly **two** callable tools, `agent_plan` (to
+  act) and `reply` (plain conversation); the real tool catalog is passed as
+  context only.
 - The deterministic executor in `src/core/agent.py` is the sole dispatcher. It
   clamps the mode (`plan` when declared or more than one step, else `direct`),
   classifies each step's risk, and replays approved steps **verbatim**.

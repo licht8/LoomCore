@@ -265,8 +265,8 @@ Notes:
 
 ## 7. Server / client end-to-end
 
-1. UI: `wg_create_client` with a name.
-2. Download the config and QR from the generated `/api/artifacts/<token>/{config,qr}` links.
+1. UI: `wg_create_peer` with a name.
+2. Download the config and QR from the generated `/api/artifacts/<name>/{config,qr}` links.
 3. Connect a real client (phone/PC) with the config.
 4. Verify on the server:
    ```bash
@@ -371,7 +371,7 @@ docker compose exec db psql -U loomuser -d loomcore -c \
 ### 11.4 Create a peer/client (plan approval)
 1. Type `create a wireguard client named phone1`.
 2. Reply `yes` to the confirmation (or **Approve** on the plan card) to run
-   `wg_create_client`.
+   `wg_create_peer`.
 3. Click the config and QR download buttons (the token is sent in the `Authorization` header).
 4. Verify:
 ```bash
