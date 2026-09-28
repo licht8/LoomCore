@@ -1,17 +1,15 @@
 "use client"
 
 import { useCallback, useEffect, useRef } from "react"
-import { useChat } from "@/lib/use-chat"
+import { useChatContext } from "@/lib/chat-context"
 import { ChatMessageItem } from "@/components/chat-message"
 import { ChatInput } from "@/components/chat-input"
-import { SessionList } from "@/components/session-list"
 
 /**
- * Client chat component: combines useChat with the UI components.
- * Called from the page.tsx Server Component, which passes the `?session=`
- * deep-link value as `initialSessionId`.
+ * Client chat feed. State comes from the dashboard-level `ChatProvider`, so
+ * the WebSocket and session selection are shared with `ChatsSection`.
  */
-export function ChatRoom({ initialSessionId }: { initialSessionId?: string }) {
+export function ChatRoom() {
   const {
     messages,
     isThinking,
@@ -19,19 +17,11 @@ export function ChatRoom({ initialSessionId }: { initialSessionId?: string }) {
     planRequest,
     error,
     isSending,
-    sessions,
-    sessionsLoading,
-    sessionId,
     sendMessage,
     sendPlanResponse,
     cancelRequest,
     clearConversation,
-    selectSession,
-    createSession,
-    deleteSession,
-  } = useChat(initialSessionId)
-
-  const busy = isThinking || isSending
+  } = useChatContext()
 
   // --- Auto-scroll to the newest message ---
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -91,47 +81,35 @@ export function ChatRoom({ initialSessionId }: { initialSessionId?: string }) {
   )
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <SessionList
-        sessions={sessions}
-        activeSessionId={sessionId}
-        isLoading={sessionsLoading}
-        disabled={busy}
-        onSelect={selectSession}
-        onNew={createSession}
-        onDelete={deleteSession}
-      />
-
-      {/* Chat column — `relative` so the composer pins to this column only. */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
-        {/* Message container — overflow-y-auto for scrolling */}
+    /* Chat column — `relative` so the composer pins to this column only. */
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      {/* Message container — overflow-y-auto for scrolling */}
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-6 pt-24 pb-40"
+      >
         <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-6 pt-24 pb-40"
+          ref={contentRef}
+          className="mx-auto flex max-w-[61rem] flex-col gap-6 px-[6.5rem]"
         >
-          <div
-            ref={contentRef}
-            className="mx-auto flex max-w-[61rem] flex-col gap-6 px-[6.5rem]"
-          >
-            {messages.map((message) => (
-              <ChatMessageItem key={message.id} message={message} />
-            ))}
-          </div>
+          {messages.map((message) => (
+            <ChatMessageItem key={message.id} message={message} />
+          ))}
         </div>
-
-        <ChatInput
-          onSend={handleSend}
-          onCancel={cancelRequest}
-          onClear={clearConversation}
-          isThinking={isThinking}
-          isSending={isSending}
-          planProgress={planProgress}
-          planRequest={planRequest}
-          onPlanResponse={sendPlanResponse}
-          error={error}
-        />
       </div>
+
+      <ChatInput
+        onSend={handleSend}
+        onCancel={cancelRequest}
+        onClear={clearConversation}
+        isThinking={isThinking}
+        isSending={isSending}
+        planProgress={planProgress}
+        planRequest={planRequest}
+        onPlanResponse={sendPlanResponse}
+        error={error}
+      />
     </div>
   )
 }

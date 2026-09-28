@@ -15,6 +15,7 @@ import {
 import type { LucideIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 
+import { ChatsSection } from "@/components/chats-section"
 import { cn } from "@/lib/utils"
 
 const tapTransition = {
@@ -106,7 +107,9 @@ export function DashboardSidebar() {
         ))}
       </nav>
 
-      <div className="mt-auto flex flex-col py-4">
+      <ChatsSection />
+
+      <div className="flex flex-col py-4">
         <div className="mx-3 border-t border-border/50" />
         <div className="flex flex-col gap-1.5 pt-4">
           <NavLink item={settingsItem} active={isActive(settingsItem.href)} />

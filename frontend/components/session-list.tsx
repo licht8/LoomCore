@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { MessageSquarePlus, Trash2 } from "lucide-react"
+import { Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -23,7 +23,6 @@ interface SessionListProps {
   isLoading?: boolean
   disabled?: boolean
   onSelect: (id: string) => void
-  onNew: () => void
   onDelete: (id: string) => void
 }
 
@@ -39,8 +38,9 @@ function relativeTime(iso: string): string {
 }
 
 /**
- * Left-hand conversations rail inside the Chat page. Selection/creation/deletion
- * are blocked while a turn is in flight (`disabled`).
+ * Rows-only conversation list. The surface, header and scroll container live in
+ * `ChatsSection`; this component renders just the rows (and the delete dialog)
+ * using the same interaction idiom as `DashboardSidebar`.
  */
 export function SessionList({
   sessions,
@@ -48,81 +48,65 @@ export function SessionList({
   isLoading = false,
   disabled = false,
   onSelect,
-  onNew,
   onDelete,
 }: SessionListProps) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
-  return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-border/50 md:flex">
-      <div className="flex items-center justify-between gap-2 px-3 py-3">
-        <span className="text-sm font-medium text-foreground">Conversations</span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title="New chat"
-          onClick={onNew}
-          disabled={disabled}
-        >
-          <MessageSquarePlus />
-          <span className="sr-only">New chat</span>
-        </Button>
+  if (isLoading) {
+    return (
+      <div className="space-y-2 px-1">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="h-12 animate-pulse rounded-md bg-muted/40" />
+        ))}
       </div>
+    )
+  }
 
-      <div className="flex-1 overflow-y-auto px-2 pb-3">
-        {isLoading ? (
-          <div className="space-y-2 px-1">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="h-12 animate-pulse rounded-lg bg-muted/40" />
-            ))}
+  return (
+    <>
+      {sessions.map((session) => {
+        const active = session.session_id === activeSessionId
+        return (
+          <div key={session.session_id} className="group relative">
+            <button
+              type="button"
+              onClick={() => onSelect(session.session_id)}
+              disabled={disabled}
+              aria-current={active ? "true" : undefined}
+              className={cn(
+                "relative flex h-10 w-full flex-col justify-center gap-0.5 rounded-md px-3 text-left transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50",
+                active
+                  ? "font-medium text-foreground"
+                  : "font-normal hover:bg-foreground/[0.03]",
+              )}
+            >
+              {active && (
+                <span
+                  aria-hidden
+                  className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-foreground/60"
+                />
+              )}
+              <span className="truncate text-sm font-medium text-foreground">
+                {session.title || "Untitled"}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">
+                {relativeTime(session.last_message_at)} · {session.message_count} msgs
+              </span>
+            </button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              title="Delete conversation"
+              disabled={disabled}
+              onClick={() => setDeleteTarget(session.session_id)}
+              className="absolute top-1 right-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            >
+              <Trash2 />
+              <span className="sr-only">Delete conversation</span>
+            </Button>
           </div>
-        ) : sessions.length === 0 ? (
-          <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-            No conversations yet.
-          </p>
-        ) : (
-          sessions.map((session) => {
-            const active = session.session_id === activeSessionId
-            return (
-              <div
-                key={session.session_id}
-                className={cn(
-                  "group relative mb-1 rounded-lg",
-                  active && "bg-muted/60",
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelect(session.session_id)}
-                  disabled={disabled}
-                  className="flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-foreground/[0.04] disabled:opacity-60"
-                >
-                  <span className="truncate text-sm font-medium text-foreground">
-                    {session.title || "Untitled"}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {session.preview}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/70">
-                    {relativeTime(session.last_message_at)} · {session.message_count} msgs
-                  </span>
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  title="Delete conversation"
-                  disabled={disabled}
-                  onClick={() => setDeleteTarget(session.session_id)}
-                  className="absolute top-1 right-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                >
-                  <Trash2 />
-                  <span className="sr-only">Delete conversation</span>
-                </Button>
-              </div>
-            )
-          })
-        )}
-      </div>
+        )
+      })}
 
       <AlertDialog
         open={deleteTarget !== null}
@@ -153,6 +137,6 @@ export function SessionList({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </aside>
+    </>
   )
 }
