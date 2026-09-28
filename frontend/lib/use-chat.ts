@@ -120,22 +120,29 @@ export function useChat(
         }))
       }
 
-      socket.onclose = () => {
+      socket.onclose = (event: CloseEvent) => {
         if (!isActive || wsRef.current !== socket) return
         wsRef.current = null
-        // Clear any busy state so the input is usable, then reconnect with
-        // capped backoff rather than leaving the client jammed until reload.
+        // 1008 = the server rejected the handshake (auth); retrying would loop.
+        const authRejected = event.code === 1008
         setState((prev) => ({
           ...prev,
           wsReady: false,
           isThinking: false,
           isSending: false,
           planRequest: null,
+          error: authRejected
+            ? "Session expired. Reload the page to sign in again."
+            : prev.error,
           messages: finalizePendingTool(prev.messages, {
             toolStatus: "error",
             toolSummary: "Disconnected",
           }),
         }))
+        if (authRejected) {
+          console.warn("WebSocket closed with 1008; not reconnecting")
+          return
+        }
         attempt += 1
         const delay = Math.min(1000 * 2 ** (attempt - 1), 15000)
         console.warn(`WebSocket closed; reconnecting in ${delay}ms`)
@@ -206,7 +213,14 @@ export function useChat(
    * Appends the user message to the feed and sends JSON to the backend.
    */
   const sendMessage = useCallback((text: string) => {
-    if (!text.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    if (!text.trim()) return
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setState((prev) => ({
+        ...prev,
+        error: "Not connected to the server. Reconnecting…",
+      }))
+      return
+    }
 
     setState((prev) => ({
       ...prev,
@@ -229,7 +243,13 @@ export function useChat(
   /** Approve, edit or reject the plan awaiting a decision. */
   const sendPlanResponse = useCallback(
     (action: "approve" | "edit" | "reject", steps?: PlanStep[]) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        setState((prev) => ({
+          ...prev,
+          error: "Not connected to the server. Reconnecting…",
+        }))
+        return
+      }
 
       const request = state.planRequest
       if (!request) return
@@ -286,7 +306,13 @@ export function useChat(
 
   /** Cancel the request currently in flight (LLM and/or plan). */
   const cancelRequest = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setState((prev) => ({
+        ...prev,
+        error: "Not connected to the server. Reconnecting…",
+      }))
+      return
+    }
     wsRef.current.send(JSON.stringify({ action: "cancel" }))
     setState((prev) => ({
       ...prev,

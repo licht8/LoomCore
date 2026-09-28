@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Eraser, Paperclip, Pause, SendHorizonal, TriangleAlert } from "lucide-react"
+import { Eraser, Pause, SendHorizonal, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
@@ -234,10 +234,6 @@ export function ChatInput({
           className="flex flex-1 items-center gap-2 rounded-2xl border border-input bg-background/50 px-3 py-2 shadow-sm backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-ring"
           onSubmit={handleSubmit}
         >
-          <Button type="button" variant="ghost" size="icon" className="shrink-0 text-muted-foreground">
-            <Paperclip className="size-4.5" />
-            <span className="sr-only">Attach file</span>
-          </Button>
           <input
             ref={inputRef}
             type="text"
