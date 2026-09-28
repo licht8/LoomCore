@@ -47,6 +47,10 @@ class Session(Base):
 
     status: Mapped[str] = mapped_column(String, default="active")  # 'active', 'paused'
 
+    created_at: Mapped[str] = mapped_column(String, nullable=False)  # UTC isoformat
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)  # UTC isoformat
+    title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="session", cascade="all, delete-orphan"
@@ -63,7 +67,7 @@ class Message(Base):
         String(64), ForeignKey("sessions.id"), index=True
     )
 
-    role: Mapped[str] = mapped_column(String)  # 'user', 'assistant', 'system', 'tool'
+    role: Mapped[str] = mapped_column(String)  # 'user', 'assistant', 'system', 'tool', 'plan'
     content: Mapped[str] = mapped_column(Text)
     tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     tool_result: Mapped[str | None] = mapped_column(Text, nullable=True)

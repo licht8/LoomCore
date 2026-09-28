@@ -25,6 +25,15 @@ def test_messages_have_session_created_index():
     assert "ix_messages_session_id_created_at" in names
 
 
+def test_sessions_have_metadata_columns():
+    columns = Session.__table__.c
+    assert {"created_at", "updated_at", "title"} <= set(columns.keys())
+    assert columns.created_at.nullable is False
+    assert columns.updated_at.nullable is False
+    assert columns.title.nullable is True
+    assert columns.title.type.length == 120
+
+
 def test_chat_request_session_id_fits_session_column():
     declared = _max_length(ChatRequest.model_fields["session_id"])
     assert declared == 64

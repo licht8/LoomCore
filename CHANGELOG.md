@@ -32,6 +32,12 @@ task report (RULES 14).
   note; the frontend gained a Vitest runner with unit tests for the
   `chat-ws`/`chat-hydrate` reducers; CI now runs the `integration` marker and the
   frontend test suite.
+- Overview + session metadata: `GET /api/overview` now runs its sections
+  concurrently, bounds each tool with a timeout and never dispatches through an
+  unhealthy plugin (no restart churn on the 15s poll); `sessions` gained
+  `created_at`/`updated_at`/`title` (migration `010`, backfilled from messages)
+  and `list_sessions` reads them directly instead of timestamp-equality joins,
+  ordering by last activity.
 
 ## 2026-09-22
 

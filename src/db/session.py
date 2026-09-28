@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ async def add_message(
     tool_result: str | None = None,
 ) -> Message:
     """Append a message to the session history."""
+    now = datetime.now(UTC).isoformat()
     message = Message(
         id=str(uuid4()),
         session_id=session_id,
@@ -24,12 +25,31 @@ async def add_message(
         content=content,
         tool_calls=tool_calls,
         tool_result=tool_result,
-        created_at=datetime.now(UTC).isoformat(),
+        created_at=now,
     )
     session_db.add(message)
+    await _touch_session(
+        session_db, session_id, now, title=content if role == "user" else None
+    )
     await session_db.commit()
     await session_db.refresh(message)
     return message
+
+
+async def _touch_session(
+    session_db: AsyncSession,
+    session_id: str,
+    now: str,
+    *,
+    title: str | None = None,
+) -> None:
+    """Bump ``updated_at``; set ``title`` once, from the first user message."""
+    values: dict = {"updated_at": now}
+    if title is not None:
+        values["title"] = func.coalesce(func.nullif(Session.title, ""), _truncate(title))
+    await session_db.execute(
+        update(Session).where(Session.id == session_id).values(**values)
+    )
 
 
 async def add_user_message(
@@ -129,10 +149,13 @@ async def ensure_session(
 
     if session is None:
         try:
+            now = datetime.now(UTC).isoformat()
             session = Session(
                 id=session_id,
                 user_id=user.id,
                 status="active",
+                created_at=now,
+                updated_at=now,
             )
             session_db.add(session)
             await session_db.commit()
@@ -178,6 +201,11 @@ async def clear_session_history(
     result = await session_db.execute(
         delete(Message).where(Message.session_id == session_id)
     )
+    await session_db.execute(
+        update(Session)
+        .where(Session.id == session_id)
+        .values(updated_at=datetime.now(UTC).isoformat())
+    )
     await session_db.commit()
     return result.rowcount or 0
 
@@ -189,62 +217,62 @@ def _truncate(value: str | None, limit: int = 120) -> str:
 
 
 async def list_sessions(session_db: AsyncSession, limit: int = 100) -> list[dict]:
-    """List sessions that have at least one user message (newest first).
+    """List sessions that have at least one user message (newest activity first).
 
-    ``title`` is the first user message and ``preview`` the last, each clamped
-    to 120 chars; ``message_count`` counts the user messages. The aggregate is
-    bounded by ``limit`` sessions; the first/last bodies are fetched with two
-    small aggregate joins (no per-session round trip).
+    ``title`` comes from ``sessions.title`` (set from the first user message) and
+    falls back to the last user body; ``preview`` is the last user message. Both
+    are clamped to 120 chars; ``message_count`` counts user messages. Ordering is
+    by ``sessions.updated_at``, so any activity (not just user turns) moves a
+    conversation up. The last user body is picked with a window function instead
+    of a timestamp-equality join, so equal ``created_at`` values cannot drop rows.
     """
-    aggregate = (
+    counts = (
         select(
             Message.session_id.label("session_id"),
             func.count().label("message_count"),
-            func.max(Message.created_at).label("last_message_at"),
         )
         .where(Message.role == "user")
         .group_by(Message.session_id)
-        .order_by(func.max(Message.created_at).desc())
-        .limit(limit)
-    )
-    rows = (await session_db.execute(aggregate)).all()
-    if not rows:
-        return []
-
-    session_ids = [row.session_id for row in rows]
-    bounds = (
-        select(
-            Message.session_id.label("sid"),
-            func.min(Message.created_at).label("first_at"),
-            func.max(Message.created_at).label("last_at"),
-        )
-        .where(Message.role == "user", Message.session_id.in_(session_ids))
-        .group_by(Message.session_id)
         .subquery()
     )
-
-    async def _bodies(column) -> dict[str, str]:
-        result = await session_db.execute(
-            select(Message.session_id, Message.content)
-            .join(
-                bounds,
-                and_(
-                    Message.session_id == bounds.c.sid,
-                    Message.created_at == column,
-                ),
+    last_user = (
+        select(
+            Message.session_id.label("session_id"),
+            Message.content.label("content"),
+            Message.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=Message.session_id,
+                order_by=(Message.created_at.desc(), Message.id.desc()),
             )
-            .where(Message.role == "user")
+            .label("rn"),
         )
-        return {session_id: content for session_id, content in result.all()}
-
-    titles = await _bodies(bounds.c.first_at)
-    previews = await _bodies(bounds.c.last_at)
-
+        .where(Message.role == "user")
+        .subquery()
+    )
+    stmt = (
+        select(
+            Session.id.label("session_id"),
+            Session.title.label("title"),
+            Session.updated_at.label("updated_at"),
+            counts.c.message_count,
+            last_user.c.content.label("preview"),
+            last_user.c.created_at.label("last_message_at"),
+        )
+        .join(counts, counts.c.session_id == Session.id)
+        .join(
+            last_user,
+            and_(last_user.c.session_id == Session.id, last_user.c.rn == 1),
+        )
+        .order_by(Session.updated_at.desc())
+        .limit(limit)
+    )
+    rows = (await session_db.execute(stmt)).all()
     return [
         {
             "session_id": row.session_id,
-            "title": _truncate(titles.get(row.session_id)),
-            "preview": _truncate(previews.get(row.session_id)),
+            "title": _truncate(row.title) or _truncate(row.preview),
+            "preview": _truncate(row.preview),
             "message_count": row.message_count,
             "last_message_at": row.last_message_at,
         }

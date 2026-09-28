@@ -34,6 +34,7 @@ class _FakeSession:
         self.commit_count = 0
         self.refreshed = []
         self.rolled_back = 0
+        self.statements = []
 
     def add(self, obj):
         self.added.append(obj)
@@ -50,6 +51,9 @@ class _FakeSession:
         self.refreshed.append(obj)
 
     async def execute(self, stmt):
+        self.statements.append(stmt)
+        if not self._results:
+            return _FakeResult()
         return self._results.pop(0)
 
 
@@ -78,6 +82,33 @@ async def test_add_user_and_assistant_helpers():
     assert user_msg.role == "user"
     assert assistant_msg.role == "assistant"
     assert assistant_msg.tool_calls == ["tc"]
+
+
+def _update_statement(db: "_FakeSession"):
+    updates = [s for s in db.statements if getattr(s, "is_update", False)]
+    assert updates, "add_message must touch the owning session row"
+    return updates[-1]
+
+
+@pytest.mark.asyncio
+async def test_add_message_touches_session_and_sets_title_for_user():
+    db = _FakeSession(results=[_FakeResult()])
+
+    await db_session.add_message(db, "sess", "user", "hi there")
+
+    params = _update_statement(db).compile().params.values()
+    assert "sess" in params
+    assert "hi there" in params
+
+
+@pytest.mark.asyncio
+async def test_add_message_does_not_set_title_for_assistant():
+    db = _FakeSession(results=[_FakeResult()])
+
+    await db_session.add_message(db, "sess", "assistant", "hello")
+
+    params = _update_statement(db).compile().params.values()
+    assert "hello" not in params
 
 
 @pytest.mark.asyncio
@@ -114,7 +145,9 @@ async def test_ensure_session_creates_user_and_session():
 
     assert session_id == "sess-1"
     assert any(isinstance(obj, User) for obj in db.added)
-    assert any(isinstance(obj, Session) for obj in db.added)
+    session = next(obj for obj in db.added if isinstance(obj, Session))
+    assert session.created_at
+    assert session.updated_at
 
 
 @pytest.mark.asyncio
@@ -221,16 +254,15 @@ async def test_ensure_session_reraises_when_user_recovery_finds_nothing():
 async def test_list_sessions_shapes_rows_with_title_and_preview():
     rows = [
         SimpleNamespace(
-            session_id="s1", message_count=2, last_message_at="2026-02-01T00:00:00+00:00"
+            session_id="s1",
+            title="first user message",
+            updated_at="2026-02-01T00:00:00+00:00",
+            message_count=2,
+            preview="latest user message",
+            last_message_at="2026-02-01T00:00:00+00:00",
         )
     ]
-    db = _FakeSession(
-        results=[
-            _FakeResult(scalars=rows),
-            _FakeResult(scalars=[("s1", "first user message")]),
-            _FakeResult(scalars=[("s1", "latest user message")]),
-        ]
-    )
+    db = _FakeSession(results=[_FakeResult(scalars=rows)])
 
     result = await db_session.list_sessions(db, limit=10)
 
@@ -246,6 +278,25 @@ async def test_list_sessions_shapes_rows_with_title_and_preview():
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_falls_back_to_preview_without_title():
+    rows = [
+        SimpleNamespace(
+            session_id="s1",
+            title=None,
+            updated_at="t",
+            message_count=1,
+            preview="latest user message",
+            last_message_at="t",
+        )
+    ]
+    db = _FakeSession(results=[_FakeResult(scalars=rows)])
+
+    result = await db_session.list_sessions(db)
+
+    assert result[0]["title"] == "latest user message"
+
+
+@pytest.mark.asyncio
 async def test_list_sessions_empty_returns_early():
     db = _FakeSession(results=[_FakeResult(scalars=[])])
 
@@ -255,14 +306,17 @@ async def test_list_sessions_empty_returns_early():
 @pytest.mark.asyncio
 async def test_list_sessions_truncates_long_bodies():
     long_body = "x" * 200
-    rows = [SimpleNamespace(session_id="s1", message_count=1, last_message_at="t")]
-    db = _FakeSession(
-        results=[
-            _FakeResult(scalars=rows),
-            _FakeResult(scalars=[("s1", long_body)]),
-            _FakeResult(scalars=[("s1", long_body)]),
-        ]
-    )
+    rows = [
+        SimpleNamespace(
+            session_id="s1",
+            title=long_body,
+            updated_at="t",
+            message_count=1,
+            preview=long_body,
+            last_message_at="t",
+        )
+    ]
+    db = _FakeSession(results=[_FakeResult(scalars=rows)])
 
     result = await db_session.list_sessions(db)
 
