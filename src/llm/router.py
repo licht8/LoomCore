@@ -695,6 +695,19 @@ class AIRouter:
         return tools_schema, message_extra
 
     @staticmethod
+    def _catalog_arg(name: str, spec: object) -> str:
+        """Render a property name with its enum/default constraints."""
+        if not isinstance(spec, dict):
+            return name
+        notes: list[str] = []
+        values = spec.get("enum")
+        if isinstance(values, list) and values:
+            notes.append("|".join(str(value) for value in values))
+        if "default" in spec:
+            notes.append(f"default {spec['default']}")
+        return f"{name} [{', '.join(notes)}]" if notes else name
+
+    @staticmethod
     def _catalog_text(tools_schema: list[dict]) -> str:
         """Render the tool catalog as plain text for the planner prompt."""
         if not tools_schema:
@@ -703,7 +716,14 @@ class AIRouter:
         for tool in tools_schema:
             schema = tool.get("inputSchema") or {}
             properties = schema.get("properties") if isinstance(schema, dict) else None
-            arg_names = ", ".join(properties.keys()) if isinstance(properties, dict) else ""
+            arg_names = (
+                ", ".join(
+                    AIRouter._catalog_arg(name, spec)
+                    for name, spec in properties.items()
+                )
+                if isinstance(properties, dict)
+                else ""
+            )
             description = str(tool.get("description", ""))
             if len(description) > _MAX_TOOL_DESC_CHARS:
                 description = description[:_MAX_TOOL_DESC_CHARS] + "…"

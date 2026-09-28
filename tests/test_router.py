@@ -1039,6 +1039,32 @@ def test_catalog_truncates_long_descriptions():
     assert "d" * 160 in catalog
 
 
+def test_catalog_renders_enum_and_default():
+    tools = [
+        {
+            "name": "ops_log_search",
+            "description": "Search host logs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": ["auto", "journal", "journald", "files"],
+                        "default": "auto",
+                    },
+                    "query": {"type": "string"},
+                },
+            },
+        }
+    ]
+
+    catalog = AIRouter._catalog_text(tools)
+
+    assert "auto|journal|journald|files" in catalog
+    assert "default auto" in catalog
+    assert "query" in catalog
+
+
 def test_reply_text_stream_decodes_surrogate_pairs():
     text = "a😀b"
     raw = json.dumps({"text": text})
