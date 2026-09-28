@@ -26,6 +26,12 @@ task report (RULES 14).
   stops reconnecting on WS close `1008`, surfaces an error when a send is dropped
   with no socket, and the dead "Attach file" button was removed; session history,
   artifact downloads and logout are now rate-limited.
+- Docs/tests/CI hygiene: corrected stale docs (`wg_create_client` ->
+  `wg_create_peer`, `/api/artifacts/<name>/...`, the planner's two callable
+  tools, "core does not read the manifest") and the README `REQUIRE_TLS` login
+  note; the frontend gained a Vitest runner with unit tests for the
+  `chat-ws`/`chat-hydrate` reducers; CI now runs the `integration` marker and the
+  frontend test suite.
 
 ## 2026-09-22
 
