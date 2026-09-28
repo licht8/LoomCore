@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 
 from src.api.deps import require_admin_token_from_request
+from src.core.rate_limit import limiter
 from src.plugins import plugin_manager
 
 logger = logging.getLogger("loomcore.api.artifacts")
@@ -46,6 +47,7 @@ def _safe_media_type(value: object) -> str:
 
 
 @router.get("/artifacts/{name}/{kind}")
+@limiter.limit("60 per 60 seconds")
 async def download_artifact(
     name: str,
     kind: str,

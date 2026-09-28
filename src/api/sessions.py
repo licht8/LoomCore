@@ -46,6 +46,7 @@ async def list_sessions_route(
 
 
 @router.get("/sessions/{session_id}/messages")
+@limiter.limit("60 per 60 seconds")
 async def get_messages(
     session_id: _SESSION_ID,
     request: Request,
@@ -60,6 +61,7 @@ async def get_messages(
 
 
 @router.delete("/sessions/{session_id}/messages")
+@limiter.limit("10 per 60 seconds")
 async def delete_messages(
     session_id: _SESSION_ID,
     request: Request,

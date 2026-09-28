@@ -104,6 +104,7 @@ async def login(request: Request):
 
 
 @router.post("/logout")
+@limiter.limit("10 per 60 seconds")
 async def logout(request: Request):
     payload = decode_jwt_token(request.cookies.get(SESSION_COOKIE), settings.session_secret)
     if payload:

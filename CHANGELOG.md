@@ -15,6 +15,17 @@ task report (RULES 14).
   (`get_tools_for_routing`) instead of a live JSON-RPC fan-out, and the WebSocket
   handshake validates `session_id` (`[A-Za-z0-9_-]{1,64}`) before accept,
   closing 1008 on a malformed or oversized id.
+- Core risk denylist + write cap: `classify_tool_risk` now lets the core dangerous
+  denylist win over a plugin-declared `risk`, so a plugin can no longer mark
+  `ops_run_command`/`ops_write_file` safe to skip approval and audit;
+  `ops_write_file` enforces `MAX_WRITE_BYTES` (256 KB), mirroring the read cap.
+- Robustness hardening: `GET /api/audit/verify` streams the hash chain
+  (`iter_audit_entries` keyset pagination + `latest_entry_hash` anchor, so
+  truncation is detected too) instead of materialising the whole table; new
+  migration `009` + ORM index `ix_messages_session_id_created_at`; the frontend
+  stops reconnecting on WS close `1008`, surfaces an error when a send is dropped
+  with no socket, and the dead "Attach file" button was removed; session history,
+  artifact downloads and logout are now rate-limited.
 
 ## 2026-09-22
 

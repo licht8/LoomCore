@@ -13,6 +13,13 @@ from src.config import settings
 from src.interfaces.websocket import _build_artifacts
 
 
+@pytest.fixture(autouse=True)
+def _disable_limiter(monkeypatch):
+    from src.core.rate_limit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
+
 def test_build_artifacts_from_single_client_result():
     result = _build_artifacts(
         {"data": {"name": "alice", "client_config": "/x/alice.conf", "qr_code": "/x/alice.png"}}

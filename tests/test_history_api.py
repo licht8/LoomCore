@@ -5,6 +5,13 @@ import pytest
 from src.api import sessions as sessions_api
 
 
+@pytest.fixture(autouse=True)
+def _disable_limiter(monkeypatch):
+    from src.core.rate_limit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
+
 class _FakeMessage:
     """Stand-in for a stored Message ORM row."""
 
