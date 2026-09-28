@@ -39,7 +39,7 @@ TOOLS_SCHEMA = [
         "description": (
             "Atomically write a text file inside LOOMOPS_ALLOWED_PATHS (empty "
             "denies all). The action is recorded in the audit log. Requires admin "
-            "approval."
+            "approval. Content is capped at 256 KB."
         ),
         "inputSchema": {
             "type": "object",

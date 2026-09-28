@@ -467,6 +467,18 @@ def test_write_then_read_roundtrip(load_loomops, monkeypatch, tmp_path):
     assert "ops_write_file" in (tmp_path / "audit.log").read_text(encoding="utf-8")
 
 
+def test_write_file_rejects_oversized_content(load_loomops, monkeypatch, tmp_path):
+    files = load_loomops("loomops.files")["loomops.files"]
+    monkeypatch.setenv("LOOMOPS_ALLOWED_PATHS", str(tmp_path))
+    monkeypatch.setenv("LOOMOPS_AUDIT_LOG", str(tmp_path / "audit.log"))
+    target = tmp_path / "big.txt"
+
+    with pytest.raises(ValueError, match="exceeds"):
+        files.write_file({"path": str(target), "content": "x" * (files.MAX_WRITE_BYTES + 1)})
+
+    assert not target.exists()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
 def test_write_file_preserves_existing_mode(load_loomops, monkeypatch, tmp_path):
     files = load_loomops("loomops.files")["loomops.files"]

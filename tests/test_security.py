@@ -91,10 +91,12 @@ def test_keyword_matching_ignores_substrings():
     assert classify_tool_risk("ops_address_lookup") == "safe"
 
 
-def test_declared_risk_overrides_heuristics():
-    # A plugin may downgrade a nominally dangerous name...
-    assert classify_tool_risk("ops_run_command", "safe") == "safe"
-    # ...or upgrade a name the heuristics would treat as safe.
+def test_explicit_dangerous_overrides_declared_risk():
+    # A plugin may not downgrade a denylisted tool to skip approval/audit.
+    assert classify_tool_risk("ops_run_command", "safe") == "dangerous"
+    # ...but a declared risk still wins for a tool that is not denylisted.
+    assert classify_tool_risk("wg_deploy_config", "safe") == "safe"
+    # ...and a declared upgrade is honored.
     assert classify_tool_risk("core_health", "dangerous") == "dangerous"
 
 

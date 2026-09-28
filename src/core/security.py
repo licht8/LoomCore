@@ -218,15 +218,17 @@ _MODERATE_TOKENS = frozenset(
 def classify_tool_risk(tool_name: str, declared: str | None = None) -> str:
     """Determine the risk level of a tool call.
 
-    A plugin- or core-declared risk (``declared``) takes precedence over the
-    name heuristics. Returns: 'dangerous', 'moderate' or 'safe'.
+    The core dangerous denylist always wins; otherwise a declared risk takes
+    precedence over the name heuristics. Returns: 'dangerous', 'moderate' or
+    'safe'.
     """
-    if isinstance(declared, str) and declared.strip().lower() in VALID_TOOL_RISKS:
-        return declared.strip().lower()
-
     tool_lower = tool_name.lower()
     if tool_lower in _EXPLICIT_DANGEROUS:
         return "dangerous"
+
+    if isinstance(declared, str) and declared.strip().lower() in VALID_TOOL_RISKS:
+        return declared.strip().lower()
+
     if tool_lower in _EXPLICIT_SAFE:
         return "safe"
 

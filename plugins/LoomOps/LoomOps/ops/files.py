@@ -9,6 +9,7 @@ from typing import Any
 from . import audit_event, confine
 
 MAX_READ_BYTES = 256_000
+MAX_WRITE_BYTES = 256_000
 
 
 def allowed_paths() -> list[Path]:
@@ -82,6 +83,8 @@ def write_file(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("content must be a string")
     root = _confined_root(path, raw)
     data = content.encode("utf-8")
+    if len(data) > MAX_WRITE_BYTES:
+        raise ValueError(f"content exceeds {MAX_WRITE_BYTES} bytes")
     try:
         confine.write_atomic(root, path, data)
     except OSError as exc:
