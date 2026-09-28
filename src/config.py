@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     ]
     llm_daily_call_limit: int = 1000
     plugins_dir: str = "/app/plugins"
+    # Plugin trust boundary: comma/space-separated plugin ids allowed to launch
+    # (empty = launch every discovered plugin). Plugins run unsandboxed as root.
+    plugins_allowed: str = Field(
+        default="", validation_alias="LOOMCORE_PLUGINS_ALLOWED"
+    )
     plugins_state_file: str = ""
     confirmations_file: str = ""
     timing_enabled: bool = Field(default=False, validation_alias="LOOMCORE_TIMING")

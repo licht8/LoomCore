@@ -21,6 +21,7 @@ def _settings(monkeypatch, **overrides):
         "admin_token": "",
         "admin_password_hash": "",
         "admin_totp_secret": "",
+        "session_secret": "",
         "secure_cookies": True,
         "require_tls": False,
         "loomcore_revoked_file": "",
@@ -197,3 +198,39 @@ def test_unconfigured_llm_provider_warns(monkeypatch, tmp_path, caplog):
     assert any(
         "No LLM provider is configured" in message for message in caplog.messages
     )
+
+
+def test_placeholder_credentials_raise(monkeypatch, tmp_path):
+    _settings(
+        monkeypatch,
+        admin_token="static",
+        admin_password_hash="generate-with-the-auth-helper",
+        loomcore_revoked_file=str(tmp_path / "revoked.json"),
+    )
+    with pytest.raises(RuntimeError, match="placeholder credential"):
+        startup_checks.check_security_posture()
+
+
+def test_placeholder_session_secret_raises(monkeypatch, tmp_path):
+    _settings(
+        monkeypatch,
+        admin_token="static",
+        session_secret="generate-a-long-random-session-secret",
+        loomcore_revoked_file=str(tmp_path / "revoked.json"),
+    )
+    with pytest.raises(RuntimeError, match="SESSION_SECRET"):
+        startup_checks.check_security_posture()
+
+
+def test_real_credentials_do_not_raise(monkeypatch, tmp_path, caplog):
+    _settings(
+        monkeypatch,
+        admin_token="static",
+        admin_password_hash="$2b$12$realhash",
+        admin_totp_secret="JBSWY3DPEHPK3PXP",
+        session_secret="a-real-secret",
+        loomcore_revoked_file=str(tmp_path / "revoked.json"),
+    )
+    with caplog.at_level(logging.WARNING, logger="loomcore.security"):
+        startup_checks.check_security_posture()
+    assert not any("placeholder" in message for message in caplog.messages)

@@ -109,6 +109,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(Exception):
             await ws_runtime.airouter_with_plugins.aclose()
 
+        # Terminate plugin subprocesses so a non-container run (or --reload)
+        # does not orphan them.
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(plugin_manager.terminate_all)
+
 
 def create_app() -> FastAPI:
     """Create and configure the application instance."""

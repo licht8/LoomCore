@@ -14,6 +14,43 @@ from src.llm.config import get_active
 
 logger = logging.getLogger("loomcore.security")
 
+# Values once shipped verbatim in .env.example. Rejecting them at startup keeps a
+# copy-paste deployment from verifying admin JWTs against a publicly-known key.
+_PLACEHOLDER_CREDENTIALS = frozenset(
+    {
+        "generate-with-the-auth-helper",
+        "base32-secret",
+        "generate-a-long-random-session-secret",
+    }
+)
+
+
+def _check_placeholder_credentials() -> None:
+    """Fail closed when a shipped .env.example placeholder is still in use.
+
+    ``.env.example`` previously shipped publicly-known values for these fields,
+    so a deployment that copied it and edited only ``POSTGRES_PASSWORD`` would
+    have enabled JWT auth signed with a known secret. Empty values are always
+    allowed (they simply leave JWT/password login off).
+    """
+    fields = {
+        "ADMIN_PASSWORD_HASH": settings.admin_password_hash,
+        "ADMIN_TOTP_SECRET": settings.admin_totp_secret,
+        "SESSION_SECRET": settings.session_secret,
+        "ADMIN_TOKEN": settings.admin_token,
+    }
+    offenders = sorted(
+        name
+        for name, value in fields.items()
+        if value.strip() in _PLACEHOLDER_CREDENTIALS
+    )
+    if offenders:
+        raise RuntimeError(
+            "Refusing to start: placeholder credential(s) still set for "
+            + ", ".join(offenders)
+            + ". Replace them with real values (empty is allowed)."
+        )
+
 
 def _check_auth_mode() -> None:
     """Warn when both credentials are configured without an explicit AUTH_MODE."""
@@ -116,6 +153,7 @@ def _check_llm_provider() -> None:
 
 def check_security_posture() -> None:
     """Run all startup security-posture checks (warnings and fail-closed errors)."""
+    _check_placeholder_credentials()
     _check_auth_mode()
     _check_jwt_mode_credentials()
     _check_tls()

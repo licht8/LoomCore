@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from src.config import settings
 from src.core.contracts import ToolContractError
 from src.plugins.errors import PluginPolicyDenied
 from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
@@ -17,7 +18,7 @@ from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
 @pytest.fixture(autouse=True)
 def _no_plugin_allowlist(monkeypatch):
     """Keep the plugin allowlist unset unless a test opts into it."""
-    monkeypatch.delenv("LOOMCORE_PLUGINS_ALLOWED", raising=False)
+    monkeypatch.setattr(settings, "plugins_allowed", "")
 
 
 class _FakeStdin:
@@ -1372,22 +1373,31 @@ def test_drain_stderr_logs_plugin_output(caplog):
 # === plugin allowlist (LOOMCORE_PLUGINS_ALLOWED) ===
 
 
-def test_allowed_plugins_parses_commas_and_spaces(monkeypatch):
+def test_allowed_plugins_reads_settings(monkeypatch):
     from src.plugins.manager import allowed_plugins
 
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomWG, LoomOps")
+    monkeypatch.setattr(settings, "plugins_allowed", "LoomWG, LoomOps")
     assert allowed_plugins() == {"LoomWG", "LoomOps"}
 
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomWG LoomOps")
+    monkeypatch.setattr(settings, "plugins_allowed", "LoomWG LoomOps")
     assert allowed_plugins() == {"LoomWG", "LoomOps"}
 
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "")
+    monkeypatch.setattr(settings, "plugins_allowed", "")
+    assert allowed_plugins() == set()
+
+
+def test_allowed_plugins_ignores_process_env(monkeypatch):
+    """The allow-list is a Settings field, not a raw os.environ read."""
+    from src.plugins.manager import allowed_plugins
+
+    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomWG")
+    monkeypatch.setattr(settings, "plugins_allowed", "")
     assert allowed_plugins() == set()
 
 
 def test_discover_blocks_plugin_not_in_allowlist(monkeypatch, tmp_path):
     _add_plugin_dir(tmp_path, "demo", _manifest())
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomOps")
+    monkeypatch.setattr(settings, "plugins_allowed", "LoomOps")
     manager = PluginManager()
     monkeypatch.setattr(manager, "register", lambda *a, **k: pytest.fail("no launch"))
 
@@ -1401,7 +1411,7 @@ def test_discover_blocks_plugin_not_in_allowlist(monkeypatch, tmp_path):
 
 def test_discover_launches_allowlisted_plugin(monkeypatch, tmp_path):
     _add_plugin_dir(tmp_path, "demo", _manifest())
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "demo")
+    monkeypatch.setattr(settings, "plugins_allowed", "demo")
     manager = PluginManager()
     registered: list[str] = []
     monkeypatch.setattr(
@@ -1416,7 +1426,7 @@ def test_discover_launches_allowlisted_plugin(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_enable_refuses_plugin_not_in_allowlist(monkeypatch):
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "LoomOps")
+    monkeypatch.setattr(settings, "plugins_allowed", "LoomOps")
     manager = PluginManager()
     plugin = _add_plugin(manager)
     plugin.enabled = False
@@ -1433,7 +1443,7 @@ async def test_enable_refuses_plugin_not_in_allowlist(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_enable_allows_plugin_in_allowlist(monkeypatch, tmp_path):
-    monkeypatch.setenv("LOOMCORE_PLUGINS_ALLOWED", "demo")
+    monkeypatch.setattr(settings, "plugins_allowed", "demo")
     manager = PluginManager(state_path=tmp_path / "state.json")
     plugin = _add_plugin(manager)
     plugin.enabled = False
@@ -1451,4 +1461,37 @@ async def test_enable_allows_plugin_in_allowlist(monkeypatch, tmp_path):
 
     assert await manager.enable_plugin("demo") is True
     assert plugin.enabled is True
+
+
+# === shutdown ===
+
+
+def test_terminate_all_stops_plugins():
+    manager = PluginManager()
+    alive = _FakeProc()
+    dead = _FakeProc(alive=False)
+    _add_plugin(manager, "alive", proc=alive)
+    _add_plugin(manager, "dead", proc=dead)
+
+    manager.terminate_all()
+
+    assert alive.alive is False
+    for plugin in manager._plugins.values():
+        assert plugin.proc is None
+        assert plugin.state == PluginState.STOPPED
+
+
+def test_terminate_all_never_raises(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager, "boom")
+
+    def _boom(proc):
+        raise RuntimeError("terminate failed")
+
+    monkeypatch.setattr(manager, "_terminate_process", _boom)
+
+    manager.terminate_all()
+
+    assert manager._plugins["boom"].proc is None
+    assert manager._plugins["boom"].state == PluginState.STOPPED
 

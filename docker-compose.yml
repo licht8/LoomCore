@@ -107,6 +107,13 @@ services:
       LOOMOPS_DISK_THRESHOLD: ${LOOMOPS_DISK_THRESHOLD:-90}
       LOOMOPS_LOAD_THRESHOLD: ${LOOMOPS_LOAD_THRESHOLD:-2.0}
       PLUGINS_STATE_FILE: ${PLUGINS_STATE_FILE:-}
+      # Plugin trust boundary: comma/space-separated plugin ids allowed to
+      # launch (empty = every discovered plugin). Plugins run unsandboxed.
+      LOOMCORE_PLUGINS_ALLOWED: ${LOOMCORE_PLUGINS_ALLOWED:-}
+      # Reverse proxies trusted for the real client IP (rate limiting).
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,::1}
+      # Read-only command basenames whose turn skips the summary (empty = off).
+      LOOMCORE_REPORT_COMMANDS: ${LOOMCORE_REPORT_COMMANDS:-}
     # API binds to loopback only; nginx is the single public entrypoint.
     command: uvicorn src.main:app --host 127.0.0.1 --port 8000
     volumes:

@@ -13,3 +13,9 @@ def test_cors_middleware_uses_settings_origins(monkeypatch):
 
     entry = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
     assert entry.kwargs["allow_origins"] == ["https://hub.example.com"]
+
+
+def test_plugin_manager_exposes_shutdown_hook():
+    from src.plugins import plugin_manager
+
+    assert callable(plugin_manager.terminate_all)

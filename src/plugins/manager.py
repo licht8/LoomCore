@@ -7,7 +7,6 @@ stdin/stdout. Call timeout: 30 seconds. A plugin crash does not take down the Hu
 import asyncio
 import json
 import logging
-import os
 import subprocess
 import sys
 import threading
@@ -18,6 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 from time import monotonic, time
 
+from src.config import settings
 from src.core.contracts import validate_tool_args, validate_tool_result
 from src.core.security_log import log_security_event
 from src.core.timing import log_stage
@@ -45,7 +45,7 @@ def allowed_plugins() -> set[str]:
     plugin ids may be launched (comma- or whitespace-separated). An empty value
     preserves the previous behaviour of launching every discovered plugin.
     """
-    raw = os.environ.get("LOOMCORE_PLUGINS_ALLOWED", "")
+    raw = settings.plugins_allowed
     return {
         part
         for part in (chunk.strip() for chunk in raw.replace(",", " ").split())
@@ -598,6 +598,26 @@ class PluginManager:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
+
+    def terminate_all(self) -> None:
+        """Terminate every plugin subprocess (application shutdown).
+
+        Blocks, so callers should run it in a worker thread. Best-effort: a
+        plugin that cannot be terminated is logged and skipped instead of
+        aborting shutdown. Idempotent — already-dead processes are fine.
+        """
+        for plugin in self._plugins.values():
+            proc = plugin.proc
+            plugin.proc = None
+            plugin.state = PluginState.STOPPED
+            if proc is None or proc.poll() is not None:
+                continue
+            try:
+                self._terminate_process(proc)
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to terminate plugin '{plugin.name}' on shutdown: {exc}"
+                )
 
     def _do_register_inplace(self, name: str, command: list[str], working_dir: str | None):
         """Launch the subprocess again, keeping the same ManagedPlugin record."""

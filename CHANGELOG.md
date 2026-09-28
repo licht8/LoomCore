@@ -3,6 +3,15 @@
 Short entries only: date + one or two lines. Details live in `docs/` or in the
 task report (RULES 14).
 
+## 2026-09-28
+
+- Deployment safety hardening: `.env.example` no longer ships usable credential
+  placeholders (`ADMIN_PASSWORD_HASH`/`ADMIN_TOTP_SECRET`/`SESSION_SECRET` empty)
+  and startup fails closed if a known placeholder is still set; compose now
+  forwards `LOOMCORE_PLUGINS_ALLOWED`/`TRUSTED_PROXIES`/`LOOMCORE_REPORT_COMMANDS`
+  and the plugin allow-list is read from Settings instead of raw `os.environ`;
+  plugin subprocesses are terminated on shutdown (`PluginManager.terminate_all`).
+
 ## 2026-09-22
 
 - Frontend gaps: added read-only admin surfaces backed by four thin API routes —
