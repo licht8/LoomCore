@@ -63,7 +63,7 @@ export function SessionList({
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-1.5">
       {sessions.map((session) => {
         const active = session.session_id === activeSessionId
         return (
@@ -137,6 +137,6 @@ export function SessionList({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </div>
   )
 }
