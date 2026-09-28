@@ -17,6 +17,7 @@ import contextlib
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterable, Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -158,27 +159,18 @@ async def record_mutation_isolated(**kwargs: Any) -> AuditEntry | None:
         return None
 
 
-def verify_chain(
-    entries: list[AuditEntry],
-    *,
-    expected_count: int | None = None,
-    expected_head: str | None = None,
-) -> bool:
-    """Return True when every entry links correctly to the previous one.
+class _ChainVerifier:
+    """Incremental hash-chain checker shared by the sync/async entry points."""
 
-    The chain alone cannot prove completeness: a truncated log is still
-    internally consistent, so an empty list passes when no anchor is given. Pass
-    an independently known ``expected_count`` (number of rows) and/or
-    ``expected_head`` (the last ``entry_hash``) to detect truncation.
-    """
-    if expected_count is not None and len(entries) != expected_count:
-        return False
-    if expected_head is not None and (
-        not entries or entries[-1].entry_hash != expected_head
-    ):
-        return False
-    prev = GENESIS_HASH
-    for entry in entries:
+    def __init__(self) -> None:
+        self._prev = GENESIS_HASH
+        self.count = 0
+        self.head: str | None = None
+        self.broken = False
+
+    def feed(self, entry: AuditEntry) -> None:
+        if self.broken:
+            return
         payload = entry_payload(
             created_at=entry.created_at,
             actor=entry.actor,
@@ -191,9 +183,57 @@ def verify_chain(
             status=entry.status,
             error=entry.error,
         )
-        if entry.prev_hash != prev:
+        if entry.prev_hash != self._prev or entry.entry_hash != compute_entry_hash(
+            self._prev, payload
+        ):
+            self.broken = True
+            return
+        self._prev = entry.entry_hash
+        self.count += 1
+        self.head = entry.entry_hash
+
+    def result(self, expected_count: int | None, expected_head: str | None) -> bool:
+        if self.broken:
             return False
-        if entry.entry_hash != compute_entry_hash(prev, payload):
+        if expected_count is not None and self.count != expected_count:
             return False
-        prev = entry.entry_hash
-    return True
+        return not (expected_head is not None and self.head != expected_head)
+
+
+def verify_chain(
+    entries: Iterable[AuditEntry],
+    *,
+    expected_count: int | None = None,
+    expected_head: str | None = None,
+) -> bool:
+    """Return True when every entry links correctly to the previous one.
+
+    The chain alone cannot prove completeness: a truncated log is still
+    internally consistent, so an empty iterable passes when no anchor is given.
+    Pass an independently known ``expected_count`` (number of rows) and/or
+    ``expected_head`` (the last ``entry_hash``) to detect truncation. The input
+    is consumed exactly once, so a lazy iterable is enough; see
+    :func:`verify_chain_stream` for an async source.
+    """
+    verifier = _ChainVerifier()
+    for entry in entries:
+        verifier.feed(entry)
+    return verifier.result(expected_count, expected_head)
+
+
+async def verify_chain_stream(
+    entries: AsyncIterable[AuditEntry],
+    *,
+    expected_count: int | None = None,
+    expected_head: str | None = None,
+) -> bool:
+    """Async twin of :func:`verify_chain` for a streaming entry source.
+
+    The audit route feeds ``iter_audit_entries`` page by page so a large log is
+    verified without loading every row into memory at once. Anchors behave
+    exactly as in :func:`verify_chain`.
+    """
+    verifier = _ChainVerifier()
+    async for entry in entries:
+        verifier.feed(entry)
+    return verifier.result(expected_count, expected_head)

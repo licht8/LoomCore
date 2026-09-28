@@ -76,6 +76,18 @@ def test_verify_chain_detects_broken_link():
     assert verify_chain([first, second]) is False
 
 
+def test_verify_chain_accepts_iterator():
+    first = _entry(GENESIS_HASH)
+    second = _entry(first.entry_hash, tool="wg_interface_restart")
+
+    assert verify_chain(iter([first, second])) is True
+    assert verify_chain(iter([first, second]), expected_count=2) is True
+
+    tampered = _entry(first.entry_hash, tool="wg_interface_restart")
+    tampered.status = "failed"
+    assert verify_chain(iter([first, tampered])) is False
+
+
 def test_verify_chain_detects_truncation_with_expected_count():
     first = _entry(GENESIS_HASH)
     second = _entry(first.entry_hash, tool="wg_interface_restart")

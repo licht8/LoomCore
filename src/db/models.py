@@ -2,6 +2,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -70,6 +71,11 @@ class Message(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)  # UTC isoformat
 
     session: Mapped["Session"] = relationship("Session", back_populates="messages")
+
+    # Named to match migration 009 so autogenerate does not see drift.
+    __table_args__ = (
+        Index("ix_messages_session_id_created_at", "session_id", "created_at"),
+    )
 
 
 class AuditEntry(Base):

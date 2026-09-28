@@ -63,13 +63,18 @@ def _patch_entries(monkeypatch: pytest.MonkeyPatch, entries: list) -> None:
     async def fake_count(db):
         return len(entries)
 
-    async def fake_all(db):
-        return entries
+    async def fake_head(db):
+        return entries[-1].entry_hash if entries else None
+
+    async def fake_iter(db, *, batch_size=1000):
+        for entry in entries:
+            yield entry
 
     monkeypatch.setattr(audit_api, "async_session_factory", lambda: _DummyContext())
     monkeypatch.setattr(audit_api, "list_audit_entries", fake_list)
     monkeypatch.setattr(audit_api, "count_audit_entries", fake_count)
-    monkeypatch.setattr(audit_api, "all_audit_entries", fake_all)
+    monkeypatch.setattr(audit_api, "latest_entry_hash", fake_head)
+    monkeypatch.setattr(audit_api, "iter_audit_entries", fake_iter)
 
 
 @pytest.mark.asyncio

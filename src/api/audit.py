@@ -3,11 +3,12 @@
 from fastapi import APIRouter, Header, Query, Request
 
 from src.api.deps import require_admin_token_from_request
-from src.core.audit import verify_chain
+from src.core.audit import verify_chain_stream
 from src.core.rate_limit import limiter
 from src.db.audit_store import (
-    all_audit_entries,
     count_audit_entries,
+    iter_audit_entries,
+    latest_entry_hash,
     list_audit_entries,
 )
 from src.db.database import async_session_factory
@@ -57,14 +58,17 @@ async def verify_audit(
     request: Request,
     authorization: str | None = Header(default=None),
 ):
-    """Verify the full hash chain (tamper-evidence, not truncation).
+    """Verify the full hash chain by streaming it page by page.
 
-    ``verify_chain`` is called without an independently known anchor, so a
-    truncated log still validates; the endpoint reports tamper-evidence only.
+    ``count_audit_entries``/``latest_entry_hash`` supply the anchor, so a
+    truncated log is detected as well as a tampered one; ``iter_audit_entries``
+    keeps memory bounded for a large log.
     """
     require_admin_token_from_request(request, authorization)
     async with async_session_factory() as db:
-        entries = await all_audit_entries(db)
-    valid = verify_chain(entries)
-    head = entries[-1].entry_hash if entries else None
-    return {"valid": valid, "count": len(entries), "head": head}
+        total = await count_audit_entries(db)
+        head = await latest_entry_hash(db)
+        valid = await verify_chain_stream(
+            iter_audit_entries(db), expected_count=total, expected_head=head
+        )
+    return {"valid": valid, "count": total, "head": head}

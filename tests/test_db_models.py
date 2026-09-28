@@ -20,6 +20,11 @@ def test_session_id_columns_are_64_chars():
     assert AuditEntry.__table__.c.session_id.type.length == 64
 
 
+def test_messages_have_session_created_index():
+    names = {index.name for index in Message.__table__.indexes}
+    assert "ix_messages_session_id_created_at" in names
+
+
 def test_chat_request_session_id_fits_session_column():
     declared = _max_length(ChatRequest.model_fields["session_id"])
     assert declared == 64
