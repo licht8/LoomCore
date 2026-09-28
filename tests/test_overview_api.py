@@ -1,5 +1,7 @@
 """Tests for the curated read-only overview aggregate (no DB, no auth)."""
 
+import asyncio
+
 import pytest
 
 from src.api import overview as overview_api
@@ -17,17 +19,26 @@ def _ok(text: str) -> dict:
 
 
 class _FakeManager:
-    def __init__(self, results: dict, fail: tuple = ()) -> None:
+    def __init__(self, results: dict, fail: tuple = (), *, healthy: bool = True) -> None:
         self._results = results
         self._fail = set(fail)
+        self._healthy = healthy
+        self.calls: list[str] = []
 
     def plugin_names(self):
         return ["LoomOps"]
+
+    def plugin_for_tool(self, tool_name):
+        return "LoomOps"
+
+    def is_healthy(self, plugin_name):
+        return self._healthy
 
     def get_plugin_status(self, name):
         return {"name": name, "state": "running", "enabled": True}
 
     async def execute_tool_by_name(self, tool_name, arguments=None):
+        self.calls.append(tool_name)
         if tool_name in self._fail:
             raise RuntimeError("tool unavailable")
         return self._results.get(tool_name, _ok(tool_name))
@@ -46,18 +57,17 @@ def _patch_tools(
     core_raises: bool = False,
     manager_results: dict | None = None,
     manager_fail: tuple = (),
-) -> None:
+    healthy: bool = True,
+) -> _FakeManager:
     async def fake_core(tool_name, arguments=None, *, approved=False):
         if core_raises:
             raise RuntimeError("core unavailable")
         return core or _ok("core ok")
 
     monkeypatch.setattr(overview_api, "dispatch_core_tool", fake_core)
-    monkeypatch.setattr(
-        overview_api,
-        "plugin_manager",
-        _FakeManager(manager_results or {}, manager_fail),
-    )
+    manager = _FakeManager(manager_results or {}, manager_fail, healthy=healthy)
+    monkeypatch.setattr(overview_api, "plugin_manager", manager)
+    return manager
 
 
 @pytest.mark.asyncio
@@ -109,6 +119,40 @@ async def test_overview_tool_failure_is_null_without_raising(monkeypatch):
     assert result["host"]["disk"] is None
     assert result["wireguard"] is None
     assert result["host"]["metrics"]["content"][0]["text"] == "cpu 3%"
+
+
+@pytest.mark.asyncio
+async def test_overview_times_out_a_hung_tool(monkeypatch):
+    _patch_auth(monkeypatch)
+    manager = _patch_tools(monkeypatch)
+    monkeypatch.setattr(overview_api, "OVERVIEW_TOOL_TIMEOUT_SECONDS", 0.05)
+
+    async def hang(tool_name, arguments=None):
+        manager.calls.append(tool_name)
+        await asyncio.sleep(1)
+        return _ok(tool_name)
+
+    monkeypatch.setattr(manager, "execute_tool_by_name", hang)
+
+    result = await overview_api.get_overview(request=None)
+
+    assert result["core"]["content"][0]["text"] == "core ok"
+    assert result["host"]["disk"] is None
+    assert result["host"]["metrics"] is None
+    assert result["wireguard"] is None
+
+
+@pytest.mark.asyncio
+async def test_overview_skips_unhealthy_plugin(monkeypatch):
+    _patch_auth(monkeypatch)
+    manager = _patch_tools(monkeypatch, healthy=False)
+
+    result = await overview_api.get_overview(request=None)
+
+    assert manager.calls == []
+    assert result["host"]["disk"] is None
+    assert result["wireguard"] is None
+    assert result["core"]["content"][0]["text"] == "core ok"
 
 
 @pytest.mark.asyncio
