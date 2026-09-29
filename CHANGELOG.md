@@ -3,6 +3,14 @@
 Short entries only: date + one or two lines. Details live in `docs/` or in the
 task report (RULES 14).
 
+## 2026-09-29
+
+- The assistant always answers in its own words: report tools no longer skip the
+  post-run summary (their cards just render as Markdown); the raw output is shown
+  only when the user asks for it or for an allow-listed read-only command. If a
+  configured `summary_model` fails or returns nothing, `summarize_plan` now retries
+  once with the main model, so the assistant no longer silently echoes tool output.
+
 ## 2026-09-28
 
 - Deployment safety hardening: `.env.example` no longer ships usable credential

@@ -389,11 +389,13 @@ def _command_is_read_only(command: str) -> bool:
 
 
 def _step_answers_with_raw(step: dict) -> bool:
-    """True when a step's raw output already is the answer."""
-    name = step.get("tool", "")
-    if _is_report_tool(name):
-        return True
-    arg = _report_arg_for(name)
+    """True when a step's raw output already is the answer.
+
+    Only an allow-listed read-only ``ops_run_command`` qualifies; report tools
+    (``report: true``) do not, so every plan is described in the assistant's own
+    words.
+    """
+    arg = _report_arg_for(step.get("tool", ""))
     if arg:
         value = step.get("args", {}).get(arg)
         if isinstance(value, str):
@@ -431,11 +433,11 @@ async def _summarize(
 ) -> str:
     """Summarize a finished plan in the assistant's own words.
 
-    Raw tool text is surfaced when the user explicitly asked for it, when the
-    plan is an all-report plan (its raw output already is the answer), when
-    there is nothing to summarize, or when the summary call fails or
-    contradicts the numbers in the observations. ``on_delta`` (if set) streams
-    the summary text; it is only forwarded on the LLM path.
+    Raw tool text is surfaced only when the user explicitly asked for it, when an
+    allow-listed read-only command already is the answer, when there is nothing
+    to summarize, or when the summary call fails or contradicts the numbers in
+    the observations. ``on_delta`` (if set) streams the summary text; it is only
+    forwarded on the LLM path.
     """
     if not _uses_llm_summary(plan, observations, raw_requested=raw_requested):
         if not observations:

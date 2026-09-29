@@ -78,11 +78,11 @@ so no tool can be advertised as safe by accident.
 
 The read-only listings (`ops_list_processes`, `ops_failed_units`,
 `ops_scan_health`, `ops_network_status`, `ops_dmesg`, `ops_disk_usage`,
-`ops_system_metrics`) are declared with `report: true`, so a turn that only runs
-them skips the summary LLM call and their cards render compact. `ops_run_command`
-is declared with `report_arg: "command"`: it is treated as a report only when the
-command's basename is in the opt-in `LOOMCORE_REPORT_COMMANDS` allow-list and the
-command has no shell metacharacters.
+`ops_system_metrics`) are declared with `report: true`, so their cards render as
+Markdown; the turn is still described in the assistant's own words.
+`ops_run_command` is declared with `report_arg: "command"`: it surfaces its raw
+output (skipping the summary) only when the command's basename is in the opt-in
+`LOOMCORE_REPORT_COMMANDS` allow-list and the command has no shell metacharacters.
 
 ## Safety model
 

@@ -108,8 +108,8 @@ advertised as safe by accident.
 
 The read-only listings (`wg_list_interfaces`, `wg_list_peers`,
 `wg_interface_status`, `wg_show_interface_config`, `wg_stats`, `wg_diagnostics`)
-are declared with `report: true`, so a turn that only runs them skips the
-summary LLM call and their cards render compact.
+are declared with `report: true`, so their cards render as Markdown; the turn is
+still described in the assistant's own words.
 
 ## Parameters
 

@@ -154,14 +154,15 @@ confirmation.
   round of latency instead of the sum of its steps.
 - The planner and summary calls are bounded by `LLM_PLANNER_MAX_TOKENS` /
   `LLM_SUMMARY_MAX_TOKENS` and streamed as `delta` events.
-- **All-report plans skip the summary**: report-ness is declarative — core
-  meta-tools set `report: true`, plugins declare `report`/`report_arg` in their
-  `TOOLS_SCHEMA` (read into `plugin_manager`), so the core never hardcodes plugin
-  tool names. When every step is a report, the raw Markdown output is the answer,
-  so no summary call runs and the tool cards render compact. An allow-listed
-  read-only command (`LOOMCORE_REPORT_COMMANDS`, empty by default) counts too.
-  Mixed (report + command) plans still summarize and render non-compact
-  (accepted v1 trade-off).
+- **Every plan is summarized in the assistant's own words**: report-ness is
+  declarative — core meta-tools set `report: true`, plugins declare `report` in
+  their `TOOLS_SCHEMA` (read into `plugin_manager`), so the core never hardcodes
+  plugin tool names. Report tools only control *rendering*: their cards render as
+  Markdown (`format: "markdown"`), everything else as `<pre>`. The raw output is
+  surfaced (and the card rendered compact) only when the user explicitly asks for
+  it, or for an allow-listed read-only command (`LOOMCORE_REPORT_COMMANDS`, empty
+  by default). If a configured `summary_model` fails or returns nothing, the
+  summary is retried once with the main model.
 - Intended defaults are `LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
   `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`; the Settings UI
   must not silently re-override them to `90`/`2`.

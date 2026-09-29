@@ -299,8 +299,8 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
     assert types.count("tool_call") == 1
     assert "tool_response" in types
     assert types[-1] == "response"
-    # A direct plan returns the raw tool output; no second LLM generation.
-    assert sent[-1]["content"] == "core_health ok"
+    # A direct plan is described in the assistant's own words.
+    assert sent[-1]["content"] == "Summary"
     assert saved_tools[0]["status"] == "success"
     assert saved_plans == []
     assert pending["plan"] is None
@@ -308,7 +308,7 @@ async def test_process_user_message_auto_runs_direct_safe(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_direct_report_action_skips_llm_summary(monkeypatch):
+async def test_direct_report_action_is_summarized(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
@@ -333,13 +333,13 @@ async def test_direct_report_action_skips_llm_summary(monkeypatch):
     pending = {"plan": None, "user_text": ""}
     await ws_module._process_user_message(send, "sess", "check", tracker, pending)
 
-    assert calls == []
+    assert calls and calls[0][0] == "check"
     assert sent[-1]["type"] == "response"
-    assert sent[-1]["content"] == "core_health ok"
+    assert sent[-1]["content"] == "All good — the core is healthy."
 
 
 @pytest.mark.asyncio
-async def test_report_turn_emits_compact_cards(monkeypatch):
+async def test_report_turn_emits_non_compact_markdown_cards(monkeypatch):
     sent, send = _collector()
     plan = build_plan(
         {
@@ -357,9 +357,9 @@ async def test_report_turn_emits_compact_cards(monkeypatch):
     await ws_module._process_user_message(send, "sess", "check")
 
     tool_response = next(p for p in sent if p["type"] == "tool_response")
-    assert tool_response["compact"] is True
+    assert tool_response["compact"] is False
     assert tool_response["format"] == "markdown"
-    assert saved_tools[0]["compact"] is True
+    assert saved_tools[0]["compact"] is False
     assert saved_tools[0]["format"] == "markdown"
 
 
@@ -1546,11 +1546,16 @@ async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_summarize_skips_llm_for_all_report_plan(monkeypatch):
-    async def boom(*args, **kwargs):
-        raise AssertionError("summarize_plan must not be called for an all-report plan")
+async def test_summarize_runs_for_all_report_plan(monkeypatch):
+    calls = []
 
-    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom)
+    async def fake_summarize(user_text, plan, observations, **kwargs):
+        calls.append(user_text)
+        return "Disk is 42% used."
+
+    monkeypatch.setattr(
+        ws_module.airouter_with_plugins, "summarize_plan", fake_summarize
+    )
     plan = build_plan(
         {
             "mode": "plan",
@@ -1565,7 +1570,8 @@ async def test_summarize_skips_llm_for_all_report_plan(monkeypatch):
 
     summary = await ws_module._summarize("disk usage", plan, observations)
 
-    assert "disk 42% used" in summary
+    assert calls == ["disk usage"]
+    assert summary == "Disk is 42% used."
 
 
 @pytest.mark.asyncio
@@ -1594,12 +1600,12 @@ async def test_summarize_runs_for_direct_command_plan(monkeypatch):
     assert summary == "The file was read."
 
 
-def test_step_answers_with_raw_report_tool():
+def test_step_answers_with_raw_ignores_report_tools():
     assert (
         ws_module._step_answers_with_raw({"tool": "ops_disk_usage", "args": {}})
-        is True
+        is False
     )
-    assert ws_module._step_answers_with_raw({"tool": "core_health", "args": {}}) is True
+    assert ws_module._step_answers_with_raw({"tool": "core_health", "args": {}}) is False
     assert (
         ws_module._step_answers_with_raw({"tool": "ops_read_file", "args": {}})
         is False

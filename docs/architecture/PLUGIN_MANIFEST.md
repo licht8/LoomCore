@@ -107,12 +107,14 @@ core-facing keys alongside `name`/`description`/`inputSchema`:
   entry is stale), so a new tool can never be advertised as safe by accident.
 - `internal` — `true` marks a tool the LLM must never see; it is callable only by
   the core. `internal_tools` in the manifest is the declarative counterpart.
-- `report` — `true` marks a listing/report tool whose raw output already is the
-  answer. Such a turn skips the post-run summary LLM call and the tool card is
-  rendered compact. This only affects summarization/rendering, never whether the
-  tool runs or needs approval. Omitting it falls back to "summarize" (safe).
+- `report` — `true` marks a listing/report tool so its card renders as Markdown
+  (`format: "markdown"`) instead of the default `<pre>` block. This only affects
+  rendering; every plan is still summarized in the assistant's own words, and the
+  tool always runs/needs approval as declared. Omitting it falls back to plain
+  text rendering.
 - `report_arg` — the name of an argument whose value, when a read-only command,
-  makes the tool a report (e.g. `ops_run_command` with `"report_arg": "command"`).
+  makes the step surface its raw output (skipping the summary) — the one remaining
+  summarization shortcut (e.g. `ops_run_command` with `"report_arg": "command"`).
   The core only treats it as a report when the command's basename is in
   `LOOMCORE_REPORT_COMMANDS` and the command has no shell metacharacters, so the
   read-only classification is opt-in and best-effort.
