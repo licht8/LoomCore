@@ -425,3 +425,31 @@ async def test_clear_pending_nulls_the_row():
 
     assert getattr(db.statements[-1], "is_update", False)
     assert db.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_pending_returns_true_when_it_matched():
+    db = _FakeSession(results=[_FakeResult(rowcount=1)])
+    plan = {"plan_id": "pl_1", "revision": 2, "status": "proposed"}
+
+    replaced = await db_session.replace_pending(db, "sess", "pl_1", plan, "go")
+
+    assert replaced is True
+    assert getattr(db.statements[-1], "is_update", False)
+    values = [v for v in db.statements[-1].compile().params.values() if isinstance(v, dict)]
+    assert values and values[0]["plan"] == plan
+    assert values[0]["user_text"] == "go"
+    assert values[0]["created_at"]
+    assert db.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_pending_returns_false_when_nothing_matched():
+    db = _FakeSession(results=[_FakeResult(rowcount=0)])
+
+    replaced = await db_session.replace_pending(
+        db, "sess", "pl_1", {"plan_id": "pl_1"}, "go"
+    )
+
+    assert replaced is False
+    assert db.commit_count == 1

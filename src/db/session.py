@@ -148,6 +148,36 @@ async def claim_pending(
     return matched
 
 
+async def replace_pending(
+    session_db: AsyncSession,
+    session_id: str,
+    plan_id: str,
+    plan: dict,
+    user_text: str,
+) -> bool:
+    """Atomically replace the pending plan with a new revision.
+
+    Only the record whose ``plan_id`` still matches is replaced, so an edit
+    cannot resurrect a plan that was already consumed or superseded. Returns
+    ``True`` when the row was replaced.
+    """
+    record = {
+        "plan": plan,
+        "user_text": user_text,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    result = await session_db.execute(
+        update(Session)
+        .where(
+            Session.id == session_id,
+            Session.pending["plan"]["plan_id"].as_string() == plan_id,
+        )
+        .values(pending=record)
+    )
+    await session_db.commit()
+    return result.rowcount == 1
+
+
 async def clear_pending(session_db: AsyncSession, session_id: str) -> None:
     """Drop the persisted pending plan for a session."""
     await session_db.execute(
