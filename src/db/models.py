@@ -55,6 +55,11 @@ class Session(Base):
     # {"plan": {...}, "user_text": "...", "created_at": "<utc isoformat>"}.
     pending: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Rolling summary of the older conversation, plus the ``created_at`` of the
+    # newest message already folded into it (the coverage marker).
+    memory: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memory_updated_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="session", cascade="all, delete-orphan"

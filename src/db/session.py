@@ -186,6 +186,40 @@ async def clear_pending(session_db: AsyncSession, session_id: str) -> None:
     await session_db.commit()
 
 
+async def set_memory(
+    session_db: AsyncSession,
+    session_id: str,
+    text: str,
+    updated_at: str,
+) -> None:
+    """Store the compacted conversation memory and its coverage marker."""
+    await session_db.execute(
+        update(Session)
+        .where(Session.id == session_id)
+        .values(memory=text, memory_updated_at=updated_at)
+    )
+    await session_db.commit()
+
+
+async def get_memory(
+    session_db: AsyncSession,
+    session_id: str,
+) -> tuple[str | None, str | None]:
+    """Read ``(memory, memory_updated_at)`` for a session.
+
+    Returns ``(None, None)`` when the session is unknown or has no memory yet.
+    """
+    result = await session_db.execute(
+        select(Session.memory, Session.memory_updated_at).where(
+            Session.id == session_id
+        )
+    )
+    row = result.one_or_none()
+    if row is None:
+        return (None, None)
+    return (row.memory, row.memory_updated_at)
+
+
 async def ensure_session(
     session_db: AsyncSession,
     session_id: str,

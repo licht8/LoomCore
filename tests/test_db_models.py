@@ -40,6 +40,13 @@ def test_sessions_have_pending_column():
     assert columns.pending.nullable is True
 
 
+def test_sessions_have_memory_columns():
+    columns = Session.__table__.c
+    assert {"memory", "memory_updated_at"} <= set(columns.keys())
+    assert columns.memory.nullable is True
+    assert columns.memory_updated_at.nullable is True
+
+
 def test_chat_request_session_id_fits_session_column():
     declared = _max_length(ChatRequest.model_fields["session_id"])
     assert declared == 64

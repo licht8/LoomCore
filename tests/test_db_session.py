@@ -18,6 +18,9 @@ class _FakeResult:
     def scalar_one_or_none(self):
         return self._scalar
 
+    def one_or_none(self):
+        return self._scalar
+
     def scalars(self):
         return self
 
@@ -453,3 +456,33 @@ async def test_replace_pending_returns_false_when_nothing_matched():
 
     assert replaced is False
     assert db.commit_count == 1
+
+@pytest.mark.asyncio
+async def test_set_memory_writes_text_and_marker():
+    db = _FakeSession()
+
+    await db_session.set_memory(db, "sess", "brief", "2026-09-29T10:00:00+00:00")
+
+    assert getattr(db.statements[-1], "is_update", False)
+    params = db.statements[-1].compile().params
+    assert params["memory"] == "brief"
+    assert params["memory_updated_at"] == "2026-09-29T10:00:00+00:00"
+    assert db.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_memory_returns_the_stored_values():
+    row = SimpleNamespace(memory="brief", memory_updated_at="2026-09-29T10:00:00+00:00")
+    db = _FakeSession(results=[_FakeResult(scalar=row)])
+
+    assert await db_session.get_memory(db, "sess") == (
+        "brief",
+        "2026-09-29T10:00:00+00:00",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_memory_returns_none_when_the_session_is_missing():
+    db = _FakeSession(results=[_FakeResult(scalar=None)])
+
+    assert await db_session.get_memory(db, "sess") == (None, None)
