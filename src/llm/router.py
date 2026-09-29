@@ -481,24 +481,50 @@ class AIRouter:
         if not config.configured:
             return NOT_CONFIGURED_MESSAGE
         messages = build_summary_messages(user_message, plan, observations)
-        async with span("summary_call", steps=len(plan.get("steps", []))):
+        model = config.summary_model or None
+
+        async def _call(model_name: str | None) -> str:
+            async with span("summary_call", steps=len(plan.get("steps", []))):
+                if on_delta is not None:
+                    llm_response = await self.client.stream_chat_completion(
+                        messages,
+                        model=model_name,
+                        max_tokens=config.summary_max_tokens,
+                        purpose="summary",
+                        on_content=on_delta,
+                    )
+                else:
+                    llm_response = await self.client.chat_completion(
+                        messages,
+                        model=model_name,
+                        max_tokens=config.summary_max_tokens,
+                        purpose="summary",
+                    )
+                content, _tool_name, _tool_args, _raw = self._parse_completion(
+                    llm_response
+                )
+            return content
+
+        try:
+            summary = await _call(model)
+        except Exception as exc:
+            if model is None:
+                raise
+            logger.warning(
+                f"Summary model '{model}' failed ({exc}); retrying with the main model"
+            )
             if on_delta is not None:
-                llm_response = await self.client.stream_chat_completion(
-                    messages,
-                    model=config.summary_model or None,
-                    max_tokens=config.summary_max_tokens,
-                    purpose="summary",
-                    on_content=on_delta,
-                )
-            else:
-                llm_response = await self.client.chat_completion(
-                    messages,
-                    model=config.summary_model or None,
-                    max_tokens=config.summary_max_tokens,
-                    purpose="summary",
-                )
-            content, _tool_name, _tool_args, _raw = self._parse_completion(llm_response)
-        return content
+                await on_delta("", reset=True)
+            summary = await _call(None)
+        if (summary or "").strip() or model is None:
+            return summary
+        logger.warning(
+            f"Summary model '{model}' returned an empty result; "
+            "retrying with the main model"
+        )
+        if on_delta is not None:
+            await on_delta("", reset=True)
+        return await _call(None)
 
     async def known_tool_names(self) -> set[str]:
         """Return the names of every tool currently offered to the planner."""

@@ -488,6 +488,94 @@ async def test_summarize_plan_handles_empty_choices(patched_router):
     assert summary == ""
 
 
+@pytest.mark.asyncio
+async def test_summarize_plan_falls_back_to_main_model(patched_router, monkeypatch):
+    router, _state = patched_router
+    monkeypatch.setattr(
+        router_module,
+        "get_active",
+        lambda: LlmConfig(
+            provider="custom",
+            base_url="https://llm.test/v1",
+            model="test-model",
+            summary_model="small-model",
+        ),
+    )
+    calls: list[str | None] = []
+
+    async def flaky(
+        messages,
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        model=None,
+        *,
+        max_tokens=None,
+        purpose=None,
+        session_id=None,
+    ):
+        calls.append(model)
+        if len(calls) == 1:
+            raise RuntimeError("summary model down")
+        return _text_response("recovered summary")
+
+    monkeypatch.setattr(router.client, "chat_completion", flaky)
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert calls == ["small-model", None]
+    assert summary == "recovered summary"
+
+
+@pytest.mark.asyncio
+async def test_summarize_plan_retries_main_model_on_empty(
+    patched_router, monkeypatch
+):
+    router, _state = patched_router
+    monkeypatch.setattr(
+        router_module,
+        "get_active",
+        lambda: LlmConfig(
+            provider="custom",
+            base_url="https://llm.test/v1",
+            model="test-model",
+            summary_model="small-model",
+        ),
+    )
+    calls: list[str | None] = []
+
+    async def flaky(
+        messages,
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        model=None,
+        *,
+        max_tokens=None,
+        purpose=None,
+        session_id=None,
+    ):
+        calls.append(model)
+        if len(calls) == 1:
+            return {"choices": []}
+        return _text_response("second chance")
+
+    monkeypatch.setattr(router.client, "chat_completion", flaky)
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert calls == ["small-model", None]
+    assert summary == "second chance"
+
+
 class _HistoryMessage:
     """Stub ORM message with the attributes the router reads."""
 
