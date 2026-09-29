@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     llm_summary_timeout: float = 0.0
     llm_enable_thinking: bool = False
     llm_thinking_template: bool = False
+    # Skip a reasoning model's thinking step for the short post-tool summary.
+    llm_summary_disable_thinking: bool = True
     llm_settings_file: str = ""
     debug: bool = False
     admin_token: str = ""

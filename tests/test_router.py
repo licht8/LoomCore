@@ -8,7 +8,7 @@ import pytest
 from src.core.agent import PLANNER_TOOLS, REPLY_TOOL
 from src.llm import router as router_module
 from src.llm.config import LlmConfig
-from src.llm.exceptions import LlmTimeoutError
+from src.llm.exceptions import LlmError, LlmTimeoutError
 from src.llm.router import AIRouter, _ReplyTextStream
 
 _TEST_CONFIG = LlmConfig(
@@ -1589,6 +1589,33 @@ async def test_summary_disables_thinking(patched_router):
 
     # A short own-words summary never needs a reasoning model's thinking step.
     assert state["thinking"] is False
+
+
+@pytest.mark.asyncio
+async def test_summarize_plan_retries_without_thinking_flag_when_rejected(
+    patched_router,
+):
+    router, _state = patched_router
+    seen: list[bool | None] = []
+
+    async def flaky(messages, **kwargs):
+        seen.append(kwargs.get("thinking"))
+        if len(seen) == 1:
+            raise LlmError("unknown field chat_template_kwargs")
+        return _text_response("summary")
+
+    router.client.chat_completion = flaky
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert summary == "summary"
+    # The first attempt disables thinking; a provider that rejects the flag is
+    # retried without it (thinking=None) on the same model.
+    assert seen == [False, None]
 
 
 @pytest.mark.asyncio

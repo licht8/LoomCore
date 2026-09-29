@@ -203,6 +203,41 @@ def test_load_config_summary_timeout_rejects_negative(tmp_path, monkeypatch):
     assert load_config(path).summary_timeout == 12.0
 
 
+def test_summary_disable_thinking_from_env(monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_disable_thinking", False)
+
+    assert default_config().summary_disable_thinking is False
+
+
+def test_load_config_summary_disable_thinking_falls_back_when_absent(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config_module.settings, "llm_summary_disable_thinking", True)
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m"}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_disable_thinking is True
+
+
+def test_load_config_summary_disable_thinking_reads_value(tmp_path):
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "base_url": "https://x/v1",
+                "model": "m",
+                "summary_disable_thinking": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_disable_thinking is False
+
+
 def test_load_missing_file_returns_default(tmp_path):
     assert load_config(tmp_path / "missing.json") == default_config()
 

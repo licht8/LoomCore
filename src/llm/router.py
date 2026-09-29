@@ -479,6 +479,9 @@ class AIRouter:
         is forwarded as it arrives. A positive ``config.summary_timeout`` bounds
         the summary to a single attempt so it can never stall a turn for minutes;
         when it is 0 the summary uses the normal read timeout and retries.
+        ``config.summary_disable_thinking`` (default) asks the provider to skip a
+        reasoning model's thinking step so the own-words answer is not delayed;
+        a provider that rejects the flag is retried once without it.
         """
         config = get_active()
         if not config.configured:
@@ -491,14 +494,15 @@ class AIRouter:
             else {}
         )
 
-        async def _call(model_name: str | None) -> str:
+        async def _call(model_name: str | None, *, disable_thinking: bool) -> str:
             async with span("summary_call", steps=len(plan.get("steps", []))):
+                thinking = False if disable_thinking else None
                 if on_delta is not None:
                     llm_response = await self.client.stream_chat_completion(
                         messages,
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
-                        thinking=False,
+                        thinking=thinking,
                         purpose="summary",
                         on_content=on_delta,
                         **bound,
@@ -508,7 +512,7 @@ class AIRouter:
                         messages,
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
-                        thinking=False,
+                        thinking=thinking,
                         purpose="summary",
                         **bound,
                     )
@@ -517,21 +521,30 @@ class AIRouter:
                 )
             return content
 
+        disable_thinking = config.summary_disable_thinking
+        # The default fast path skips a reasoning model's thinking step so the
+        # turn is not held up by invisible reasoning before the own-words answer.
         try:
-            summary = await _call(model)
+            summary = await _call(model, disable_thinking=disable_thinking)
         except LlmTimeoutError:
             # Bounded: a stalled summary must not trigger a second long wait; the
             # caller answers with a short deterministic digest instead.
             raise
         except Exception as exc:
-            if model is None:
+            if model is None and not disable_thinking:
                 raise
+            # A provider that rejects ``chat_template_kwargs`` is retried once
+            # without the flag; a separate summary model falls back to the main
+            # one.
             logger.warning(
-                f"Summary model '{model}' failed ({exc}); retrying with the main model"
+                f"Summary call failed ({exc}); retrying "
+                f"{'with the main model' if model is not None else 'without the thinking flag'}"
             )
             if on_delta is not None:
                 await on_delta("", reset=True)
-            summary = await _call(None)
+            summary = await _call(
+                None if model is not None else model, disable_thinking=False
+            )
         if (summary or "").strip() or model is None:
             return summary
         logger.warning(
@@ -540,7 +553,7 @@ class AIRouter:
         )
         if on_delta is not None:
             await on_delta("", reset=True)
-        return await _call(None)
+        return await _call(None, disable_thinking=False)
 
     async def known_tool_names(self) -> set[str]:
         """Return the names of every tool currently offered to the planner."""

@@ -5,6 +5,11 @@ task report (RULES 14).
 
 ## 2026-09-29
 
+- Skip thinking for the post-tool summary: `LLM_SUMMARY_DISABLE_THINKING=1`
+  (default) sends `enable_thinking=false` on the summary call even without
+  `LLM_THINKING_TEMPLATE`, so a reasoning model answers in its own words without
+  a long invisible thinking pause; a provider that rejects the flag is retried
+  once without it.
 - Unbounded, explanatory summaries: `LLM_SUMMARY_TIMEOUT` defaults to `0` (no
   extra bound — the summary uses the normal read timeout and retries),
   `LLM_SUMMARY_MAX_TOKENS` is back to `512`, and the summary prompt now asks for

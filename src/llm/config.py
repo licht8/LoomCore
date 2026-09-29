@@ -44,6 +44,10 @@ class LlmConfig:
     planner_model: str = ""
     enable_thinking: bool = False
     thinking_template: bool = False
+    # When true the summary call sends ``enable_thinking=false`` even if the
+    # provider was not opted in via ``thinking_template``; a rejecting provider
+    # is retried once without the flag.
+    summary_disable_thinking: bool = True
     connect_timeout: float = 15.0
     read_timeout: float = 30.0
     write_timeout: float = 30.0
@@ -78,6 +82,7 @@ def default_config() -> LlmConfig:
         planner_model=settings.llm_planner_model,
         enable_thinking=settings.llm_enable_thinking,
         thinking_template=settings.llm_thinking_template,
+        summary_disable_thinking=settings.llm_summary_disable_thinking,
         connect_timeout=settings.llm_connect_timeout,
         read_timeout=settings.llm_read_timeout,
         write_timeout=settings.llm_write_timeout,
@@ -183,6 +188,9 @@ def load_config(path: Path) -> LlmConfig:
         ),
         enable_thinking=_as_bool(data.get("enable_thinking")),
         thinking_template=_as_bool(data.get("thinking_template")),
+        summary_disable_thinking=_as_bool(
+            data.get("summary_disable_thinking", base.summary_disable_thinking)
+        ),
         connect_timeout=_as_float(data.get("connect_timeout"), base.connect_timeout),
         read_timeout=_as_float(data.get("read_timeout"), base.read_timeout),
         write_timeout=_as_float(data.get("write_timeout"), base.write_timeout),

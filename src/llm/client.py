@@ -126,8 +126,9 @@ class OpenAICompatClient:
             payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        if config.thinking_template:
-            # Only sent for providers that opt in to ``chat_template_kwargs``.
+        if config.thinking_template or thinking is not None:
+            # Sent for providers that opt in via ``thinking_template``, and for
+            # any call that explicitly overrides ``thinking`` (the summary).
             payload["chat_template_kwargs"] = {
                 "enable_thinking": (
                     config.enable_thinking if thinking is None else thinking

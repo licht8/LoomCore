@@ -69,6 +69,7 @@ services:
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-1}
       LLM_ENABLE_THINKING: ${LLM_ENABLE_THINKING:-0}
       LLM_THINKING_TEMPLATE: ${LLM_THINKING_TEMPLATE:-0}
+      LLM_SUMMARY_DISABLE_THINKING: ${LLM_SUMMARY_DISABLE_THINKING:-1}
       # Daily process-wide LLM call budget (0 = no guard).
       LLM_DAILY_CALL_LIMIT: ${LLM_DAILY_CALL_LIMIT:-1000}
       # Runtime provider config on the loomdata volume (settings tab writes here).

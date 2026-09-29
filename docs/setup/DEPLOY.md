@@ -154,6 +154,7 @@ errors and then returns a clear message. Tune via `.env` (seconds / count):
 | `LLM_POOL_TIMEOUT` | `15` |
 | `LLM_MAX_RETRIES` | `1` |
 | `LLM_THINKING_TEMPLATE` | `0` |
+| `LLM_SUMMARY_DISABLE_THINKING` | `1` |
 | `LLM_DAILY_CALL_LIMIT` | `1000` |
 
 `LLM_DAILY_CALL_LIMIT` is a process-wide daily ceiling on LLM HTTP calls (`0`
@@ -164,8 +165,8 @@ read-only commands, skips the summary and uses 1 — plus 1 per planner re-ask a
 
 These defaults (`LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
 `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`,
-`LLM_SUMMARY_TIMEOUT=0`) are the intended values; the Settings UI must not
-silently re-override them back to `90`/`2`.
+`LLM_SUMMARY_TIMEOUT=0`, `LLM_SUMMARY_DISABLE_THINKING=1`) are the intended
+values; the Settings UI must not silently re-override them back to `90`/`2`.
 Set `LLM_PLANNER_MODEL` / `LLM_SUMMARY_MODEL` to a smaller model (empty = main
 model) — a small planner is the primary latency lever, and a fast
 `LLM_SUMMARY_MODEL` removes most of the post-tool wait (the summary is one
@@ -180,8 +181,11 @@ than copying the raw tool output. Point `LLM_SUMMARY_MODEL` at a fast
 non-thinking model to keep the own-words reply quick.
 
 To keep a reasoning model from spending seconds thinking before that
-summary, set `LLM_THINKING_TEMPLATE=1`: the summary then always sends
-`enable_thinking=false`, while the planner still honors `LLM_ENABLE_THINKING`.
+summary, `LLM_SUMMARY_DISABLE_THINKING=1` (default) makes the summary always
+send `enable_thinking=false` — even when the provider was not opted in via
+`LLM_THINKING_TEMPLATE=1`. A provider that rejects the flag is retried once
+without it, and the planner still honors `LLM_ENABLE_THINKING`. Set it to `0` to
+leave thinking entirely to the model.
 
 The 30s read timeout is a safety bound: with thinking disabled a full turn is a
 few seconds, so a request that hangs this long is a provider stall, not real work.
