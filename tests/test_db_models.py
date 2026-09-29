@@ -34,6 +34,12 @@ def test_sessions_have_metadata_columns():
     assert columns.title.type.length == 120
 
 
+def test_sessions_have_pending_column():
+    columns = Session.__table__.c
+    assert "pending" in columns
+    assert columns.pending.nullable is True
+
+
 def test_chat_request_session_id_fits_session_column():
     declared = _max_length(ChatRequest.model_fields["session_id"])
     assert declared == 64

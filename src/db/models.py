@@ -51,6 +51,10 @@ class Session(Base):
     updated_at: Mapped[str] = mapped_column(String, nullable=False)  # UTC isoformat
     title: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
+    # The single plan awaiting the user's textual approval:
+    # {"plan": {...}, "user_text": "...", "created_at": "<utc isoformat>"}.
+    pending: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="session", cascade="all, delete-orphan"

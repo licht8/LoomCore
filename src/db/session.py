@@ -88,6 +88,74 @@ async def add_plan_message(
     )
 
 
+async def set_pending(
+    session_db: AsyncSession,
+    session_id: str,
+    plan: dict,
+    user_text: str,
+) -> None:
+    """Persist the plan awaiting the user's textual approval.
+
+    Overwriting an existing record is what makes a newer proposal *supersede*
+    the earlier one — the old ``plan_id`` can no longer be claimed.
+    """
+    record = {
+        "plan": plan,
+        "user_text": user_text,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    await session_db.execute(
+        update(Session).where(Session.id == session_id).values(pending=record)
+    )
+    await session_db.commit()
+
+
+async def get_pending(session_db: AsyncSession, session_id: str) -> dict | None:
+    """Read the persisted pending plan for a session, if any."""
+    result = await session_db.execute(
+        select(Session.pending).where(Session.id == session_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def claim_pending(
+    session_db: AsyncSession,
+    session_id: str,
+    plan_id: str,
+) -> dict | None:
+    """Atomically consume the pending record that matches ``plan_id``.
+
+    The row is locked (``SELECT ... FOR UPDATE``) and then NULLed, so two
+    connections (or a retry) cannot both claim the same plan. Returns the
+    claimed record, or ``None`` when it was already consumed or superseded.
+    """
+    matched = (
+        await session_db.execute(
+            select(Session.pending)
+            .where(
+                Session.id == session_id,
+                Session.pending["plan"]["plan_id"].as_string() == plan_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if matched is None:
+        return None
+    await session_db.execute(
+        update(Session).where(Session.id == session_id).values(pending=None)
+    )
+    await session_db.commit()
+    return matched
+
+
+async def clear_pending(session_db: AsyncSession, session_id: str) -> None:
+    """Drop the persisted pending plan for a session."""
+    await session_db.execute(
+        update(Session).where(Session.id == session_id).values(pending=None)
+    )
+    await session_db.commit()
+
+
 async def ensure_session(
     session_db: AsyncSession,
     session_id: str,

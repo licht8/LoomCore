@@ -363,3 +363,65 @@ async def test_list_pending_plans_skips_rows_without_plan_id():
     db = _FakeSession(results=[_FakeResult(scalars=[bad])])
 
     assert await db_session.list_pending_plans(db) == []
+
+
+@pytest.mark.asyncio
+async def test_set_pending_writes_record_and_commits():
+    db = _FakeSession()
+    plan = {"plan_id": "pl_1", "status": "proposed"}
+
+    await db_session.set_pending(db, "sess", plan, "restart nginx")
+
+    assert getattr(db.statements[-1], "is_update", False)
+    values = [v for v in db.statements[-1].compile().params.values() if isinstance(v, dict)]
+    assert values and values[0]["plan"] == plan
+    assert values[0]["user_text"] == "restart nginx"
+    assert values[0]["created_at"]
+    assert db.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_pending_returns_the_stored_record():
+    record = {"plan": {"plan_id": "pl_1"}, "user_text": "x", "created_at": "t"}
+    db = _FakeSession(results=[_FakeResult(scalar=record)])
+
+    assert await db_session.get_pending(db, "sess") == record
+
+
+@pytest.mark.asyncio
+async def test_get_pending_returns_none_for_a_missing_session():
+    db = _FakeSession(results=[_FakeResult(scalar=None)])
+
+    assert await db_session.get_pending(db, "sess") is None
+
+
+@pytest.mark.asyncio
+async def test_claim_pending_returns_record_and_clears_the_row():
+    record = {"plan": {"plan_id": "pl_1"}, "user_text": "x", "created_at": "t"}
+    db = _FakeSession(results=[_FakeResult(scalar=record)])
+
+    claimed = await db_session.claim_pending(db, "sess", "pl_1")
+
+    assert claimed == record
+    assert len(db.statements) == 2  # SELECT ... FOR UPDATE, then the UPDATE
+    assert getattr(db.statements[-1], "is_update", False)
+    assert db.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_pending_returns_none_when_nothing_matches():
+    db = _FakeSession(results=[_FakeResult(scalar=None)])
+
+    assert await db_session.claim_pending(db, "sess", "pl_x") is None
+    assert len(db.statements) == 1  # no UPDATE when the claim lost
+    assert db.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_nulls_the_row():
+    db = _FakeSession()
+
+    await db_session.clear_pending(db, "sess")
+
+    assert getattr(db.statements[-1], "is_update", False)
+    assert db.commit_count == 1
