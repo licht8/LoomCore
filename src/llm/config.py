@@ -50,8 +50,9 @@ class LlmConfig:
     pool_timeout: float = 15.0
     max_retries: int = 1
     planner_max_tokens: int = 1024
-    summary_max_tokens: int = 256
-    summary_timeout: float = 15.0
+    summary_max_tokens: int = 512
+    # 0 disables the extra bound: the summary then uses the normal read timeout.
+    summary_timeout: float = 0.0
 
     @property
     def configured(self) -> bool:
@@ -129,10 +130,13 @@ def _as_positive_int(value: object, fallback: int) -> int:
     return value if value > 0 else fallback
 
 
-def _as_positive_float(value: object, fallback: float) -> float:
-    """Coerce ``value`` to a positive float, else ``fallback`` (never <= 0)."""
+def _as_nonnegative_float(value: object, fallback: float) -> float:
+    """Coerce ``value`` to a non-negative float, else ``fallback``.
+
+    0 is a valid value (it disables the extra summary bound), negatives are not.
+    """
     number = _as_float(value, fallback)
-    return number if number > 0 else fallback
+    return number if number >= 0 else fallback
 
 
 def load_config(path: Path) -> LlmConfig:
@@ -194,7 +198,7 @@ def load_config(path: Path) -> LlmConfig:
             if "summary_max_tokens" in data
             else base.summary_max_tokens
         ),
-        summary_timeout=_as_positive_float(
+        summary_timeout=_as_nonnegative_float(
             data.get("summary_timeout"), base.summary_timeout
         ),
     )

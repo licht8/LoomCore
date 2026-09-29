@@ -158,27 +158,28 @@ errors and then returns a clear message. Tune via `.env` (seconds / count):
 
 `LLM_DAILY_CALL_LIMIT` is a process-wide daily ceiling on LLM HTTP calls (`0`
 disables it). It counts calls, not turns: a turn uses 2 (planner + summary) —
-but an all-report plan or an explicit raw-output request skips the summary and
-uses 1 — plus 1 per planner re-ask and 1 per transport retry. It resets at UTC
-midnight.
+but an explicit raw-output request, or a plan whose only steps are allow-listed
+read-only commands, skips the summary and uses 1 — plus 1 per planner re-ask and
+1 per transport retry. It resets at UTC midnight.
 
 These defaults (`LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
-`LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=256`,
-`LLM_SUMMARY_TIMEOUT=15`) are the intended values; the Settings UI must not
+`LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`,
+`LLM_SUMMARY_TIMEOUT=0`) are the intended values; the Settings UI must not
 silently re-override them back to `90`/`2`.
 Set `LLM_PLANNER_MODEL` / `LLM_SUMMARY_MODEL` to a smaller model (empty = main
 model) — a small planner is the primary latency lever, and a fast
 `LLM_SUMMARY_MODEL` removes most of the post-tool wait (the summary is one
-extra LLM call whose whole point is the short "own words" reply).
+extra LLM call whose whole point is the own-words reply).
 
-The summary call is attempted **once** and bounded by `LLM_SUMMARY_TIMEOUT`
-(seconds). If it times out or returns nothing, the assistant posts a short
-deterministic **digest** (one line per step with a capped excerpt) rather than
-copying the raw tool output — so a slow or "thinking" model can no longer turn a
-tool turn into a multi-minute wait followed by a raw dump. Point
-`LLM_SUMMARY_MODEL` at a fast non-thinking model to get real own-words replies.
+The summary call is **unbounded by default** (`LLM_SUMMARY_TIMEOUT=0`): it uses
+the normal read timeout and retries, so the assistant explains the tool output in
+its own words. Set a positive `LLM_SUMMARY_TIMEOUT` (seconds) to cap it to a
+single attempt; if it then times out or returns nothing, the assistant posts a
+short deterministic **digest** (one line per step with a capped excerpt) rather
+than copying the raw tool output. Point `LLM_SUMMARY_MODEL` at a fast
+non-thinking model to keep the own-words reply quick.
 
-To keep a reasoning model from spending seconds thinking before that short
+To keep a reasoning model from spending seconds thinking before that
 summary, set `LLM_THINKING_TEMPLATE=1`: the summary then always sends
 `enable_thinking=false`, while the planner still honors `LLM_ENABLE_THINKING`.
 

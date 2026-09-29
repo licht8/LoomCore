@@ -181,11 +181,22 @@ def test_load_config_summary_timeout_falls_back_when_absent(tmp_path, monkeypatc
     assert load_config(path).summary_timeout == 12.0
 
 
-def test_load_config_summary_timeout_rejects_nonpositive(tmp_path, monkeypatch):
+def test_load_config_summary_timeout_zero_disables_the_bound(tmp_path, monkeypatch):
     monkeypatch.setattr(config_module.settings, "llm_summary_timeout", 12.0)
     path = tmp_path / "llm.json"
     path.write_text(
         json.dumps({"base_url": "https://x/v1", "model": "m", "summary_timeout": 0}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_timeout == 0
+
+
+def test_load_config_summary_timeout_rejects_negative(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_timeout", 12.0)
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m", "summary_timeout": -1}),
         encoding="utf-8",
     )
 

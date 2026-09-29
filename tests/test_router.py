@@ -620,6 +620,40 @@ async def test_summarize_plan_bounds_timeout_and_attempts(patched_router, monkey
 
 
 @pytest.mark.asyncio
+async def test_summarize_plan_unbounded_when_timeout_is_zero(
+    patched_router, monkeypatch
+):
+    router, _state = patched_router
+    monkeypatch.setattr(
+        router_module,
+        "get_active",
+        lambda: LlmConfig(
+            provider="custom",
+            base_url="https://llm.test/v1",
+            model="test-model",
+            summary_timeout=0.0,
+        ),
+    )
+    seen: dict = {}
+
+    async def spy(messages, **kwargs):
+        seen.update(kwargs)
+        return _text_response("free summary")
+
+    monkeypatch.setattr(router.client, "chat_completion", spy)
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert summary == "free summary"
+    assert "read_timeout" not in seen
+    assert "attempts" not in seen
+
+
+@pytest.mark.asyncio
 async def test_summarize_plan_does_not_retry_on_timeout(patched_router, monkeypatch):
     router, _state = patched_router
     monkeypatch.setattr(

@@ -476,15 +476,20 @@ class AIRouter:
         """Produce the SOUL-voiced summary for a completed plan.
 
         When ``on_delta`` is set the summary is streamed and each text fragment
-        is forwarded as it arrives. The summary is bounded by
-        ``config.summary_timeout`` and a single attempt, so it can never stall a
-        turn for minutes.
+        is forwarded as it arrives. A positive ``config.summary_timeout`` bounds
+        the summary to a single attempt so it can never stall a turn for minutes;
+        when it is 0 the summary uses the normal read timeout and retries.
         """
         config = get_active()
         if not config.configured:
             return NOT_CONFIGURED_MESSAGE
         messages = build_summary_messages(user_message, plan, observations)
         model = config.summary_model or None
+        bound: dict[str, float] = (
+            {"read_timeout": config.summary_timeout, "attempts": 1}
+            if config.summary_timeout > 0
+            else {}
+        )
 
         async def _call(model_name: str | None) -> str:
             async with span("summary_call", steps=len(plan.get("steps", []))):
@@ -494,10 +499,9 @@ class AIRouter:
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
                         thinking=False,
-                        read_timeout=config.summary_timeout,
-                        attempts=1,
                         purpose="summary",
                         on_content=on_delta,
+                        **bound,
                     )
                 else:
                     llm_response = await self.client.chat_completion(
@@ -505,9 +509,8 @@ class AIRouter:
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
                         thinking=False,
-                        read_timeout=config.summary_timeout,
-                        attempts=1,
                         purpose="summary",
+                        **bound,
                     )
                 content, _tool_name, _tool_args, _raw = self._parse_completion(
                     llm_response

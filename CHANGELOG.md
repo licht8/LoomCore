@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-09-29
 
+- Unbounded, explanatory summaries: `LLM_SUMMARY_TIMEOUT` defaults to `0` (no
+  extra bound — the summary uses the normal read timeout and retries),
+  `LLM_SUMMARY_MAX_TOKENS` is back to `512`, and the summary prompt now asks for
+  a clear own-words explanation instead of "at most two short sentences". The
+  digest fallback still applies when a positive bound is set or the summary
+  fails.
 - Bounded post-tool summary: the summary call is now attempted once and capped by
   `LLM_SUMMARY_TIMEOUT` (default 15s), and a timeout/empty/mismatched summary
   yields a short deterministic digest instead of the raw tool dump — a stalled or

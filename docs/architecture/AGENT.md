@@ -153,16 +153,18 @@ confirmation.
   (see Execute and Plan object above), so a multi-step status check costs one
   round of latency instead of the sum of its steps.
 - The planner and summary calls are bounded by `LLM_PLANNER_MAX_TOKENS` /
-  `LLM_SUMMARY_MAX_TOKENS` and streamed as `delta` events. The summary is asked
-  for at most two short sentences, and when the provider's thinking template is
-  enabled (`LLM_THINKING_TEMPLATE=1`) the summary always sends
-  `enable_thinking=false`, so a reasoning model does not think before the short
+  `LLM_SUMMARY_MAX_TOKENS` and streamed as `delta` events. The summary explains
+  the result in the assistant's own words, and when the provider's thinking
+  template is enabled (`LLM_THINKING_TEMPLATE=1`) the summary always sends
+  `enable_thinking=false`, so a reasoning model does not think before the
   own-words reply (the planner still honors `LLM_ENABLE_THINKING`).
-- The summary call is attempted **once** and bounded by `LLM_SUMMARY_TIMEOUT`
-  (seconds), so a stalled or "thinking" model can never hold a turn for minutes.
-  When it times out, returns nothing, or contradicts the observed numbers, the
-  assistant posts a short deterministic **digest** (`_digest_summary`: the goal
-  plus one line per step with a capped excerpt) instead of the raw tool dump.
+- The summary call is **unbounded by default** (`LLM_SUMMARY_TIMEOUT=0`): it uses
+  the normal read timeout and retries, so a slow "thinking" model still produces
+  the full explanation. When a positive `LLM_SUMMARY_TIMEOUT` is set, the summary
+  is capped to a single attempt; if it then times out, returns nothing, or
+  contradicts the observed numbers, the assistant posts a short deterministic
+  **digest** (`_digest_summary`: the goal plus one line per step with a capped
+  excerpt) instead of the raw tool dump.
 - **Every plan is summarized in the assistant's own words**: report-ness is
   declarative — core meta-tools set `report: true`, plugins declare `report` in
   their `TOOLS_SCHEMA` (read into `plugin_manager`), so the core never hardcodes
@@ -175,8 +177,8 @@ confirmation.
   by default). If a configured `summary_model` fails for a non-timeout reason,
   the summary is retried once with the main model.
 - Intended defaults are `LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
-  `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=256`,
-  `LLM_SUMMARY_TIMEOUT=15`; the Settings UI must not silently re-override them to
+  `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`,
+  `LLM_SUMMARY_TIMEOUT=0`; the Settings UI must not silently re-override them to
   `90`/`2`. A fast `LLM_SUMMARY_MODEL` is the main lever for the post-tool wait.
 
 ## Files
