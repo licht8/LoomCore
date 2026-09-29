@@ -76,10 +76,10 @@ class OpenAICompatClient:
         return replace(base, api_key=self._api_key_override)
 
     @staticmethod
-    def _timeout(config: LlmConfig) -> httpx.Timeout:
+    def _timeout(config: LlmConfig, read_timeout: float | None = None) -> httpx.Timeout:
         return httpx.Timeout(
             connect=config.connect_timeout,
-            read=config.read_timeout,
+            read=config.read_timeout if read_timeout is None else read_timeout,
             write=config.write_timeout,
             pool=config.pool_timeout,
         )
@@ -173,6 +173,8 @@ class OpenAICompatClient:
         *,
         max_tokens: int | None = None,
         thinking: bool | None = None,
+        read_timeout: float | None = None,
+        attempts: int | None = None,
         purpose: str = "chat",
         session_id: str | None = None,
     ) -> dict:
@@ -219,7 +221,7 @@ class OpenAICompatClient:
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
-        max_attempts = max(1, config.max_retries + 1)
+        max_attempts = max(1, attempts or (config.max_retries + 1))
         last_exc: Exception | None = None
 
         client = self._get_client()
@@ -244,7 +246,7 @@ class OpenAICompatClient:
                     url,
                     headers=headers,
                     json=payload,
-                    timeout=self._timeout(config),
+                    timeout=self._timeout(config, read_timeout),
                 )
                 response.raise_for_status()
                 elapsed = time.monotonic() - started
@@ -447,6 +449,8 @@ class OpenAICompatClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         thinking: bool | None = None,
+        read_timeout: float | None = None,
+        attempts: int | None = None,
         purpose: str = "chat",
         session_id: str | None = None,
         on_content: Callable[[str], Awaitable[None]] | None = None,
@@ -494,7 +498,7 @@ class OpenAICompatClient:
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
-        max_attempts = max(1, config.max_retries + 1)
+        max_attempts = max(1, attempts or (config.max_retries + 1))
 
         emitted = False
         last_exc: Exception | None = None
@@ -525,7 +529,7 @@ class OpenAICompatClient:
                     url,
                     headers=headers,
                     json=payload,
-                    timeout=self._timeout(config),
+                    timeout=self._timeout(config, read_timeout),
                 ) as response:
                     if response.status_code >= 400:
                         body = (await response.aread()).decode("utf-8", "replace")[:500]

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_max_retries: int = 1
     llm_planner_max_tokens: int = 1024
     llm_summary_max_tokens: int = 256
+    llm_summary_timeout: float = 15.0
     llm_enable_thinking: bool = False
     llm_thinking_template: bool = False
     llm_settings_file: str = ""

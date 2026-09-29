@@ -5,6 +5,11 @@ task report (RULES 14).
 
 ## 2026-09-29
 
+- Bounded post-tool summary: the summary call is now attempted once and capped by
+  `LLM_SUMMARY_TIMEOUT` (default 15s), and a timeout/empty/mismatched summary
+  yields a short deterministic digest instead of the raw tool dump — a stalled or
+  "thinking" model can no longer turn a tool turn into a multi-minute wait that
+  ends by copying the tool output.
 - Faster post-tool replies: the summary now asks for at most two short
   sentences, its default cap dropped to `LLM_SUMMARY_MAX_TOKENS=256`, and with
   `LLM_THINKING_TEMPLATE=1` the summary always sends `enable_thinking=false`

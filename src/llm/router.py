@@ -20,6 +20,7 @@ from src.db.database import async_session_factory
 from src.db.session import ensure_session
 from src.llm.client import OpenAICompatClient
 from src.llm.config import NOT_CONFIGURED_MESSAGE, get_active
+from src.llm.exceptions import LlmTimeoutError
 from src.llm.prompt import build_planner_messages, build_summary_messages
 from src.plugins.manager import PluginManager
 
@@ -475,7 +476,9 @@ class AIRouter:
         """Produce the SOUL-voiced summary for a completed plan.
 
         When ``on_delta`` is set the summary is streamed and each text fragment
-        is forwarded as it arrives.
+        is forwarded as it arrives. The summary is bounded by
+        ``config.summary_timeout`` and a single attempt, so it can never stall a
+        turn for minutes.
         """
         config = get_active()
         if not config.configured:
@@ -491,6 +494,8 @@ class AIRouter:
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
                         thinking=False,
+                        read_timeout=config.summary_timeout,
+                        attempts=1,
                         purpose="summary",
                         on_content=on_delta,
                     )
@@ -500,6 +505,8 @@ class AIRouter:
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
                         thinking=False,
+                        read_timeout=config.summary_timeout,
+                        attempts=1,
                         purpose="summary",
                     )
                 content, _tool_name, _tool_args, _raw = self._parse_completion(
@@ -509,6 +516,10 @@ class AIRouter:
 
         try:
             summary = await _call(model)
+        except LlmTimeoutError:
+            # Bounded: a stalled summary must not trigger a second long wait; the
+            # caller answers with a short deterministic digest instead.
+            raise
         except Exception as exc:
             if model is None:
                 raise

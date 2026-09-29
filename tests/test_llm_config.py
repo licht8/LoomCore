@@ -164,6 +164,34 @@ def test_load_config_max_tokens_falls_back_when_absent(tmp_path, monkeypatch):
     assert config.summary_max_tokens == 256
 
 
+def test_summary_timeout_from_env(monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_timeout", 9.0)
+
+    assert default_config().summary_timeout == 9.0
+
+
+def test_load_config_summary_timeout_falls_back_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_timeout", 12.0)
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m"}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_timeout == 12.0
+
+
+def test_load_config_summary_timeout_rejects_nonpositive(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module.settings, "llm_summary_timeout", 12.0)
+    path = tmp_path / "llm.json"
+    path.write_text(
+        json.dumps({"base_url": "https://x/v1", "model": "m", "summary_timeout": 0}),
+        encoding="utf-8",
+    )
+
+    assert load_config(path).summary_timeout == 12.0
+
+
 def test_load_missing_file_returns_default(tmp_path):
     assert load_config(tmp_path / "missing.json") == default_config()
 

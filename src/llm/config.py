@@ -51,6 +51,7 @@ class LlmConfig:
     max_retries: int = 1
     planner_max_tokens: int = 1024
     summary_max_tokens: int = 256
+    summary_timeout: float = 15.0
 
     @property
     def configured(self) -> bool:
@@ -83,6 +84,7 @@ def default_config() -> LlmConfig:
         max_retries=settings.llm_max_retries,
         planner_max_tokens=settings.llm_planner_max_tokens,
         summary_max_tokens=settings.llm_summary_max_tokens,
+        summary_timeout=settings.llm_summary_timeout,
     )
 
 
@@ -125,6 +127,12 @@ def _as_positive_int(value: object, fallback: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return fallback
     return value if value > 0 else fallback
+
+
+def _as_positive_float(value: object, fallback: float) -> float:
+    """Coerce ``value`` to a positive float, else ``fallback`` (never <= 0)."""
+    number = _as_float(value, fallback)
+    return number if number > 0 else fallback
 
 
 def load_config(path: Path) -> LlmConfig:
@@ -185,6 +193,9 @@ def load_config(path: Path) -> LlmConfig:
             _as_positive_int(data.get("summary_max_tokens"), base.summary_max_tokens)
             if "summary_max_tokens" in data
             else base.summary_max_tokens
+        ),
+        summary_timeout=_as_positive_float(
+            data.get("summary_timeout"), base.summary_timeout
         ),
     )
 

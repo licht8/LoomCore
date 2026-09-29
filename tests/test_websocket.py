@@ -1518,7 +1518,7 @@ def test_counts_mismatch_flags_changed_numbers():
 
 
 @pytest.mark.asyncio
-async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch):
+async def test_summarize_falls_back_to_digest_on_count_mismatch(monkeypatch):
     async def fake_summarize(user_text, plan, observations, **kwargs):
         return "It is healthy: 0 critical, 0 warnings, 1 info."
 
@@ -1541,8 +1541,50 @@ async def test_summarize_falls_back_to_raw_output_on_count_mismatch(monkeypatch)
 
     summary = await ws_module._summarize("why slow", plan, observations)
 
+    assert "It is healthy" not in summary
     assert "degraded (0 critical, 1 warning, 0 info)" in summary
-    assert "0 warnings, 1 info" not in summary
+    assert summary.startswith("check health.")
+
+
+@pytest.mark.asyncio
+async def test_summarize_falls_back_to_digest_on_failure(monkeypatch):
+    async def boom(user_text, plan, observations, **kwargs):
+        raise RuntimeError("summary model down")
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "summarize_plan", boom)
+    plan = build_plan(
+        {
+            "mode": "direct",
+            "goal": "disk usage",
+            "steps": [{"tool": "ops_disk_usage", "args": {}, "why": "x"}],
+        }
+    )
+    observations = [
+        {
+            "step": {"id": "s1", "tool": "ops_disk_usage", "status": "done"},
+            "result": {"content": [{"type": "text", "text": "disk 42% used"}]},
+        }
+    ]
+
+    summary = await ws_module._summarize("disk usage", plan, observations)
+
+    assert summary == "disk usage.\n- ops_disk_usage: done — disk 42% used"
+
+
+def test_digest_summary_caps_long_excerpt():
+    long_text = "word " * 200
+    observations = [
+        {
+            "step": {"id": "s1", "tool": "ops_x", "status": "done"},
+            "result": {"content": [{"type": "text", "text": long_text}]},
+        }
+    ]
+
+    digest = ws_module._digest_summary({"goal": "g", "steps": []}, observations)
+
+    assert digest.startswith("g.\n- ops_x: done — ")
+    assert digest.endswith("…")
+    assert len(digest) < 400
 
 
 @pytest.mark.asyncio

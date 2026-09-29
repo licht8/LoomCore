@@ -8,6 +8,7 @@ import pytest
 from src.core.agent import PLANNER_TOOLS, REPLY_TOOL
 from src.llm import router as router_module
 from src.llm.config import LlmConfig
+from src.llm.exceptions import LlmTimeoutError
 from src.llm.router import AIRouter, _ReplyTextStream
 
 _TEST_CONFIG = LlmConfig(
@@ -124,6 +125,8 @@ def patched_router(monkeypatch):
         *,
         max_tokens=None,
         thinking=None,
+        read_timeout=None,
+        attempts=None,
         purpose=None,
         session_id=None,
     ):
@@ -514,6 +517,8 @@ async def test_summarize_plan_falls_back_to_main_model(patched_router, monkeypat
         *,
         max_tokens=None,
         thinking=None,
+        read_timeout=None,
+        attempts=None,
         purpose=None,
         session_id=None,
     ):
@@ -560,6 +565,8 @@ async def test_summarize_plan_retries_main_model_on_empty(
         *,
         max_tokens=None,
         thinking=None,
+        read_timeout=None,
+        attempts=None,
         purpose=None,
         session_id=None,
     ):
@@ -578,6 +585,69 @@ async def test_summarize_plan_retries_main_model_on_empty(
 
     assert calls == ["small-model", None]
     assert summary == "second chance"
+
+
+@pytest.mark.asyncio
+async def test_summarize_plan_bounds_timeout_and_attempts(patched_router, monkeypatch):
+    router, _state = patched_router
+    monkeypatch.setattr(
+        router_module,
+        "get_active",
+        lambda: LlmConfig(
+            provider="custom",
+            base_url="https://llm.test/v1",
+            model="test-model",
+            summary_timeout=7.0,
+        ),
+    )
+    seen: dict = {}
+
+    async def spy(messages, **kwargs):
+        seen.update(kwargs)
+        return _text_response("bounded summary")
+
+    monkeypatch.setattr(router.client, "chat_completion", spy)
+
+    summary = await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    assert summary == "bounded summary"
+    assert seen["read_timeout"] == 7.0
+    assert seen["attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_summarize_plan_does_not_retry_on_timeout(patched_router, monkeypatch):
+    router, _state = patched_router
+    monkeypatch.setattr(
+        router_module,
+        "get_active",
+        lambda: LlmConfig(
+            provider="custom",
+            base_url="https://llm.test/v1",
+            model="test-model",
+            summary_model="small-model",
+        ),
+    )
+    calls: list[str | None] = []
+
+    async def stalled(messages, **kwargs):
+        calls.append(kwargs.get("model"))
+        raise LlmTimeoutError("stalled")
+
+    monkeypatch.setattr(router.client, "chat_completion", stalled)
+
+    with pytest.raises(LlmTimeoutError):
+        await router.summarize_plan(
+            "check disk",
+            {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+            [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+        )
+
+    assert calls == ["small-model"]
 
 
 class _HistoryMessage:

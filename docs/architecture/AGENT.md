@@ -158,6 +158,11 @@ confirmation.
   enabled (`LLM_THINKING_TEMPLATE=1`) the summary always sends
   `enable_thinking=false`, so a reasoning model does not think before the short
   own-words reply (the planner still honors `LLM_ENABLE_THINKING`).
+- The summary call is attempted **once** and bounded by `LLM_SUMMARY_TIMEOUT`
+  (seconds), so a stalled or "thinking" model can never hold a turn for minutes.
+  When it times out, returns nothing, or contradicts the observed numbers, the
+  assistant posts a short deterministic **digest** (`_digest_summary`: the goal
+  plus one line per step with a capped excerpt) instead of the raw tool dump.
 - **Every plan is summarized in the assistant's own words**: report-ness is
   declarative — core meta-tools set `report: true`, plugins declare `report` in
   their `TOOLS_SCHEMA` (read into `plugin_manager`), so the core never hardcodes
@@ -167,12 +172,12 @@ confirmation.
   so the feed leads with the assistant's message. The raw output is
   surfaced (and the card rendered compact) only when the user explicitly asks for
   it, or for an allow-listed read-only command (`LOOMCORE_REPORT_COMMANDS`, empty
-  by default). If a configured `summary_model` fails or returns nothing, the
-  summary is retried once with the main model.
+  by default). If a configured `summary_model` fails for a non-timeout reason,
+  the summary is retried once with the main model.
 - Intended defaults are `LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
-  `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=256`; the Settings UI
-  must not silently re-override them to `90`/`2`. A fast `LLM_SUMMARY_MODEL` is
-  the main lever for the post-tool wait.
+  `LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=256`,
+  `LLM_SUMMARY_TIMEOUT=15`; the Settings UI must not silently re-override them to
+  `90`/`2`. A fast `LLM_SUMMARY_MODEL` is the main lever for the post-tool wait.
 
 ## Files
 

@@ -433,11 +433,12 @@ async def _summarize(
 ) -> str:
     """Summarize a finished plan in the assistant's own words.
 
-    Raw tool text is surfaced only when the user explicitly asked for it, when an
-    allow-listed read-only command already is the answer, when there is nothing
-    to summarize, or when the summary call fails or contradicts the numbers in
-    the observations. ``on_delta`` (if set) streams the summary text; it is only
-    forwarded on the LLM path.
+    Raw tool text is surfaced only when the user explicitly asked for it or when
+    an allow-listed read-only command already is the answer. When the summary
+    call fails, times out, returns nothing, or contradicts the numbers in the
+    observations, a short deterministic digest is posted instead of the raw
+    output. ``on_delta`` (if set) streams the summary text; it is only forwarded
+    on the LLM path.
     """
     if not _uses_llm_summary(plan, observations, raw_requested=raw_requested):
         if not observations:
@@ -451,14 +452,14 @@ async def _summarize(
         raise
     except Exception as exc:
         logger.error(f"Plan summary failed: {exc}")
-        return _raw_summary(plan, observations)
+        return _digest_summary(plan, observations)
     if not (summary or "").strip():
-        return _raw_summary(plan, observations)
+        return _digest_summary(plan, observations)
     if _counts_mismatch(summary, observations):
         logger.warning(
-            "Plan summary changed the reported counts; surfacing raw tool output"
+            "Plan summary changed the reported counts; surfacing a short digest"
         )
-        return _raw_summary(plan, observations)
+        return _digest_summary(plan, observations)
     return summary
 
 
@@ -509,8 +510,9 @@ def _fallback_summary(plan: dict) -> str:
 def _raw_summary(plan: dict, observations: list[dict]) -> str:
     """Deterministic, unprocessed tool output for a finished plan.
 
-    Used only as a fallback (summary failure or count mismatch) or when the user
-    explicitly asks for the raw output.
+    Used only when the user explicitly asks for the raw output or an allow-listed
+    read-only command already is the answer; every other fallback uses
+    :func:`_digest_summary`.
     """
     texts = [
         _extract_text(item.get("result"))
@@ -521,6 +523,38 @@ def _raw_summary(plan: dict, observations: list[dict]) -> str:
     if texts:
         return "\n\n".join(texts)
     return _fallback_summary(plan)
+
+
+# A digest keeps a short, single-line excerpt of each tool result.
+_DIGEST_EXCERPT_CHARS = 240
+
+
+def _digest_excerpt(text: str) -> str:
+    """Collapse whitespace and cap a tool result for the digest fallback."""
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= _DIGEST_EXCERPT_CHARS:
+        return collapsed
+    return collapsed[: _DIGEST_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def _digest_summary(plan: dict, observations: list[dict]) -> str:
+    """Short deterministic digest used when the LLM summary is unavailable.
+
+    One line per step with a capped excerpt, so a stalled or failing summary
+    never degrades the answer to the full raw tool dump.
+    """
+    goal = (plan.get("goal") or "Plan").strip()
+    lines = [f"{goal}."]
+    for item in observations:
+        step = item.get("step", {})
+        tool = step.get("tool", "tool")
+        status = step.get("status", "done")
+        excerpt = _digest_excerpt(_extract_text(item.get("result")) or "")
+        if excerpt:
+            lines.append(f"- {tool}: {status} — {excerpt}")
+        else:
+            lines.append(f"- {tool}: {status}")
+    return "\n".join(lines)
 
 
 async def _guarded(coro) -> None:

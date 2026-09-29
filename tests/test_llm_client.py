@@ -227,6 +227,25 @@ async def test_retries_transient_status_then_exhausts(monkeypatch):
     assert sleeps == [1, 2]
 
 
+def test_timeout_read_override():
+    config = _config(read_timeout=300.0)
+
+    assert OpenAICompatClient._timeout(config).read == 300.0
+    assert OpenAICompatClient._timeout(config, 4.5).read == 4.5
+
+
+@pytest.mark.asyncio
+async def test_attempts_override_limits_retries(monkeypatch):
+    fake = _install(monkeypatch, [_ErrorResponse(status_code=503), _FakeResponse()])
+
+    with pytest.raises(LlmError):
+        await OpenAICompatClient(config=_config(max_retries=3)).chat_completion(
+            [{"role": "user", "content": "hi"}], attempts=1
+        )
+
+    assert fake.calls == 1
+
+
 @pytest.mark.asyncio
 async def test_retry_after_header_sets_delay(monkeypatch):
     sleeps = _record_sleeps(monkeypatch)
