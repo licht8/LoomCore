@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -110,17 +111,47 @@ class DummyContext:
         return False
 
 
-def _patch_db(monkeypatch):
+def _patch_db(monkeypatch, *, pending=None, session_id="sess"):
     monkeypatch.setattr(ws_module, "async_session_factory", DummyContext)
 
     async def fake_ensure(db, session_id):
         return session_id
 
+    store = {"values": {}, "assistant": []}
+    if pending is not None:
+        store["values"][session_id] = pending
+
     async def fake_add_assistant(db, session_id, content, tool_calls=None):
+        store["assistant"].append(content)
         return None
+
+    async def fake_get_pending(db, session_id):
+        return store["values"].get(session_id)
+
+    async def fake_set_pending(db, session_id, plan, user_text):
+        store["values"][session_id] = {
+            "plan": plan,
+            "user_text": user_text,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+
+    async def fake_claim_pending(db, session_id, plan_id):
+        value = store["values"].get(session_id)
+        if not value or (value.get("plan") or {}).get("plan_id") != plan_id:
+            return None
+        store["values"][session_id] = None
+        return value
+
+    async def fake_clear_pending(db, session_id):
+        store["values"][session_id] = None
 
     monkeypatch.setattr(ws_module, "ensure_session", fake_ensure)
     monkeypatch.setattr(ws_module, "add_assistant_message", fake_add_assistant)
+    monkeypatch.setattr(ws_module, "get_stored_pending", fake_get_pending)
+    monkeypatch.setattr(ws_module, "set_stored_pending", fake_set_pending)
+    monkeypatch.setattr(ws_module, "claim_stored_pending", fake_claim_pending)
+    monkeypatch.setattr(ws_module, "clear_stored_pending", fake_clear_pending)
+    return store
 
 
 def _patch_plan_runtime(
@@ -1003,7 +1034,7 @@ async def test_websocket_direct_unclear_reasks_then_resets(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_websocket_direct_confirm_timeout_routes_new_message(monkeypatch):
+async def test_websocket_yes_with_expired_pending_errors_and_does_not_route(monkeypatch):
     _patch_db(monkeypatch)
     monkeypatch.setattr(ws_module, "CONFIRMATION_TIMEOUT_SECONDS", -1.0)
     _patch_plan_runtime(monkeypatch)
@@ -1021,8 +1052,149 @@ async def test_websocket_direct_confirm_timeout_routes_new_message(monkeypatch):
 
     await ws_module.websocket_endpoint(ws, "sess")
 
-    assert len(calls) == 2
+    # The decision is never re-planned, so only the original request is routed.
+    assert len(calls) == 1
     assert not any(payload.get("type") == "tool_call" for payload in ws.sent)
+    assert any(
+        "expired" in str(payload.get("content", "")) for payload in ws.sent
+    )
+
+
+@pytest.mark.asyncio
+async def test_websocket_direct_plan_persists_pending_and_prompt(monkeypatch):
+    store = _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    plan = _dangerous_plan()
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": "restart nginx"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert store["values"]["sess"] is not None
+    assert store["values"]["sess"]["plan"]["plan_id"] == plan["plan_id"]
+    assert store["values"]["sess"]["user_text"] == "restart nginx"
+    assert any("Reply yes to proceed." in text for text in store["assistant"])
+
+
+@pytest.mark.asyncio
+async def test_websocket_yes_after_reconnect_approves_stored_plan(monkeypatch):
+    plan = _dangerous_plan()
+    record = {
+        "plan": plan,
+        "user_text": "restart nginx",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    _patch_db(monkeypatch, pending=record)
+    saved_tools, _ = _patch_plan_runtime(monkeypatch)
+    calls = []
+
+    async def fake_route(user_text, session_id, **kwargs):
+        calls.append(user_text)
+        return {"type": "text", "content": "hi"}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket([{"message": "yes"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    # The plan is hydrated from the store on connect: it runs, nothing is re-planned.
+    assert calls == []
+    assert [p["type"] for p in ws.sent].count("tool_call") == 1
+    assert saved_tools and saved_tools[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_websocket_yes_with_superseded_pending_errors_and_does_not_route(
+    monkeypatch,
+):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    old_plan = _dangerous_plan()
+    new_plan = _risky_two_step_plan()
+    record_a = {
+        "plan": old_plan,
+        "user_text": "restart nginx",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    record_b = {
+        "plan": new_plan,
+        "user_text": "disable",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    reads = {"n": 0}
+
+    async def fake_get(db, session_id):
+        reads["n"] += 1
+        return record_a if reads["n"] == 1 else record_b
+
+    monkeypatch.setattr(ws_module, "get_stored_pending", fake_get)
+
+    ws = FakeWebSocket([{"message": "yes"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert any("replaced" in str(p.get("content", "")) for p in ws.sent)
+    assert not any(p.get("type") == "tool_call" for p in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_websocket_second_yes_after_claim_is_no_longer_active(monkeypatch):
+    plan = _dangerous_plan()
+    record = {
+        "plan": plan,
+        "user_text": "restart nginx",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    _patch_db(monkeypatch, pending=record)
+    _patch_plan_runtime(monkeypatch)
+
+    async def fake_claim(db, session_id, plan_id):
+        return None
+
+    monkeypatch.setattr(ws_module, "claim_stored_pending", fake_claim)
+
+    ws = FakeWebSocket([{"message": "yes"}], delay=0.05)
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert any("no longer active" in str(p.get("content", "")) for p in ws.sent)
+    assert not any(p.get("type") == "tool_call" for p in ws.sent)
+
+
+@pytest.mark.asyncio
+async def test_websocket_long_phrase_with_yes_is_not_an_approval_routes_to_planner(
+    monkeypatch,
+):
+    _patch_db(monkeypatch)
+    _patch_plan_runtime(monkeypatch)
+    plan = _risky_two_step_plan()
+    calls = []
+
+    async def fake_route(user_text, session_id, **kwargs):
+        calls.append(user_text)
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+
+    ws = FakeWebSocket(
+        [{"message": "disable"}, {"message": "да, покажи ещё диски"}], delay=0.05
+    )
+    ws.allow_disconnect.set()
+
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    assert calls == ["disable", "да, покажи ещё диски"]
+    assert not any(p.get("type") == "tool_call" for p in ws.sent)
 
 
 @pytest.mark.asyncio

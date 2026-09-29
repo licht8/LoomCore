@@ -7,6 +7,7 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -34,6 +35,10 @@ from src.core.core_tools import (
 from src.core.timing import log_stage, span
 from src.db.database import async_session_factory
 from src.db.session import add_assistant_message, ensure_session
+from src.db.session import claim_pending as claim_stored_pending
+from src.db.session import clear_pending as clear_stored_pending
+from src.db.session import get_pending as get_stored_pending
+from src.db.session import set_pending as set_stored_pending
 from src.interfaces.events import (
     busy_payload,
     cancelled_payload,
@@ -567,14 +572,59 @@ async def _guarded(coro) -> None:
         logger.error(f"Background request failed: {exc}")
 
 
-def _remember_pending(pending: dict | None, plan: dict, user_text: str) -> None:
-    """Record a plan awaiting the user's confirmation (with a fresh timeout)."""
+def _hydrate_pending(pending: dict | None, stored: dict | None) -> None:
+    """Fill the connection cache from the persisted pending plan (or clear it)."""
     if pending is None:
         return
-    pending["plan"] = plan
-    pending["user_text"] = user_text
+    if not stored:
+        pending["plan"] = None
+        pending["user_text"] = ""
+        pending["created_at"] = 0.0
+        pending["reasked"] = False
+        return
+    pending["plan"] = stored.get("plan")
+    pending["user_text"] = stored.get("user_text", "")
     pending["created_at"] = time.monotonic()
     pending["reasked"] = False
+
+
+def _pending_age_seconds(created_at: str | None) -> float:
+    """Seconds since the persisted pending plan was recorded (0 if unknown)."""
+    if not created_at:
+        return 0.0
+    try:
+        recorded = datetime.fromisoformat(created_at)
+    except (TypeError, ValueError):
+        return 0.0
+    if recorded.tzinfo is None:
+        recorded = recorded.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - recorded).total_seconds()
+
+
+async def _remember_pending(
+    session_id: str,
+    pending: dict | None,
+    plan: dict,
+    user_text: str,
+    *,
+    prompt: str | None = None,
+) -> None:
+    """Record a plan awaiting the user's confirmation.
+
+    Updates the connection cache and persists the record on the session, so a
+    reload or reconnect still knows which plan is pending. ``prompt`` (the
+    plain-language confirmation question) is persisted as an assistant message.
+    """
+    if pending is not None:
+        pending["plan"] = plan
+        pending["user_text"] = user_text
+        pending["created_at"] = time.monotonic()
+        pending["reasked"] = False
+    with contextlib.suppress(Exception):
+        async with async_session_factory() as db:
+            if prompt is not None:
+                await add_assistant_message(db, session_id, prompt)
+            await set_stored_pending(db, session_id, plan, user_text)
 
 
 async def _process_user_message(
@@ -652,8 +702,9 @@ async def _process_user_message(
                 return
             # Direct but mutating: ask for a plain-language confirmation.
             goal = plan.get("goal") or "Proceed"
-            await send(response_payload(f"{goal} Reply yes to proceed."))
-            _remember_pending(pending, plan, user_text)
+            prompt = f"{goal} Reply yes to proceed."
+            await send(response_payload(prompt))
+            await _remember_pending(session_id, pending, plan, user_text, prompt=prompt)
             return
 
         if not requires_approval:
@@ -665,7 +716,7 @@ async def _process_user_message(
         await send(plan_proposed_payload(plan, requires_approval))
 
         if requires_approval:
-            _remember_pending(pending, plan, user_text)
+            await _remember_pending(session_id, pending, plan, user_text)
             return
 
         await _run_plan(
@@ -714,6 +765,11 @@ async def websocket_endpoint(
         "created_at": 0.0,
         "reasked": False,
     }
+    # Restore a plan that was awaiting approval before this connection (a page
+    # reload or reconnect must not lose it).
+    with contextlib.suppress(Exception):
+        async with async_session_factory() as db:
+            _hydrate_pending(pending, await get_stored_pending(db, session_id))
     # One message typed while a turn was running; newest wins, dispatched on
     # completion instead of being dropped.
     queued_text: str | None = None
@@ -776,6 +832,68 @@ async def websocket_endpoint(
         pending["created_at"] = 0.0
         pending["reasked"] = False
 
+    async def forget_pending_plan() -> None:
+        """Clear the in-memory cache and the persisted pending plan."""
+        clear_pending()
+        with contextlib.suppress(Exception):
+            async with async_session_factory() as db:
+                await clear_stored_pending(db, session_id)
+
+    # A decision that cannot be applied to the plan the user saw.
+    replaced_message = (
+        "The plan you were approving was replaced by a newer one. "
+        "Review the latest plan and reply yes again."
+    )
+    inactive_message = "That plan is no longer active."
+    expired_message = "That plan has expired. Please ask again."
+
+    async def decide_pending(decision: str, cached_plan: dict) -> None:
+        """Bind a textual yes/no to the persisted plan.
+
+        The cached plan is trusted only while it is still the stored pending
+        record; otherwise the decision is refused rather than applied to the
+        wrong plan, and an expired record is discarded.
+        """
+        plan_id = cached_plan.get("plan_id")
+        try:
+            async with async_session_factory() as db:
+                stored = await get_stored_pending(db, session_id)
+        except Exception:
+            logger.exception("Failed to read the pending plan for %s", session_id)
+            stored = None
+        stored_plan = (stored or {}).get("plan") or {}
+        if not stored or stored_plan.get("plan_id") != plan_id:
+            _hydrate_pending(pending, stored)
+            await send(response_payload(replaced_message))
+            return
+        if stored_plan.get("status") != "proposed":
+            await send(response_payload(inactive_message))
+            return
+        try:
+            async with async_session_factory() as db:
+                claimed = await claim_stored_pending(db, session_id, plan_id)
+        except Exception:
+            logger.exception("Failed to claim the pending plan for %s", session_id)
+            claimed = None
+        if claimed is None:
+            await forget_pending_plan()
+            await send(response_payload(inactive_message))
+            return
+        if (
+            _pending_age_seconds(claimed.get("created_at"))
+            > CONFIRMATION_TIMEOUT_SECONDS
+        ):
+            clear_pending()
+            await send(response_payload(expired_message))
+            return
+        claimed_plan = claimed.get("plan") or stored_plan
+        saved_text = claimed.get("user_text") or pending.get("user_text", "")
+        clear_pending()
+        if decision == "approve":
+            await approve_plan(claimed_plan, saved_text)
+        else:
+            await reject_plan(claimed_plan)
+
     async def approve_plan(plan: dict, user_text: str) -> None:
         plan["status"] = "approved"
         if plan_is_direct(plan):
@@ -818,14 +936,14 @@ async def websocket_endpoint(
             await cancel_current()
             await persist_cancelled_tool()
             await persist_cancelled_plan()
-            clear_pending()
+            await forget_pending_plan()
             await send(cancelled_payload())
             return
 
         # User rejected the pending plan
         if action == "plan_reject":
             plan = pending.get("plan")
-            clear_pending()
+            await forget_pending_plan()
             if plan:
                 await reject_plan(plan)
             return
@@ -839,7 +957,7 @@ async def websocket_endpoint(
             if not plan:
                 return
             user_text = pending.get("user_text", "")
-            clear_pending()
+            await forget_pending_plan()
             await approve_plan(plan, user_text)
             return
 
@@ -859,13 +977,13 @@ async def websocket_endpoint(
                 await send(error_payload("Invalid plan: " + "; ".join(errors)))
                 return
             user_text = pending.get("user_text", "")
-            _remember_pending(pending, revised, user_text)
+            await _remember_pending(session_id, pending, revised, user_text)
             with contextlib.suppress(Exception):
                 await _save_plan_message(session_id, revised)
             requires_approval = plan_requires_approval(revised)
             await send(plan_proposed_payload(revised, requires_approval))
             if not requires_approval:
-                clear_pending()
+                await forget_pending_plan()
                 start(_run_plan(send, session_id, user_text, revised, tracker))
             return
 
@@ -887,30 +1005,28 @@ async def websocket_endpoint(
             return
 
         # A pending plan (direct action or plan card) awaiting a text yes/no.
+        if pending.get("plan") is None:
+            # The cache may be empty after a fresh connect, or another
+            # connection may have proposed a plan; re-read the persisted record.
+            with contextlib.suppress(Exception):
+                async with async_session_factory() as db:
+                    stored = await get_stored_pending(db, session_id)
+                _hydrate_pending(pending, stored)
         pending_plan = pending.get("plan")
         if pending_plan is not None:
-            age = time.monotonic() - float(pending.get("created_at") or 0.0)
-            if age <= CONFIRMATION_TIMEOUT_SECONDS:
-                decision = parse_confirmation(user_text)
-                if decision == "approve":
-                    saved_text = pending.get("user_text", "")
-                    clear_pending()
-                    await approve_plan(pending_plan, saved_text)
-                    return
-                if decision == "reject":
-                    clear_pending()
-                    await reject_plan(pending_plan)
-                    return
-                if plan_is_direct(pending_plan) and not pending.get("reasked"):
-                    pending["reasked"] = True
-                    pending["created_at"] = time.monotonic()
-                    await send(
-                        response_payload("Reply yes to proceed, or no to cancel.")
-                    )
-                    return
-            # Non-committal, expired, or a second unclear reply: terminalize a
-            # plan card so it never sticks, then route the message fresh.
-            clear_pending()
+            decision = parse_confirmation(user_text)
+            if decision in ("approve", "reject"):
+                # A decision is always bound to the pending plan — it is never
+                # silently routed to the planner instead.
+                await decide_pending(decision, pending_plan)
+                return
+            if plan_is_direct(pending_plan) and not pending.get("reasked"):
+                pending["reasked"] = True
+                await send(response_payload("Reply yes to proceed, or no to cancel."))
+                return
+            # Non-committal: terminalize a plan card so it never sticks, then
+            # route the message fresh.
+            await forget_pending_plan()
             if not plan_is_direct(pending_plan):
                 await reject_plan(pending_plan)
 
