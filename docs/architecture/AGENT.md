@@ -158,7 +158,9 @@ confirmation.
   declarative — core meta-tools set `report: true`, plugins declare `report` in
   their `TOOLS_SCHEMA` (read into `plugin_manager`), so the core never hardcodes
   plugin tool names. Report tools only control *rendering*: their cards render as
-  Markdown (`format: "markdown"`), everything else as `<pre>`. The raw output is
+  Markdown (`format: "markdown"`), everything else as `<pre>`. In the UI the tool
+  card body is collapsed by default (click to expand; a failed tool auto-expands),
+  so the feed leads with the assistant's message. The raw output is
   surfaced (and the card rendered compact) only when the user explicitly asks for
   it, or for an allow-listed read-only command (`LOOMCORE_REPORT_COMMANDS`, empty
   by default). If a configured `summary_model` fails or returns nothing, the

@@ -1,7 +1,9 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import {
   CheckCircle2,
+  ChevronRight,
   Circle,
   CircleStop,
   ListChecks,
@@ -79,6 +81,121 @@ function StepStatusIcon({ status }: { status: string }) {
 
 function MessageTimestamp({ timestamp, className }: { timestamp: string; className?: string }) {
   return <p className={cn("mt-1 pl-1 text-xs text-muted-foreground", className)}>{timestamp}</p>
+}
+
+/**
+ * A tool-execution card. The tool output is collapsed by default so the chat
+ * feed stays focused on the assistant's message; the header (tool name, status
+ * and download buttons) stays visible. A failed tool auto-expands.
+ */
+function ToolCard({ message }: { message: ChatMessage }) {
+  const [expanded, setExpanded] = useState(false)
+  const body = message.toolCode || message.content
+  const hasBody = !message.compact && Boolean(body)
+  const showFooter = (expanded && hasBody) || Boolean(message.artifacts)
+
+  useEffect(() => {
+    if (message.toolStatus === "error") setExpanded(true)
+  }, [message.toolStatus])
+
+  return (
+    <div className="flex justify-start gap-3">
+      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
+        <Terminal className="size-4" />
+      </div>
+      <div className="w-full max-w-[75%]">
+        <div className="overflow-hidden rounded-2xl rounded-tl-md border border-primary/25 bg-card shadow-sm backdrop-blur-md">
+          {/* Header with the tool name and status; click to toggle the output. */}
+          <button
+            type="button"
+            onClick={() => hasBody && setExpanded((value) => !value)}
+            aria-expanded={hasBody ? expanded : undefined}
+            disabled={!hasBody}
+            className={cn(
+              "flex w-full items-center justify-between gap-2 bg-secondary/60 px-4 py-2.5 text-left",
+              showFooter && "border-b border-border",
+              hasBody ? "cursor-pointer hover:bg-secondary/80" : "cursor-default",
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {hasBody && (
+                <ChevronRight
+                  className={cn(
+                    "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                    expanded && "rotate-90",
+                  )}
+                />
+              )}
+              <span className="font-mono text-xs font-medium text-secondary-foreground">
+                {message.tool || "tool"}
+              </span>
+            </div>
+            <span
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium",
+                message.toolStatus === "success"
+                  ? "text-emerald-600"
+                  : message.toolStatus === "error"
+                  ? "text-destructive"
+                  : message.toolStatus === "cancelled"
+                  ? "text-muted-foreground"
+                  : "text-primary",
+              )}
+            >
+              {message.toolStatus === "success" ? (
+                <>
+                  <CheckCircle2 className="size-3.5" />
+                  {message.toolSummary || "Done"}
+                </>
+              ) : message.toolStatus === "error" ? (
+                <>
+                  <XCircle className="size-3.5" />
+                  {message.toolSummary || "Error"}
+                </>
+              ) : message.toolStatus === "cancelled" ? (
+                <>
+                  <CircleStop className="size-3.5" />
+                  {message.toolSummary || "Cancelled"}
+                </>
+              ) : (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  {message.toolSummary || "Running…"}
+                </>
+              )}
+            </span>
+          </button>
+          {/* Body with the code/result, hidden until the card is expanded. */}
+          {expanded && hasBody ? (
+            message.format === "markdown" ? (
+              <div className="px-4 py-3 text-sm leading-relaxed text-card-foreground">
+                <Markdown content={body} />
+              </div>
+            ) : (
+              <pre className="overflow-x-auto bg-[oklch(0.28_0.06_285)] px-4 py-3 font-mono text-xs leading-relaxed text-[oklch(0.92_0.05_310)]">
+                <code>{body}</code>
+              </pre>
+            )
+          ) : null}
+          {message.artifacts && (
+            <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+              {message.artifacts.map((artifact) => (
+                <button
+                  key={artifact.url}
+                  type="button"
+                  onClick={() => downloadArtifact(artifact.url, artifact.label)}
+                  className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+                >
+                  {artifact.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <MessageTimestamp timestamp={message.timestamp} />
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -180,83 +297,5 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
   }
 
   // --- Tool message ---
-  return (
-    <div className="flex justify-start gap-3">
-      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
-        <Terminal className="size-4" />
-      </div>
-      <div className="w-full max-w-[75%]">
-        <div className="overflow-hidden rounded-2xl rounded-tl-md border border-primary/25 bg-card shadow-sm backdrop-blur-md">
-          {/* Header with the tool name and status */}
-          <div className="flex items-center justify-between gap-2 border-b border-border bg-secondary/60 px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-medium text-secondary-foreground">
-                {message.tool || "tool"}
-              </span>
-            </div>
-            <span
-              className={cn(
-                "flex items-center gap-1.5 text-xs font-medium",
-                message.toolStatus === "success"
-                  ? "text-emerald-600"
-                  : message.toolStatus === "error"
-                  ? "text-destructive"
-                  : message.toolStatus === "cancelled"
-                  ? "text-muted-foreground"
-                  : "text-primary",
-              )}
-            >
-              {message.toolStatus === "success" ? (
-                <>
-                  <CheckCircle2 className="size-3.5" />
-                  {message.toolSummary || "Done"}
-                </>
-              ) : message.toolStatus === "error" ? (
-                <>
-                  <XCircle className="size-3.5" />
-                  {message.toolSummary || "Error"}
-                </>
-              ) : message.toolStatus === "cancelled" ? (
-                <>
-                  <CircleStop className="size-3.5" />
-                  {message.toolSummary || "Cancelled"}
-                </>
-              ) : (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  {message.toolSummary || "Running…"}
-                </>
-              )}
-            </span>
-          </div>
-          {/* Body with the code/result. A compact card (report tools whose
-              output is already shown in the assistant bubble) omits the body. */}
-          {message.compact ? null : message.format === "markdown" ? (
-            <div className="border-t border-border px-4 py-3 text-sm leading-relaxed text-card-foreground">
-              <Markdown content={message.toolCode || message.content} />
-            </div>
-          ) : (
-            <pre className="overflow-x-auto bg-[oklch(0.28_0.06_285)] px-4 py-3 font-mono text-xs leading-relaxed text-[oklch(0.92_0.05_310)]">
-              <code>{message.toolCode || message.content}</code>
-            </pre>
-          )}
-          {message.artifacts && (
-            <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
-              {message.artifacts.map((artifact) => (
-                <button
-                  key={artifact.url}
-                  type="button"
-                  onClick={() => downloadArtifact(artifact.url, artifact.label)}
-                  className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
-                >
-                  {artifact.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        <p className="mt-1 pl-1 text-xs text-muted-foreground">{message.timestamp}</p>
-      </div>
-    </div>
-  )
+  return <ToolCard message={message} />
 }

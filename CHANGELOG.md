@@ -10,6 +10,9 @@ task report (RULES 14).
   only when the user asks for it or for an allow-listed read-only command. If a
   configured `summary_model` fails or returns nothing, `summarize_plan` now retries
   once with the main model, so the assistant no longer silently echoes tool output.
+- Tool cards are collapsed by default in the chat feed: the header keeps the tool
+  name, status and download buttons while the output body expands on click (a
+  failed tool auto-expands), so the assistant's message is what the user reads.
 
 ## 2026-09-28
 
