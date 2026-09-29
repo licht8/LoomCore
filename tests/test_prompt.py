@@ -230,3 +230,39 @@ def test_planner_prompt_mentions_parallel_steps():
     lowered = PLANNER_PROMPT.lower()
     assert '"parallel": true' in lowered
     assert "read-only" in lowered
+
+
+def test_build_planner_messages_injects_memory_before_history():
+    history = [{"role": "assistant", "content": "earlier"}]
+
+    messages = build_planner_messages(
+        "do it", history, "- core_health: check", memory="User prefers UTC."
+    )
+
+    assert messages[0]["role"] == "system"
+    assert "Tool catalog" in messages[0]["content"]
+    assert messages[1]["role"] == "system"
+    assert "condensed" in messages[1]["content"]
+    assert "User prefers UTC." in messages[1]["content"]
+    assert messages[2] == {"role": "assistant", "content": "earlier"}
+    assert messages[-1] == {"role": "user", "content": "do it"}
+
+
+def test_build_planner_messages_is_unchanged_without_memory():
+    history = [{"role": "assistant", "content": "earlier"}]
+
+    base = build_planner_messages("do it", history, "- core_health: check")
+
+    assert (
+        build_planner_messages(
+            "do it", history, "- core_health: check", memory=None
+        )
+        == base
+    )
+    assert (
+        build_planner_messages(
+            "do it", history, "- core_health: check", memory="   "
+        )
+        == base
+    )
+    assert all("condensed" not in message["content"] for message in base)

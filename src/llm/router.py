@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,11 @@ from src.core.agent import (
     validate_plan,
 )
 from src.core.core_tools import CORE_TOOLS_SCHEMA, resolve_tool_risk
+from src.core.memory import (
+    MEMORY_COMPACT_AFTER_CHARS,
+    refresh_memory,
+    select_foldable,
+)
 from src.core.timing import log_stage, span
 from src.db import session as db_session
 from src.db.database import async_session_factory
@@ -207,9 +213,20 @@ class AIRouter:
     def __init__(self, plugin_manager: PluginManager | None = None):
         self.client = OpenAICompatClient()
         self.plugin_manager = plugin_manager
+        # Long-conversation memory: the sessions being compacted right now and
+        # the background refresh tasks.
+        self._memory_inflight: set[str] = set()
+        self._memory_tasks: set[asyncio.Task] = set()
 
     async def aclose(self) -> None:
-        """Close the router's shared HTTP client."""
+        """Cancel pending memory refreshes and close the shared HTTP client."""
+        pending = list(self._memory_tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._memory_tasks.clear()
+        self._memory_inflight.clear()
         await self.client.aclose()
 
     async def route(
@@ -245,7 +262,7 @@ class AIRouter:
             return {"type": "text", "content": NOT_CONFIGURED_MESSAGE}
 
         route_started = time.monotonic()
-        history_dicts = await self._begin_turn(session_id, user_message)
+        history_dicts, turn_memory = await self._begin_turn(session_id, user_message)
 
         collect_started = time.monotonic()
         tools_schema, message_extra = await self._collect_tools()
@@ -257,7 +274,9 @@ class AIRouter:
             tool["name"]: tool.get("inputSchema") or {} for tool in tools_schema
         }
         catalog = self._catalog_text(tools_schema)
-        messages = build_planner_messages(user_message, history_dicts, catalog)
+        messages = build_planner_messages(
+            user_message, history_dicts, catalog, memory=turn_memory
+        )
 
         logger.info(
             "Planner call: history_len=%d, tools_count=%d, message_chars=%d",
@@ -464,6 +483,41 @@ class AIRouter:
                 time.monotonic() - route_started,
                 history_len=len(history_dicts),
             )
+            # Compaction runs after the turn, in the background: it must never
+            # delay the plan or the reply.
+            self._schedule_memory_refresh(session_id, config, history_dicts)
+
+    def _schedule_memory_refresh(
+        self, session_id: str, config, history: list[dict]
+    ) -> None:
+        """Compact the older history in the background, at most once per session.
+
+        Only fires for a history that actually grew past
+        ``MEMORY_COMPACT_AFTER_CHARS`` with something to fold; a concurrent turn
+        for the same session skips (the next turn picks it up).
+        """
+        if session_id in self._memory_inflight:
+            return
+        total = sum(len(str(message.get("content") or "")) for message in history)
+        if total <= MEMORY_COMPACT_AFTER_CHARS:
+            return
+        folded, _kept = select_foldable(history)
+        if not folded:
+            return
+        self._memory_inflight.add(session_id)
+        task = asyncio.create_task(self._run_memory_refresh(session_id, config))
+        self._memory_tasks.add(task)
+        task.add_done_callback(self._memory_tasks.discard)
+
+    async def _run_memory_refresh(self, session_id: str, config) -> None:
+        """Run one background compaction; never raise, never touch the turn."""
+        try:
+            async with async_session_factory() as db:
+                await refresh_memory(db, session_id, config=config, client=self.client)
+        except Exception as exc:
+            logger.warning(f"Memory compaction failed for {session_id}: {exc}")
+        finally:
+            self._memory_inflight.discard(session_id)
 
     async def summarize_plan(
         self,
@@ -565,8 +619,14 @@ class AIRouter:
         tools_schema, _extra = await self._collect_tools()
         return {tool["name"]: tool.get("inputSchema") or {} for tool in tools_schema}
 
-    async def _begin_turn(self, session_id: str, user_message: str) -> list[dict]:
-        """Load recent history and persist the user message; return history dicts."""
+    async def _begin_turn(
+        self, session_id: str, user_message: str
+    ) -> tuple[list[dict], str | None]:
+        """Load recent history and persist the user message.
+
+        Returns the API-safe history dicts and the session's condensed memory
+        (``None`` when the session is new or long-conversation memory is off).
+        """
         started = time.monotonic()
         async with async_session_factory() as db:
             history_messages = await db_session.get_session_history(
@@ -589,6 +649,9 @@ class AIRouter:
             # Save the user message to history
             await db_session.add_user_message(db, session_id, user_message)
 
+            # Load the condensed older conversation (None when there is none).
+            memory, _covered_at = await db_session.get_memory(db, session_id)
+
         log_stage(
             "history_load",
             time.monotonic() - started,
@@ -597,7 +660,7 @@ class AIRouter:
                 len(str(message.get("content") or "")) for message in history_dicts
             ),
         )
-        return self._api_history(history_dicts)
+        return self._api_history(history_dicts), (memory or "").strip() or None
 
     @staticmethod
     def _api_history(messages: list[dict]) -> list[dict]:

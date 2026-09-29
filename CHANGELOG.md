@@ -5,6 +5,14 @@ task report (RULES 14).
 
 ## 2026-09-29
 
+- Long-conversation memory: once a session's history passes 12000 chars the
+  older part is folded into a terse factual brief stored on the session
+  (`sessions.memory` + `memory_updated_at`, migration 012) and injected ahead of
+  the verbatim tail, so the assistant stops forgetting how a long conversation
+  started. Compaction runs in the background after the turn, once per session,
+  deduplicated by the coverage marker, and reuses the summary settings
+  (`purpose="memory"`).
+
 - Skip thinking for the post-tool summary: `LLM_SUMMARY_DISABLE_THINKING=1`
   (default) sends `enable_thinking=false` on the summary call even without
   `LLM_THINKING_TEMPLATE`, so a reasoning model answers in its own words without

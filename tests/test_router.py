@@ -1,7 +1,9 @@
 """Unit tests for the AIRouter planner without DB or network."""
 
+import asyncio
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,7 +94,25 @@ def patched_router(monkeypatch):
     }
 
     async def fake_history(*args, **kwargs):
-        return state["history"]
+        # Stored messages are ORM rows in production; expose dict rows as the
+        # same attribute shape so ``_begin_turn`` can read them.
+        rows = []
+        for row in state["history"]:
+            if isinstance(row, dict):
+                rows.append(
+                    SimpleNamespace(
+                        role=row.get("role"),
+                        content=row.get("content"),
+                        tool_calls=row.get("tool_calls"),
+                        created_at=row.get("created_at"),
+                    )
+                )
+            else:
+                rows.append(row)
+        return rows
+
+    async def fake_memory(*args, **kwargs):
+        return (state.get("memory"), state.get("memory_updated_at"))
 
     async def fake_ensure(*args, **kwargs):
         return "sess"
@@ -110,6 +130,7 @@ def patched_router(monkeypatch):
     monkeypatch.setattr(router_module, "ensure_session", fake_ensure)
     monkeypatch.setattr(router_module, "get_active", lambda: _TEST_CONFIG)
     monkeypatch.setattr(router_module.db_session, "get_session_history", fake_history)
+    monkeypatch.setattr(router_module.db_session, "get_memory", fake_memory)
     monkeypatch.setattr(router_module.db_session, "add_user_message", fake_add_user)
     monkeypatch.setattr(router_module.db_session, "add_assistant_message", fake_add_assistant)
     monkeypatch.setattr(router_module.db_session, "add_plan_message", fake_add_plan)
@@ -1633,3 +1654,118 @@ async def test_route_has_no_meta_fast_path(patched_router):
     # The removed fast-path must not creep back in.
     assert not hasattr(router_module, "dispatch_core_tool")
     assert not hasattr(router, "_meta_fast_path")
+
+@pytest.mark.asyncio
+async def test_route_injects_the_session_memory_into_the_prompt(patched_router):
+    router, state = patched_router
+    state["memory"] = "The user prefers UTC."
+    state["queue"] = [_text_response("ok")]
+
+    await router.route("hi", "sess-1")
+
+    assert any(
+        "The user prefers UTC." in message["content"]
+        for message in state["last_messages"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_without_memory_has_no_memory_block(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+
+    await router.route("hi", "sess-1")
+
+    assert all(
+        "condensed" not in message["content"] for message in state["last_messages"]
+    )
+
+
+async def _settle() -> None:
+    """Let scheduled background tasks run to completion."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_route_schedules_no_refresh_for_a_short_history(patched_router, monkeypatch):
+    router, state = patched_router
+    state["queue"] = [_text_response("ok")]
+    calls: list[str] = []
+
+    async def fake_refresh(db, session_id, *, config, client):
+        calls.append(session_id)
+
+    monkeypatch.setattr(router_module, "refresh_memory", fake_refresh)
+
+    await router.route("hi", "sess-1")
+    await _settle()
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_route_schedules_a_refresh_for_a_long_history(patched_router, monkeypatch):
+    router, state = patched_router
+    state["history"] = [
+        {"role": "user", "content": "u" * 7000},
+        {"role": "assistant", "content": "a" * 7000},
+    ]
+    state["queue"] = [_text_response("ok")]
+    calls: list[str] = []
+
+    async def fake_refresh(db, session_id, *, config, client):
+        calls.append(session_id)
+
+    monkeypatch.setattr(router_module, "refresh_memory", fake_refresh)
+
+    result = await router.route("hi", "sess-1")
+    await _settle()
+
+    assert result["type"] == "text"
+    assert calls == ["sess-1"]
+    assert not router._memory_inflight
+
+
+@pytest.mark.asyncio
+async def test_route_refresh_failure_does_not_fail_the_turn(patched_router, monkeypatch):
+    router, state = patched_router
+    state["history"] = [
+        {"role": "user", "content": "u" * 7000},
+        {"role": "assistant", "content": "a" * 7000},
+    ]
+    state["queue"] = [_text_response("ok")]
+
+    async def boom(db, session_id, *, config, client):
+        raise RuntimeError("compaction exploded")
+
+    monkeypatch.setattr(router_module, "refresh_memory", boom)
+
+    result = await router.route("hi", "sess-1")
+    await _settle()
+
+    assert result["type"] == "text"
+    assert result["content"] == "ok"
+    assert not router._memory_inflight
+
+
+@pytest.mark.asyncio
+async def test_aclose_cancels_pending_memory_refreshes(patched_router, monkeypatch):
+    router, state = patched_router
+    started = asyncio.Event()
+
+    async def slow_refresh(db, session_id, *, config, client):
+        started.set()
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(router_module, "refresh_memory", slow_refresh)
+    router._memory_inflight.add("sess-1")
+    task = asyncio.create_task(router._run_memory_refresh("sess-1", _TEST_CONFIG))
+    router._memory_tasks.add(task)
+    await started.wait()
+
+    await router.aclose()
+
+    assert task.cancelled()
+    assert not router._memory_inflight
+    assert not router._memory_tasks

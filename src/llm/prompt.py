@@ -102,6 +102,19 @@ SUMMARY_INSTRUCTION = (
     "explains what happened and what it means — never pad or restate the request."
 )
 
+MEMORY_INSTRUCTION = (
+    "You keep the long-term memory of a server-administration conversation. "
+    "Condense the material below into a terse factual brief for the assistant.\n"
+    "- Merge the existing brief and the new messages into ONE updated brief: "
+    "never append a second copy, never repeat yourself.\n"
+    "- Keep decisions taken, facts and numbers stated, open questions, and the "
+    "user's preferences.\n"
+    "- Preserve every concrete fact (names, numbers, paths, statuses) exactly.\n"
+    "- Drop pleasantries, small talk, and tool mechanics.\n"
+    "- Never invent or infer anything the material does not contain.\n"
+    "- Reply with the brief only: no preamble, no headings, no commentary."
+)
+
 DEFAULT_SOUL = (
     "You are Loom. Speak in the first person, plainly and concisely. "
     "Report results, not mechanics."
@@ -167,14 +180,31 @@ def build_planner_messages(
     user_text: str,
     history: list[dict],
     tool_catalog: str,
+    *,
+    memory: str | None = None,
 ) -> list[dict]:
-    """Build planner messages: system (voice + planner + catalog), history, user."""
+    """Build planner messages: system (voice + planner + catalog), history, user.
+
+    When ``memory`` is set, a labelled block with the condensed older
+    conversation is injected before the verbatim tail; without it the result is
+    byte-identical to the memory-less prompt.
+    """
     system = (
         f"{load_soul()}\n\n{PLANNER_PROMPT}\n\nTool catalog:\n{tool_catalog}\n\n"
         "The user's last message is what you answer now. If it is a question about "
         "current state or a request to act, call `agent_plan`; otherwise call `reply`."
     )
     messages: list[dict] = [{"role": "system", "content": system}]
+    if memory and memory.strip():
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Conversation so far (earlier messages, condensed — not "
+                    f"verbatim):\n{memory.strip()}"
+                ),
+            }
+        )
     messages.extend(_trim_history(history, _MAX_HISTORY_CHARS))
     messages.append({"role": "user", "content": _truncate(user_text, _MAX_USER_CHARS)})
     return messages

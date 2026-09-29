@@ -182,6 +182,21 @@ confirmation.
   `LLM_SUMMARY_TIMEOUT=0`, `LLM_SUMMARY_DISABLE_THINKING=1`; the Settings UI must
   not silently re-override them to `90`/`2`. A fast `LLM_SUMMARY_MODEL` is the
   main lever for the post-tool wait.
+- **Long-conversation memory**: the planner prompt keeps only the newest
+  `_MAX_HISTORY_CHARS` (6000) of verbatim history, so in a long session the start
+  of the conversation used to vanish. Once the history of a session grows past
+  `MEMORY_COMPACT_AFTER_CHARS` (12000 chars, `src/core/memory.py`), everything
+  older than the last `MEMORY_KEEP_CHARS` (6000) of verbatim tail is folded into a
+  short factual brief stored on the session (`sessions.memory`, plus the
+  `memory_updated_at` coverage marker = the newest folded message) and injected as
+  a *condensed* system block ahead of the tail. Compaction runs in the background
+  **after** the turn (it never delays the plan or the reply), at most one refresh
+  per session at a time, deduplicated by the coverage marker so messages are never
+  folded twice, and reuses the summary settings (`LLM_SUMMARY_MODEL`,
+  `LLM_SUMMARY_MAX_TOKENS`, `LLM_SUMMARY_TIMEOUT`,
+  `LLM_SUMMARY_DISABLE_THINKING`) under `purpose="memory"`. A short session is
+  byte-identical to before; any failure leaves the stored memory and the turn
+  untouched.
 
 ## Files
 
@@ -197,6 +212,7 @@ confirmation.
 | `src/interfaces/events.py` | Versioned WebSocket event registry (`schema_version`) |
 | `src/interfaces/tool_events.py` | Payloads and persistence |
 | `src/core/contracts.py` | Tool argument/result validation (`jsonschema`) |
+| `src/core/memory.py` | Long-conversation memory: fold the older history into a per-session brief |
 | `src/core/security.py` | `classify_tool_risk` (heuristic fallback) |
 
 ## Non-goals
@@ -204,5 +220,6 @@ confirmation.
 - No autonomous multi-turn loop; v1 stops at each step and on failure.
 - Parallel execution is opt-in, safe-only, and limited to consecutive steps; a
   non-safe step always runs alone.
-- No memory beyond chat history.
+- No cross-session or user-level memory: the condensed brief is per session and
+  never shared between sessions.
 - SOUL never influences planning or safety.
