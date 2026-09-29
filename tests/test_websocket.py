@@ -142,6 +142,17 @@ def _patch_db(monkeypatch, *, pending=None, session_id="sess"):
         store["values"][session_id] = None
         return value
 
+    async def fake_replace_pending(db, session_id, plan_id, plan, user_text):
+        value = store["values"].get(session_id)
+        if not value or (value.get("plan") or {}).get("plan_id") != plan_id:
+            return False
+        store["values"][session_id] = {
+            "plan": plan,
+            "user_text": user_text,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        return True
+
     async def fake_clear_pending(db, session_id):
         store["values"][session_id] = None
 
@@ -150,6 +161,7 @@ def _patch_db(monkeypatch, *, pending=None, session_id="sess"):
     monkeypatch.setattr(ws_module, "get_stored_pending", fake_get_pending)
     monkeypatch.setattr(ws_module, "set_stored_pending", fake_set_pending)
     monkeypatch.setattr(ws_module, "claim_stored_pending", fake_claim_pending)
+    monkeypatch.setattr(ws_module, "replace_stored_pending", fake_replace_pending)
     monkeypatch.setattr(ws_module, "clear_stored_pending", fake_clear_pending)
     return store
 
@@ -831,6 +843,146 @@ async def test_websocket_plan_edit_rejects_invalid_arguments(monkeypatch):
     assert "missing required argument(s): plugin" in errors[-1]["error"]
     types = [payload["type"] for payload in ws.sent]
     assert "tool_call" not in types
+
+
+def _two_step_plan():
+    return build_plan(
+        {
+            "goal": "restart service and check",
+            "steps": [
+                {
+                    "tool": "core_disable_plugin",
+                    "args": {"plugin": "LoomOps"},
+                    "why": "stop it",
+                },
+                {"tool": "core_health", "args": {}, "why": "verify"},
+            ],
+        }
+    )
+
+
+def _supersede_get(store):
+    """Return a get_stored_pending that reports a newer pending plan."""
+
+    async def superseded(db, session_id):
+        value = store["values"].get(session_id)
+        if value and value.get("plan"):
+            return {**value, "plan": {**value["plan"], "plan_id": "pl_newer"}}
+        return value
+
+    return superseded
+
+
+async def _run_action(monkeypatch, plan, frame, *, get_pending=None):
+    store = _patch_db(monkeypatch)
+    saved_tools, saved_plans = _patch_plan_runtime(monkeypatch)
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    if get_pending is not None:
+        monkeypatch.setattr(ws_module, "get_stored_pending", get_pending(store))
+
+    ws = FakeWebSocket([{"message": "disable"}, frame], delay=0.05)
+    ws.allow_disconnect.set()
+    await ws_module.websocket_endpoint(ws, "sess")
+    return store, saved_tools, saved_plans, ws
+
+
+@pytest.mark.asyncio
+async def test_websocket_plan_approve_superseded_reports_replaced_and_does_not_run(
+    monkeypatch,
+):
+    store, saved_tools, _saved_plans, ws = await _run_action(
+        monkeypatch,
+        _two_step_plan(),
+        {"action": "plan_approve"},
+        get_pending=_supersede_get,
+    )
+
+    responses = [p for p in ws.sent if p["type"] == "response"]
+    assert responses and "replaced" in responses[-1]["content"]
+    types = [payload["type"] for payload in ws.sent]
+    assert "tool_call" not in types
+    assert saved_tools == []
+    assert store["values"]["sess"] is not None
+
+
+@pytest.mark.asyncio
+async def test_websocket_plan_reject_superseded_reports_replaced_and_does_not_run(
+    monkeypatch,
+):
+    store, saved_tools, _saved_plans, ws = await _run_action(
+        monkeypatch,
+        _two_step_plan(),
+        {"action": "plan_reject"},
+        get_pending=_supersede_get,
+    )
+
+    responses = [p for p in ws.sent if p["type"] == "response"]
+    assert responses and "replaced" in responses[-1]["content"]
+    types = [payload["type"] for payload in ws.sent]
+    assert "tool_call" not in types
+    assert saved_tools == []
+    assert store["values"]["sess"] is not None
+
+
+@pytest.mark.asyncio
+async def test_websocket_plan_edit_on_replaced_pending_reports_replaced(monkeypatch):
+    store = _patch_db(monkeypatch)
+    saved_tools, _saved_plans = _patch_plan_runtime(monkeypatch)
+    plan = _two_step_plan()
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    monkeypatch.setattr(ws_module, "get_stored_pending", _supersede_get(store))
+
+    edited = {"tool": "core_health", "args": {}, "why": "just check"}
+    ws = FakeWebSocket(
+        [{"message": "disable"}, {"action": "plan_edit", "steps": [edited]}],
+        delay=0.05,
+    )
+    ws.allow_disconnect.set()
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    responses = [p for p in ws.sent if p["type"] == "response"]
+    assert responses and "replaced" in responses[-1]["content"]
+    types = [payload["type"] for payload in ws.sent]
+    assert "tool_call" not in types
+    assert saved_tools == []
+
+
+@pytest.mark.asyncio
+async def test_websocket_plan_edit_consumed_pending_reports_inactive(monkeypatch):
+    _patch_db(monkeypatch)
+    saved_tools, _saved_plans = _patch_plan_runtime(monkeypatch)
+    plan = _two_step_plan()
+
+    async def fake_route(user_text, session_id, **kwargs):
+        return {"type": "plan", "plan": plan}
+
+    async def losing_replace(db, session_id, plan_id, revised, user_text):
+        return False
+
+    monkeypatch.setattr(ws_module.airouter_with_plugins, "route", fake_route)
+    monkeypatch.setattr(ws_module, "replace_stored_pending", losing_replace)
+
+    edited = {"tool": "core_health", "args": {}, "why": "just check"}
+    ws = FakeWebSocket(
+        [{"message": "disable"}, {"action": "plan_edit", "steps": [edited]}],
+        delay=0.05,
+    )
+    ws.allow_disconnect.set()
+    await ws_module.websocket_endpoint(ws, "sess")
+
+    responses = [p for p in ws.sent if p["type"] == "response"]
+    assert responses and "no longer active" in responses[-1]["content"]
+    types = [payload["type"] for payload in ws.sent]
+    assert "tool_call" not in types
+    assert saved_tools == []
 
 
 @pytest.mark.asyncio

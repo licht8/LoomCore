@@ -38,6 +38,7 @@ from src.db.session import add_assistant_message, ensure_session
 from src.db.session import claim_pending as claim_stored_pending
 from src.db.session import clear_pending as clear_stored_pending
 from src.db.session import get_pending as get_stored_pending
+from src.db.session import replace_pending as replace_stored_pending
 from src.db.session import set_pending as set_stored_pending
 from src.interfaces.events import (
     busy_payload,
@@ -608,18 +609,23 @@ async def _remember_pending(
     user_text: str,
     *,
     prompt: str | None = None,
+    persist: bool = True,
 ) -> None:
     """Record a plan awaiting the user's confirmation.
 
     Updates the connection cache and persists the record on the session, so a
     reload or reconnect still knows which plan is pending. ``prompt`` (the
     plain-language confirmation question) is persisted as an assistant message.
+    ``persist=False`` updates only the cache, for callers that already wrote the
+    record (e.g. an atomic replace during an edit).
     """
     if pending is not None:
         pending["plan"] = plan
         pending["user_text"] = user_text
         pending["created_at"] = time.monotonic()
         pending["reasked"] = False
+    if not persist:
+        return
     with contextlib.suppress(Exception):
         async with async_session_factory() as db:
             if prompt is not None:
@@ -847,14 +853,14 @@ async def websocket_endpoint(
     inactive_message = "That plan is no longer active."
     expired_message = "That plan has expired. Please ask again."
 
-    async def decide_pending(decision: str, cached_plan: dict) -> None:
-        """Bind a textual yes/no to the persisted plan.
+    async def current_pending(cached_plan: dict | None) -> dict | None:
+        """Return the stored pending record while it still matches the cache.
 
         The cached plan is trusted only while it is still the stored pending
-        record; otherwise the decision is refused rather than applied to the
-        wrong plan, and an expired record is discarded.
+        record; otherwise the caller is told the plan was replaced or is no
+        longer active, so both textual and button-driven actions share one guard.
         """
-        plan_id = cached_plan.get("plan_id")
+        cached_id = (cached_plan or {}).get("plan_id")
         try:
             async with async_session_factory() as db:
                 stored = await get_stored_pending(db, session_id)
@@ -862,13 +868,33 @@ async def websocket_endpoint(
             logger.exception("Failed to read the pending plan for %s", session_id)
             stored = None
         stored_plan = (stored or {}).get("plan") or {}
-        if not stored or stored_plan.get("plan_id") != plan_id:
+        if not stored or stored_plan.get("plan_id") != cached_id:
             _hydrate_pending(pending, stored)
             await send(response_payload(replaced_message))
-            return
+            return None
         if stored_plan.get("status") != "proposed":
             await send(response_payload(inactive_message))
+            return None
+        return stored
+
+    async def decide_pending(decision: str, cached_plan: dict | None) -> None:
+        """Bind a yes/no decision to the persisted plan.
+
+        Shared by the textual ``да``/``нет`` path and the ``plan_approve`` /
+        ``plan_reject`` actions: the pending is guarded, claimed atomically and
+        checked for expiry before the decision is applied.
+        """
+        if cached_plan is None:
+            with contextlib.suppress(Exception):
+                async with async_session_factory() as db:
+                    _hydrate_pending(
+                        pending, await get_stored_pending(db, session_id)
+                    )
+            cached_plan = pending.get("plan")
+        stored = await current_pending(cached_plan)
+        if stored is None:
             return
+        plan_id = (cached_plan or {}).get("plan_id")
         try:
             async with async_session_factory() as db:
                 claimed = await claim_stored_pending(db, session_id, plan_id)
@@ -886,7 +912,7 @@ async def websocket_endpoint(
             clear_pending()
             await send(response_payload(expired_message))
             return
-        claimed_plan = claimed.get("plan") or stored_plan
+        claimed_plan = claimed.get("plan") or stored.get("plan") or {}
         saved_text = claimed.get("user_text") or pending.get("user_text", "")
         clear_pending()
         if decision == "approve":
@@ -942,10 +968,10 @@ async def websocket_endpoint(
 
         # User rejected the pending plan
         if action == "plan_reject":
-            plan = pending.get("plan")
-            await forget_pending_plan()
-            if plan:
-                await reject_plan(plan)
+            if is_busy():
+                await send(busy_payload())
+                return
+            await decide_pending("reject", pending.get("plan"))
             return
 
         # User approved the pending plan
@@ -953,31 +979,59 @@ async def websocket_endpoint(
             if is_busy():
                 await send(busy_payload())
                 return
-            plan = pending.get("plan")
-            if not plan:
-                return
-            user_text = pending.get("user_text", "")
-            await forget_pending_plan()
-            await approve_plan(plan, user_text)
+            await decide_pending("approve", pending.get("plan"))
             return
 
-        # User edited the pending plan
+        # User edited the pending plan: replace it with a new revision
         if action == "plan_edit":
             if is_busy():
                 await send(busy_payload())
                 return
-            plan = pending.get("plan")
             steps = data.get("steps")
-            if not plan or not isinstance(steps, list):
+            if not isinstance(steps, list):
                 return
-            revised = next_revision(plan, steps, risk_of=resolve_tool_risk)
+            if pending.get("plan") is None:
+                with contextlib.suppress(Exception):
+                    async with async_session_factory() as db:
+                        _hydrate_pending(
+                            pending, await get_stored_pending(db, session_id)
+                        )
+            stored = await current_pending(pending.get("plan"))
+            if stored is None:
+                return
+            if (
+                _pending_age_seconds(stored.get("created_at"))
+                > CONFIRMATION_TIMEOUT_SECONDS
+            ):
+                await forget_pending_plan()
+                await send(response_payload(expired_message))
+                return
+            base = stored.get("plan") or {}
+            revised = next_revision(base, steps, risk_of=resolve_tool_risk)
             schemas = await airouter_with_plugins.tool_schemas()
             errors = validate_plan(revised, set(schemas), schemas)
             if errors:
                 await send(error_payload("Invalid plan: " + "; ".join(errors)))
                 return
-            user_text = pending.get("user_text", "")
-            await _remember_pending(session_id, pending, revised, user_text)
+            user_text = stored.get("user_text") or pending.get("user_text", "")
+            plan_id = base.get("plan_id")
+            try:
+                async with async_session_factory() as db:
+                    replaced = await replace_stored_pending(
+                        db, session_id, plan_id, revised, user_text
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to replace the pending plan for %s", session_id
+                )
+                replaced = False
+            if not replaced:
+                await forget_pending_plan()
+                await send(response_payload(inactive_message))
+                return
+            await _remember_pending(
+                session_id, pending, revised, user_text, persist=False
+            )
             with contextlib.suppress(Exception):
                 await _save_plan_message(session_id, revised)
             requires_approval = plan_requires_approval(revised)
