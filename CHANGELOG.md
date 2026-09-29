@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-09-29
 
+- Faster post-tool replies: the summary now asks for at most two short
+  sentences, its default cap dropped to `LLM_SUMMARY_MAX_TOKENS=256`, and with
+  `LLM_THINKING_TEMPLATE=1` the summary always sends `enable_thinking=false`
+  (the planner still honors `LLM_ENABLE_THINKING`) so a reasoning model no
+  longer thinks before the short own-words answer. A fast `LLM_SUMMARY_MODEL` is
+  documented as the main lever.
 - The assistant always answers in its own words: report tools no longer skip the
   post-run summary (their cards just render as Markdown); the raw output is shown
   only when the user asks for it or for an allow-listed read-only command. If a

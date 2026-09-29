@@ -107,8 +107,13 @@ class OpenAICompatClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         stream: bool = False,
+        thinking: bool | None = None,
     ) -> dict:
-        """Build the Chat Completions payload shared by both call paths."""
+        """Build the Chat Completions payload shared by both call paths.
+
+        ``thinking`` overrides ``config.enable_thinking`` for this call only,
+        so the short summary can skip a reasoning model's thinking step.
+        """
         payload: dict = {
             "model": model or config.model,
             "messages": messages,
@@ -124,7 +129,9 @@ class OpenAICompatClient:
         if config.thinking_template:
             # Only sent for providers that opt in to ``chat_template_kwargs``.
             payload["chat_template_kwargs"] = {
-                "enable_thinking": config.enable_thinking
+                "enable_thinking": (
+                    config.enable_thinking if thinking is None else thinking
+                )
             }
         if stream:
             payload["stream"] = True
@@ -165,6 +172,7 @@ class OpenAICompatClient:
         model: str | None = None,
         *,
         max_tokens: int | None = None,
+        thinking: bool | None = None,
         purpose: str = "chat",
         session_id: str | None = None,
     ) -> dict:
@@ -201,6 +209,7 @@ class OpenAICompatClient:
             tool_choice=tool_choice,
             temperature=temperature,
             max_tokens=max_tokens,
+            thinking=thinking,
         )
 
         prompt_chars = sum(
@@ -437,6 +446,7 @@ class OpenAICompatClient:
         tool_choice: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: bool | None = None,
         purpose: str = "chat",
         session_id: str | None = None,
         on_content: Callable[[str], Awaitable[None]] | None = None,
@@ -475,6 +485,7 @@ class OpenAICompatClient:
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            thinking=thinking,
         )
         prompt_chars = sum(
             len(str(message.get("content") or "")) for message in messages

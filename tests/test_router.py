@@ -123,6 +123,7 @@ def patched_router(monkeypatch):
         model=None,
         *,
         max_tokens=None,
+        thinking=None,
         purpose=None,
         session_id=None,
     ):
@@ -131,6 +132,7 @@ def patched_router(monkeypatch):
         state["tool_choice"] = tool_choice
         state["temperature"] = temperature
         state["max_tokens"] = max_tokens
+        state["thinking"] = thinking
         state["last_messages"] = messages
         state["model"] = model
         state["purpose"] = purpose
@@ -511,6 +513,7 @@ async def test_summarize_plan_falls_back_to_main_model(patched_router, monkeypat
         model=None,
         *,
         max_tokens=None,
+        thinking=None,
         purpose=None,
         session_id=None,
     ):
@@ -556,6 +559,7 @@ async def test_summarize_plan_retries_main_model_on_empty(
         model=None,
         *,
         max_tokens=None,
+        thinking=None,
         purpose=None,
         session_id=None,
     ):
@@ -1466,6 +1470,21 @@ async def test_route_passes_configured_max_tokens(patched_router, monkeypatch):
         [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
     )
     assert state["max_tokens"] == 111
+
+
+@pytest.mark.asyncio
+async def test_summary_disables_thinking(patched_router):
+    router, state = patched_router
+    state["queue"] = [_text_response("summary")]
+
+    await router.summarize_plan(
+        "check disk",
+        {"goal": "check disk", "steps": [{"id": "s1", "tool": "ops_disk_usage"}]},
+        [{"step": {"id": "s1"}, "result": {"content": [], "data": {}}}],
+    )
+
+    # A short own-words summary never needs a reasoning model's thinking step.
+    assert state["thinking"] is False
 
 
 @pytest.mark.asyncio

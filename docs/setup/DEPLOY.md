@@ -163,10 +163,16 @@ uses 1 — plus 1 per planner re-ask and 1 per transport retry. It resets at UTC
 midnight.
 
 These defaults (`LLM_READ_TIMEOUT=30`, `LLM_MAX_RETRIES=1`,
-`LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=512`) are the intended
+`LLM_PLANNER_MAX_TOKENS=1024`, `LLM_SUMMARY_MAX_TOKENS=256`) are the intended
 values; the Settings UI must not silently re-override them back to `90`/`2`.
 Set `LLM_PLANNER_MODEL` / `LLM_SUMMARY_MODEL` to a smaller model (empty = main
-model) — a small planner is the primary latency lever.
+model) — a small planner is the primary latency lever, and a fast
+`LLM_SUMMARY_MODEL` removes most of the post-tool wait (the summary is one
+extra LLM call whose whole point is the short "own words" reply).
+
+To keep a reasoning model from spending seconds thinking before that short
+summary, set `LLM_THINKING_TEMPLATE=1`: the summary then always sends
+`enable_thinking=false`, while the planner still honors `LLM_ENABLE_THINKING`.
 
 The 30s read timeout is a safety bound: with thinking disabled a full turn is a
 few seconds, so a request that hangs this long is a provider stall, not real work.

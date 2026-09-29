@@ -439,6 +439,19 @@ async def test_thinking_template_is_opt_in(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_summary_can_disable_thinking(monkeypatch):
+    fake = _install(monkeypatch, [_FakeResponse()])
+
+    await OpenAICompatClient(
+        config=_config(thinking_template=True, enable_thinking=True)
+    ).chat_completion([{"role": "user", "content": "hi"}], thinking=False)
+
+    assert fake.requests[0]["json"]["chat_template_kwargs"] == {
+        "enable_thinking": False
+    }
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_raises_not_configured(monkeypatch):
     created = []
 

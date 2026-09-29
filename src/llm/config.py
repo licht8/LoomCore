@@ -50,7 +50,7 @@ class LlmConfig:
     pool_timeout: float = 15.0
     max_retries: int = 1
     planner_max_tokens: int = 1024
-    summary_max_tokens: int = 512
+    summary_max_tokens: int = 256
 
     @property
     def configured(self) -> bool:

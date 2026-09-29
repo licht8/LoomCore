@@ -490,6 +490,7 @@ class AIRouter:
                         messages,
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
+                        thinking=False,
                         purpose="summary",
                         on_content=on_delta,
                     )
@@ -498,6 +499,7 @@ class AIRouter:
                         messages,
                         model=model_name,
                         max_tokens=config.summary_max_tokens,
+                        thinking=False,
                         purpose="summary",
                     )
                 content, _tool_name, _tool_args, _raw = self._parse_completion(

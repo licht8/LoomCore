@@ -84,7 +84,8 @@ PLANNER_PROMPT = (
 SUMMARY_INSTRUCTION = (
     "Answer the user's request in a short reply written in your own words, "
     "following the voice guide above. Use only the facts in the tool output "
-    "below. Always reply in Markdown.\n"
+    "below. Keep the whole reply to at most two short sentences (or a short "
+    "bullet list) — be terse, never pad. Always reply in Markdown.\n"
     "- Write short paragraphs. Use `-` bullet lists for any enumeration (tools, "
     "plugins, peers, processes, services) — one item per line, never a "
     "comma-joined wall of text.\n"
@@ -97,7 +98,8 @@ SUMMARY_INSTRUCTION = (
     "a count or status, and never state a value the results do not contain.\n"
     "- If the output is a list, summarize it (how many items, what they have in "
     "common, the notable names) instead of repeating every row.\n"
-    "- Be brief and concrete: one short paragraph or a short bullet list."
+    "- Be brief and concrete: at most two short sentences (or a short bullet "
+    "list) — never pad or restate the request."
 )
 
 DEFAULT_SOUL = (
