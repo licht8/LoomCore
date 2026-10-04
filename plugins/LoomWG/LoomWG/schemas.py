@@ -361,6 +361,7 @@ _TOOL_TIMEOUTS = {
     "wg_install_dependencies": 360,
     "wg_setup_server": 360,
     "wg_interface_start": 90,
+    "wg_interface_stop": 90,
     "wg_interface_restart": 90,
     "wg_service_enable": 90,
     "wg_service_disable": 90,

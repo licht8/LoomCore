@@ -51,7 +51,8 @@ stale/invalid cookie still falls through to a valid Bearer token.
 
 - New module constants `DEFAULT_TOOL_TIMEOUT = 30.0` and
   `MAX_TOOL_TIMEOUT = 600.0`, plus `_normalize_timeout` (rejects bool,
-  non-numeric and `<= 0` with a warning; clamps positives to 600).
+  non-numeric and `<= 0` with a warning; rejects unrepresentable
+  (`OverflowError`) and non-finite values; clamps positives to 600).
 - `_index_tools` caches a valid declared `timeout` in `self._tool_timeouts`;
   `_rebuild_tool_cache` purges stale entries.
 - `execute_tool` resolves `call_timeout` per tool (default 30s) and passes it to
@@ -62,7 +63,7 @@ stale/invalid cookie still falls through to a valid Bearer token.
   back to `proc.kill()`), used by `_kill_and_stop`; `_terminate_process` sends
   `SIGTERM` to the group first, then kills the tree on timeout.
 - Plugin schemas declare real budgets: LoomWG `wg_install_dependencies` and
-  `wg_setup_server` = 360, `wg_interface_start`/`restart` and
+  `wg_setup_server` = 360, `wg_interface_start`/`stop`/`restart` and
   `wg_service_enable`/`disable` = 90; LoomOps `ops_run_command` = 600,
   `ops_scan_health` = 120, and the journal/dmesg/units/systemctl/network tools =
   60.
@@ -94,9 +95,9 @@ form. The existing command splitter was not changed.
   the suite.
 - `pytest tests/test_agent.py tests/test_plugin_manager.py tests/test_api_auth.py tests/test_plugin_state.py tests/test_contracts.py tests/test_LoomOps_tools.py -q`
   — 322 passed, 9 skipped.
-- `python -m pytest -m "not integration and not e2e" -q` — 1395 passed, 13
+- `python -m pytest -m "not integration and not e2e" -q` — 1398 passed, 13
   skipped, 5 deselected (baseline 1370 passed, 12 skipped). Full log in
-  `tmp/tests_fast.log`.
+  `tmp/tests_fast.log` / `tmp/tests_fast2.log`.
 - `docker-compose.yml` parsed as valid YAML; the `hub` env value resolves to
   `${PLUGINS_STATE_FILE:-/data/plugins.json}`.
 - New tests cover the Part A 403/200 matrix, the `/data/plugins.json` path

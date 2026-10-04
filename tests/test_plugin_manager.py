@@ -150,7 +150,10 @@ def test_index_tools_clamps_timeout_above_max():
     assert manager._tool_timeouts["demo_tool"] == MAX_TOOL_TIMEOUT
 
 
-@pytest.mark.parametrize("value", ["60", 0, -1, True, None, [], {}])
+@pytest.mark.parametrize(
+    "value",
+    ["60", 0, -1, True, None, [], {}, 10**400, float("nan"), float("inf")],
+)
 def test_index_tools_ignores_malformed_timeout(value):
     manager = PluginManager()
     manager._rebuild_tool_cache("demo", [{**_schema("demo_tool"), "timeout": value}])

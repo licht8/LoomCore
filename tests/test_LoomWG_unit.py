@@ -2221,6 +2221,7 @@ def test_schema_declares_expected_timeouts(load_loomwg):
         "wg_install_dependencies": 360,
         "wg_setup_server": 360,
         "wg_interface_start": 90,
+        "wg_interface_stop": 90,
         "wg_interface_restart": 90,
         "wg_service_enable": 90,
         "wg_service_disable": 90,

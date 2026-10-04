@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import signal
 import subprocess
@@ -67,7 +68,19 @@ def _normalize_timeout(value: object, tool_name: str) -> float | None:
             f"Tool '{tool_name}' declares a non-positive timeout {value!r}; using default"
         )
         return None
-    return min(float(value), MAX_TOOL_TIMEOUT)
+    try:
+        number = float(value)
+    except OverflowError:
+        logger.warning(
+            f"Tool '{tool_name}' declares an unrepresentable timeout {value!r}; using default"
+        )
+        return None
+    if not math.isfinite(number):
+        logger.warning(
+            f"Tool '{tool_name}' declares a non-finite timeout {value!r}; using default"
+        )
+        return None
+    return min(number, MAX_TOOL_TIMEOUT)
 
 
 def allowed_plugins() -> set[str]:
