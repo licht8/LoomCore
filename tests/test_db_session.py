@@ -327,41 +327,47 @@ async def test_list_sessions_truncates_long_bodies():
     assert len(result[0]["preview"]) == 120
 
 
-def _plan_row(plan_id, revision, risks, created_at):
+def _pending_row(session_id, plan_id, revision, risks, created_at):
     return SimpleNamespace(
-        session_id="sess",
-        content=f"goal {revision}",
-        created_at=created_at,
-        tool_calls=[
-            {
+        id=session_id,
+        pending={
+            "plan": {
                 "plan_id": plan_id,
                 "revision": revision,
+                "goal": f"goal {revision}",
                 "steps": [{"risk": risk} for risk in risks],
-            }
-        ],
+            },
+            "user_text": "hi",
+            "created_at": created_at,
+        },
     )
 
 
 @pytest.mark.asyncio
-async def test_list_pending_plans_dedupes_to_newest_revision():
-    newest = _plan_row("pl_1", 2, ["dangerous", "safe"], "2026-02-01T00:00:00+00:00")
-    other = _plan_row("pl_2", 1, ["moderate"], "2026-01-15T00:00:00+00:00")
-    older = _plan_row("pl_1", 1, ["safe"], "2026-01-01T00:00:00+00:00")
-    db = _FakeSession(results=[_FakeResult(scalars=[newest, other, older])])
+async def test_list_pending_plans_reads_sessions_pending():
+    newest = _pending_row(
+        "sess1", "pl_1", 2, ["dangerous", "safe"], "2026-02-01T00:00:00+00:00"
+    )
+    other = _pending_row(
+        "sess2", "pl_2", 1, ["moderate"], "2026-01-15T00:00:00+00:00"
+    )
+    db = _FakeSession(results=[_FakeResult(scalars=[newest, other])])
 
     result = await db_session.list_pending_plans(db)
 
     assert [plan["plan_id"] for plan in result] == ["pl_1", "pl_2"]
+    assert result[0]["session_id"] == "sess1"
     assert result[0]["revision"] == 2
     assert result[0]["step_count"] == 2
     assert result[0]["risks"] == ["dangerous", "safe"]
     assert result[0]["goal"] == "goal 2"
+    assert result[0]["created_at"] == "2026-02-01T00:00:00+00:00"
 
 
 @pytest.mark.asyncio
 async def test_list_pending_plans_skips_rows_without_plan_id():
     bad = SimpleNamespace(
-        session_id="sess", content="x", created_at="t", tool_calls=[{}]
+        id="sess", pending={"plan": {"steps": []}, "created_at": "t"}
     )
     db = _FakeSession(results=[_FakeResult(scalars=[bad])])
 

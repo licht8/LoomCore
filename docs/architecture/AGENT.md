@@ -189,14 +189,17 @@ confirmation.
   main lever for the post-tool wait.
 - **Long-conversation memory**: the planner prompt keeps only the newest
   `_MAX_HISTORY_CHARS` (6000) of verbatim history, so in a long session the start
-  of the conversation used to vanish. Once the history of a session grows past
-  `MEMORY_COMPACT_AFTER_CHARS` (12000 chars, `src/core/memory.py`), everything
-  older than the last `MEMORY_KEEP_CHARS` (6000) of verbatim tail is folded into a
+  of the conversation used to vanish. Every turn schedules a background
+  compaction; `refresh_memory` (`src/core/memory.py`) is the single gate — it
+  reads up to `MEMORY_HISTORY_LIMIT` (200) rows, sums the foldable user/assistant
+  text, and returns the stored memory unchanged while that total stays at or
+  below `MEMORY_COMPACT_AFTER_CHARS` (12000 chars). Above it, everything older
+  than the last `MEMORY_KEEP_CHARS` (6000) of verbatim tail is folded into a
   short factual brief stored on the session (`sessions.memory`, plus the
   `memory_updated_at` coverage marker = the newest folded message) and injected as
   a *condensed* system block ahead of the tail. Compaction runs in the background
   **after** the turn (it never delays the plan or the reply), at most one refresh
-  per session at a time, deduplicated by the coverage marker so messages are never
+  per session process-wide, deduplicated by the coverage marker so messages are never
   folded twice, and reuses the summary settings (`LLM_SUMMARY_MODEL`,
   `LLM_SUMMARY_MAX_TOKENS`, `LLM_SUMMARY_TIMEOUT`,
   `LLM_SUMMARY_DISABLE_THINKING`) under `purpose="memory"`. A short session is

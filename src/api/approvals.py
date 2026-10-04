@@ -17,7 +17,7 @@ async def list_approvals(
     limit: int = Query(default=100, ge=1, le=200),
     authorization: str | None = Header(default=None),
 ):
-    """List plans with status ``proposed`` (newest revision per plan)."""
+    """List plans awaiting a decision (one pending plan per session)."""
     require_admin_token_from_request(request, authorization)
     async with async_session_factory() as db:
         approvals = await list_pending_plans(db, limit=limit)

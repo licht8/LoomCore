@@ -75,6 +75,9 @@ def _reply_response(text: str) -> dict:
 @pytest.fixture
 def patched_router(monkeypatch):
     """AIRouter with DB stubs; returns (router, state)."""
+    # The memory guard is process-wide; keep tests isolated from each other.
+    router_module._MEMORY_INFLIGHT.clear()
+    router_module._MEMORY_TASKS.clear()
 
     state: dict = {
         "queue": [],
@@ -1688,7 +1691,9 @@ async def _settle() -> None:
 
 
 @pytest.mark.asyncio
-async def test_route_schedules_no_refresh_for_a_short_history(patched_router, monkeypatch):
+async def test_route_schedules_a_refresh_every_turn_and_delegates_the_gate(
+    patched_router, monkeypatch
+):
     router, state = patched_router
     state["queue"] = [_text_response("ok")]
     calls: list[str] = []
@@ -1701,7 +1706,8 @@ async def test_route_schedules_no_refresh_for_a_short_history(patched_router, mo
     await router.route("hi", "sess-1")
     await _settle()
 
-    assert calls == []
+    assert calls == ["sess-1"]
+    assert not router_module._MEMORY_INFLIGHT
 
 
 @pytest.mark.asyncio
@@ -1724,7 +1730,7 @@ async def test_route_schedules_a_refresh_for_a_long_history(patched_router, monk
 
     assert result["type"] == "text"
     assert calls == ["sess-1"]
-    assert not router._memory_inflight
+    assert not router_module._MEMORY_INFLIGHT
 
 
 @pytest.mark.asyncio
@@ -1746,7 +1752,28 @@ async def test_route_refresh_failure_does_not_fail_the_turn(patched_router, monk
 
     assert result["type"] == "text"
     assert result["content"] == "ok"
-    assert not router._memory_inflight
+    assert not router_module._MEMORY_INFLIGHT
+
+
+@pytest.mark.asyncio
+async def test_second_router_does_not_schedule_an_inflight_session(
+    patched_router, monkeypatch
+):
+    router, state = patched_router
+    router_module._MEMORY_INFLIGHT.add("sess-1")
+    calls: list[str] = []
+
+    async def fake_refresh(db, session_id, *, config, client):
+        calls.append(session_id)
+
+    monkeypatch.setattr(router_module, "refresh_memory", fake_refresh)
+
+    other = AIRouter(plugin_manager=None)
+    other._schedule_memory_refresh("sess-1", _TEST_CONFIG)
+    await _settle()
+
+    assert calls == []
+    assert "sess-1" in router_module._MEMORY_INFLIGHT
 
 
 @pytest.mark.asyncio
@@ -1759,13 +1786,13 @@ async def test_aclose_cancels_pending_memory_refreshes(patched_router, monkeypat
         await asyncio.sleep(30)
 
     monkeypatch.setattr(router_module, "refresh_memory", slow_refresh)
-    router._memory_inflight.add("sess-1")
+    router_module._MEMORY_INFLIGHT.add("sess-1")
     task = asyncio.create_task(router._run_memory_refresh("sess-1", _TEST_CONFIG))
-    router._memory_tasks.add(task)
+    router_module._MEMORY_TASKS.add(task)
     await started.wait()
 
     await router.aclose()
 
     assert task.cancelled()
-    assert not router._memory_inflight
-    assert not router._memory_tasks
+    assert not router_module._MEMORY_INFLIGHT
+    assert not router_module._MEMORY_TASKS

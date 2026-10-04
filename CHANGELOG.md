@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-10-04
 
+- `GET /api/approvals` now reads the authoritative `sessions.pending` slot
+  instead of stale `role="plan"` rows, so a superseded plan is no longer listed.
+- Long-conversation compaction is gated in `refresh_memory` over the foldable
+  user/assistant history (the scheduler schedules every turn), and the
+  in-flight guard is process-wide so REST and WebSocket cannot compact the same
+  session at once.
 - Re-check tool risk at the dispatch boundary: `execute_tool_by_name` now
   requires `approved=True` for any non-safe tool, and the WebSocket forwards the
   plan's approval flag.

@@ -15,11 +15,7 @@ from src.core.agent import (
     validate_plan,
 )
 from src.core.core_tools import CORE_TOOLS_SCHEMA, resolve_tool_risk
-from src.core.memory import (
-    MEMORY_COMPACT_AFTER_CHARS,
-    refresh_memory,
-    select_foldable,
-)
+from src.core.memory import refresh_memory
 from src.core.timing import log_stage, span
 from src.db import session as db_session
 from src.db.database import async_session_factory
@@ -31,6 +27,11 @@ from src.llm.prompt import build_planner_messages, build_summary_messages
 from src.plugins.manager import PluginManager
 
 logger = logging.getLogger("loomcore.router")
+
+# Process-wide, so every AIRouter instance (REST + WebSocket) dedupes the same
+# session's compaction; the guard is per session id, not per router.
+_MEMORY_INFLIGHT: set[str] = set()
+_MEMORY_TASKS: set[asyncio.Task] = set()
 
 # Longest tool description rendered in the planner catalog (chars, before the
 # ellipsis); a verbose plugin description must not bloat the system prompt.
@@ -213,20 +214,16 @@ class AIRouter:
     def __init__(self, plugin_manager: PluginManager | None = None):
         self.client = OpenAICompatClient()
         self.plugin_manager = plugin_manager
-        # Long-conversation memory: the sessions being compacted right now and
-        # the background refresh tasks.
-        self._memory_inflight: set[str] = set()
-        self._memory_tasks: set[asyncio.Task] = set()
 
     async def aclose(self) -> None:
         """Cancel pending memory refreshes and close the shared HTTP client."""
-        pending = list(self._memory_tasks)
+        pending = list(_MEMORY_TASKS)
         for task in pending:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        self._memory_tasks.clear()
-        self._memory_inflight.clear()
+        _MEMORY_TASKS.clear()
+        _MEMORY_INFLIGHT.clear()
         await self.client.aclose()
 
     async def route(
@@ -485,29 +482,22 @@ class AIRouter:
             )
             # Compaction runs after the turn, in the background: it must never
             # delay the plan or the reply.
-            self._schedule_memory_refresh(session_id, config, history_dicts)
+            self._schedule_memory_refresh(session_id, config)
 
-    def _schedule_memory_refresh(
-        self, session_id: str, config, history: list[dict]
-    ) -> None:
-        """Compact the older history in the background, at most once per session.
+    def _schedule_memory_refresh(self, session_id: str, config) -> None:
+        """Schedule a background compaction, at most once per session globally.
 
-        Only fires for a history that actually grew past
-        ``MEMORY_COMPACT_AFTER_CHARS`` with something to fold; a concurrent turn
-        for the same session skips (the next turn picks it up).
+        ``refresh_memory`` is the single compaction gate: it decides whether the
+        foldable user/assistant history is large enough to fold. Scheduling is
+        cheap and bounded (one dedup check per turn), so every turn schedules and
+        a short history simply returns the stored memory unchanged.
         """
-        if session_id in self._memory_inflight:
+        if session_id in _MEMORY_INFLIGHT:
             return
-        total = sum(len(str(message.get("content") or "")) for message in history)
-        if total <= MEMORY_COMPACT_AFTER_CHARS:
-            return
-        folded, _kept = select_foldable(history)
-        if not folded:
-            return
-        self._memory_inflight.add(session_id)
+        _MEMORY_INFLIGHT.add(session_id)
         task = asyncio.create_task(self._run_memory_refresh(session_id, config))
-        self._memory_tasks.add(task)
-        task.add_done_callback(self._memory_tasks.discard)
+        _MEMORY_TASKS.add(task)
+        task.add_done_callback(_MEMORY_TASKS.discard)
 
     async def _run_memory_refresh(self, session_id: str, config) -> None:
         """Run one background compaction; never raise, never touch the turn."""
@@ -517,7 +507,7 @@ class AIRouter:
         except Exception as exc:
             logger.warning(f"Memory compaction failed for {session_id}: {exc}")
         finally:
-            self._memory_inflight.discard(session_id)
+            _MEMORY_INFLIGHT.discard(session_id)
 
     async def summarize_plan(
         self,

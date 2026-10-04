@@ -161,6 +161,39 @@ async def test_refresh_memory_skips_when_there_is_nothing_to_fold(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_refresh_memory_skips_below_the_compact_threshold(monkeypatch):
+    rows = [
+        _row("user", "u" * 4000, "2026-09-29T10:00:00+00:00"),
+        _row("assistant", "a" * 4000, "2026-09-29T10:01:00+00:00"),
+    ]
+    stored = _patch_db(monkeypatch, memory="existing brief", rows=rows)
+    client = _FakeClient()
+
+    result = await refresh_memory(object(), "sess", config=_config(), client=client)
+
+    assert result == "existing brief"
+    assert client.calls == []
+    assert stored["sets"] == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_memory_folds_when_tool_rows_hide_older_text(monkeypatch):
+    rows = [
+        _row("tool", "t" * 9000, "2026-09-29T09:59:00+00:00"),
+        _row("user", "u" * 8000, "2026-09-29T10:00:00+00:00"),
+        _row("assistant", "a" * 8000, "2026-09-29T10:01:00+00:00"),
+    ]
+    stored = _patch_db(monkeypatch, rows=rows)
+    client = _FakeClient(text="merged brief")
+
+    result = await refresh_memory(object(), "sess", config=_config(), client=client)
+
+    assert result == "merged brief"
+    assert len(client.calls) == 1
+    assert stored["sets"] == [("merged brief", "2026-09-29T10:00:00+00:00")]
+
+
+@pytest.mark.asyncio
 async def test_refresh_memory_keeps_the_stored_memory_when_the_model_fails(monkeypatch):
     rows = [
         _row("user", "u" * 7000, "2026-09-29T10:00:00+00:00"),

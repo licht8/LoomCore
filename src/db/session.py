@@ -413,42 +413,40 @@ async def list_sessions(session_db: AsyncSession, limit: int = 100) -> list[dict
 
 
 async def list_pending_plans(session_db: AsyncSession, limit: int = 100) -> list[dict]:
-    """List plans awaiting approval, newest revision per ``plan_id`` first.
+    """List plans awaiting a decision, one pending plan per session, newest first.
 
-    Considers only ``role="plan"`` rows whose stored JSONB status is
-    ``"proposed"`` (Postgres JSONB operators; the project targets Postgres).
-    A plan re-asked into a new revision leaves older ``proposed`` rows behind,
-    so rows are ordered newest-first and deduped by ``plan_id``.
+    The authority is the single ``sessions.pending`` slot (the same record the
+    WebSocket reads, claims and replaces), so a superseded plan is not listed —
+    a newer ``set_pending`` overwrote its slot. A pending record without a
+    ``plan_id`` is skipped.
     """
-    status_prop = Message.tool_calls[0]["status"]
     stmt = (
-        select(Message)
-        .where(Message.role == "plan", status_prop.as_string() == "proposed")
-        .order_by(Message.created_at.desc())
+        select(Session.id, Session.pending)
+        .where(Session.pending.is_not(None))
+        .order_by(Session.pending["created_at"].as_string().desc())
         .limit(limit)
     )
-    rows = (await session_db.execute(stmt)).scalars().all()
+    rows = (await session_db.execute(stmt)).all()
 
-    seen: set[str] = set()
     pending: list[dict] = []
     for row in rows:
-        plan = (row.tool_calls or [{}])[0]
+        record = row.pending or {}
+        plan = record.get("plan") or {}
         plan_id = plan.get("plan_id")
-        if not plan_id or plan_id in seen:
+        if not plan_id:
             continue
-        seen.add(plan_id)
         steps = plan.get("steps") or []
         pending.append(
             {
                 "plan_id": plan_id,
-                "session_id": row.session_id,
-                "goal": row.content,
+                "session_id": row.id,
+                "goal": plan.get("goal") or "",
                 "revision": plan.get("revision"),
                 "step_count": len(steps),
                 "risks": sorted(
                     {step.get("risk") for step in steps if step.get("risk")}
                 ),
-                "created_at": row.created_at,
+                "created_at": record.get("created_at"),
             }
         )
     return pending

@@ -156,15 +156,23 @@ async def refresh_memory(
 ) -> str | None:
     """Fold the older history into the stored memory; return the new memory.
 
-    Returns the current memory unchanged when there is nothing new to fold or
-    when the model call fails or returns an empty result — a failed compaction
-    must never damage the conversation or the turn.
+    This function is the single compaction gate: it computes the foldable
+    user/assistant char total from the same 200-row history read it already
+    performs and returns the current memory unchanged while that total stays at
+    or below ``MEMORY_COMPACT_AFTER_CHARS``. It also keeps the current memory
+    unchanged when there is nothing new to fold or when the model call fails or
+    returns an empty result — a failed compaction must never damage the
+    conversation or the turn.
     """
     existing, covered_at = await db_session.get_memory(session_db, session_id)
     messages = await db_session.get_session_history(
         session_db, session_id, limit=MEMORY_HISTORY_LIMIT
     )
-    folded, _kept = select_foldable(_history_dicts(messages))
+    history = _history_dicts(messages)
+    total = sum(len(str(message.get("content") or "")) for message in history)
+    if total <= MEMORY_COMPACT_AFTER_CHARS:
+        return (existing or "").strip() or None
+    folded, _kept = select_foldable(history)
     pending = [
         message
         for message in folded
