@@ -25,6 +25,14 @@ def _auth(monkeypatch):
     monkeypatch.setattr(settings, "admin_token", "secret")
 
 
+class _DummyContext:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_chat_returns_router_result(monkeypatch):
     _auth(monkeypatch)
@@ -43,6 +51,87 @@ async def test_chat_returns_router_result(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"type": "text", "content": "echo:hi"}
+
+
+@pytest.mark.asyncio
+async def test_chat_persists_plan_as_pending(monkeypatch):
+    _auth(monkeypatch)
+    plan = {"plan_id": "pl_1", "steps": []}
+
+    async def fake_route(message, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(chat_api.airouter, "route", fake_route)
+    monkeypatch.setattr(chat_api, "async_session_factory", lambda: _DummyContext())
+    calls: list = []
+
+    async def fake_set_pending(db, session_id, plan_arg, message):
+        calls.append((session_id, plan_arg, message))
+
+    monkeypatch.setattr(chat_api, "set_pending", fake_set_pending)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/chat",
+            json={"session_id": "s1", "message": "hi"},
+            headers=_AUTH,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"type": "plan", "plan": plan}
+    assert calls == [("s1", plan, "hi")]
+
+
+@pytest.mark.asyncio
+async def test_chat_still_returns_plan_when_pending_persist_fails(monkeypatch, caplog):
+    _auth(monkeypatch)
+    plan = {"plan_id": "pl_1", "steps": []}
+
+    async def fake_route(message, session_id):
+        return {"type": "plan", "plan": plan}
+
+    monkeypatch.setattr(chat_api.airouter, "route", fake_route)
+    monkeypatch.setattr(chat_api, "async_session_factory", lambda: _DummyContext())
+
+    async def boom(db, session_id, plan_arg, message):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(chat_api, "set_pending", boom)
+
+    with caplog.at_level(logging.ERROR, logger="loomcore.api.chat"):
+        async with _client() as client:
+            response = await client.post(
+                "/api/chat",
+                json={"session_id": "s1", "message": "hi"},
+                headers=_AUTH,
+            )
+
+    assert response.status_code == 200
+    assert response.json() == {"type": "plan", "plan": plan}
+    assert "Failed to persist pending plan (session=s1)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_chat_text_does_not_persist_pending(monkeypatch):
+    _auth(monkeypatch)
+    _patch_echo(monkeypatch)
+    calls: list = []
+
+    async def fake_set_pending(*args):
+        calls.append(args)
+
+    monkeypatch.setattr(chat_api, "set_pending", fake_set_pending)
+
+    async with _client() as client:
+        response = await client.post(
+            "/api/chat",
+            json={"session_id": "s1", "message": "hi"},
+            headers=_AUTH,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"type": "text", "content": "echo:hi"}
+    assert calls == []
 
 
 @pytest.mark.asyncio

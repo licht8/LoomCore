@@ -5,6 +5,12 @@ task report (RULES 14).
 
 ## 2026-10-04
 
+- Re-check tool risk at the dispatch boundary: `execute_tool_by_name` now
+  requires `approved=True` for any non-safe tool, and the WebSocket forwards the
+  plan's approval flag.
+- REST `POST /api/chat` registers a returned plan as the session's pending plan
+  (`set_pending`, best-effort) so it is approvable, instead of returning a plan
+  nothing can bind to; it never executes a tool.
 - Enforce `REQUIRE_TLS` on the admin session cookie: `GET /api/auth/session` now
   re-validates a valid cookie through `require_admin_token`, so a JWT cookie over
   plain HTTP is 403; an invalid cookie still falls through to the Bearer token.

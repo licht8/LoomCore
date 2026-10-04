@@ -24,6 +24,7 @@ from time import monotonic, time
 
 from src.config import settings
 from src.core.contracts import validate_tool_args, validate_tool_result
+from src.core.security import classify_tool_risk
 from src.core.security_log import log_security_event
 from src.core.timing import log_stage
 from src.core.version import CORE_VERSION
@@ -1253,10 +1254,23 @@ class PluginManager:
         plugin.state = PluginState.STOPPED
 
     async def execute_tool_by_name(
-        self, tool_name: str, arguments: dict | None = None
+        self,
+        tool_name: str,
+        arguments: dict | None = None,
+        *,
+        approved: bool = False,
     ) -> dict:
-        """Invoke a tool by name, enforcing its advertised argument contract."""
+        """Invoke a tool by name, enforcing its argument contract and approval gate.
+
+        Argument validation always runs first. A non-safe tool (as classified by
+        the core, not only as declared by the plugin) is refused unless the caller
+        explicitly passes ``approved=True``; this mirrors the plan executor's
+        safety invariant at the dispatch boundary.
+        """
         validate_tool_args(tool_name, arguments, self._tool_schemas.get(tool_name))
+        risk = classify_tool_risk(tool_name, self.tool_risk(tool_name))
+        if risk != "safe" and not approved:
+            raise PermissionError(f"Tool '{tool_name}' requires approval")
         result = await self.execute_tool(
             self.plugin_for_tool(tool_name), tool_name, arguments
         )

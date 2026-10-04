@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 from src.api.deps import chat_key_func, extract_admin_token
 from src.core.rate_limit import limiter
 from src.core.security import require_admin_token
+from src.db.database import async_session_factory
+from src.db.session import set_pending
 from src.llm.client import LlmError
 from src.llm.exceptions import LlmBudgetExceeded
 from src.llm.router import AIRouter
@@ -41,7 +43,7 @@ async def chat_endpoint(
     """Send a message to the AI and get a response (REST)."""
     require_admin_token(extract_admin_token(request, authorization), request)
     try:
-        return await airouter.route(payload.message, payload.session_id)
+        result = await airouter.route(payload.message, payload.session_id)
     except LlmBudgetExceeded as exc:
         logger.warning("LLM budget exceeded (session=%s): %s", payload.session_id, exc)
         return JSONResponse(status_code=429, content={"detail": str(exc)})
@@ -53,3 +55,17 @@ async def chat_endpoint(
         return JSONResponse(
             status_code=500, content={"detail": "Internal server error"}
         )
+
+    if isinstance(result, dict) and result.get("type") == "plan" and result.get("plan"):
+        # REST never executes: register the plan as the session's pending so it
+        # is approvable over the WebSocket and visible in GET /api/approvals.
+        try:
+            async with async_session_factory() as db:
+                await set_pending(
+                    db, payload.session_id, result["plan"], payload.message
+                )
+        except Exception:
+            logger.exception(
+                "Failed to persist pending plan (session=%s)", payload.session_id
+            )
+    return result

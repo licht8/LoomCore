@@ -257,8 +257,9 @@ async def test_execute_tool_forwards_approval(monkeypatch):
 async def test_execute_tool_routes_plugin_names_to_manager(monkeypatch):
     captured = {}
 
-    async def fake_execute(name, arguments):
+    async def fake_execute(name, arguments, *, approved=False):
         captured["args"] = (name, arguments)
+        captured["approved"] = approved
         return {"ok": True}
 
     monkeypatch.setattr(
@@ -268,6 +269,14 @@ async def test_execute_tool_routes_plugin_names_to_manager(monkeypatch):
     result = await ws_module._execute_tool("wg_interface_status", {"interface": "wg0"})
 
     assert captured["args"] == ("wg_interface_status", {"interface": "wg0"})
+    assert captured["approved"] is False
+    assert result == {"ok": True}
+
+    result = await ws_module._execute_tool(
+        "wg_interface_status", {"interface": "wg0"}, approved=True
+    )
+
+    assert captured["approved"] is True
     assert result == {"ok": True}
 
 

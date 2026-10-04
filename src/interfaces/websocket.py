@@ -160,7 +160,9 @@ async def _execute_tool(
     async with span("execute_tool", tool=tool_name):
         if tool_name in CORE_TOOL_NAMES:
             return await dispatch_core_tool(tool_name, arguments, approved=approved)
-        return await plugin_manager.execute_tool_by_name(tool_name, arguments)
+        return await plugin_manager.execute_tool_by_name(
+            tool_name, arguments, approved=approved
+        )
 
 
 async def _run_plan(

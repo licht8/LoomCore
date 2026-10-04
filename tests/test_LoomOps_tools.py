@@ -2111,7 +2111,7 @@ async def test_run_command_contract_accepts_argv_list(load_loomops, monkeypatch)
     monkeypatch.setattr(manager, "execute_tool", fake_execute_tool)
 
     result = await manager.execute_tool_by_name(
-        "ops_run_command", {"command": ["echo", "hi"]}
+        "ops_run_command", {"command": ["echo", "hi"]}, approved=True
     )
 
     assert result == {"ok": True}
@@ -2127,7 +2127,7 @@ async def test_run_command_contract_accepts_string(load_loomops, monkeypatch):
     monkeypatch.setattr(manager, "execute_tool", fake_execute_tool)
 
     result = await manager.execute_tool_by_name(
-        "ops_run_command", {"command": "uptime -p"}
+        "ops_run_command", {"command": "uptime -p"}, approved=True
     )
 
     assert result == {"ok": True}

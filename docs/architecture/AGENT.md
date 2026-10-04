@@ -33,6 +33,11 @@ plugin tools in `execute_tool_by_name`, core meta-tools in `dispatch_core_tool` 
 so an edited or hand-crafted plan cannot slip past the planner. See
 `src/core/contracts.py`.
 
+REST `POST /api/chat` is conversation and planning only — it never executes a
+tool. A plan returned by the planner is registered as the session's pending plan
+(`sessions.pending`, best-effort) so it can be approved over the WebSocket and
+appears in `GET /api/approvals`; execution happens only after that approval.
+
 ## Flow
 
 1. **Understand** — the planner LLM is offered exactly two callable tools,

@@ -263,6 +263,47 @@ async def test_execute_tool_by_name_rejects_invalid_args(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_by_name_requires_approval_for_non_safe(monkeypatch):
+    manager = PluginManager()
+    manager._tool_plugins["ops_write_file"] = "demo"
+    manager._tool_risk["ops_write_file"] = "dangerous"
+    dispatched: list = []
+
+    async def fake_execute(plugin_name, tool_name, arguments):
+        dispatched.append(tool_name)
+        return {"ok": True}
+
+    monkeypatch.setattr(manager, "execute_tool", fake_execute)
+
+    with pytest.raises(PermissionError):
+        await manager.execute_tool_by_name("ops_write_file", {})
+    assert dispatched == []
+
+    assert await manager.execute_tool_by_name(
+        "ops_write_file", {}, approved=True
+    ) == {"ok": True}
+    assert dispatched == ["ops_write_file"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_by_name_core_dangerous_overrides_declared_safe(monkeypatch):
+    manager = PluginManager()
+    manager._tool_plugins["ops_run_command"] = "LoomOps"
+    manager._tool_risk["ops_run_command"] = "safe"
+    dispatched: list = []
+
+    async def fake_execute(plugin_name, tool_name, arguments):
+        dispatched.append(tool_name)
+        return {"ok": True}
+
+    monkeypatch.setattr(manager, "execute_tool", fake_execute)
+
+    with pytest.raises(PermissionError):
+        await manager.execute_tool_by_name("ops_run_command", {})
+    assert dispatched == []
+
+
+@pytest.mark.asyncio
 async def test_execute_internal_tool_routes_to_owner(monkeypatch):
     manager = PluginManager()
     manager._internal_tools["wg_get_client_artifact"] = "LoomWG"
