@@ -471,3 +471,42 @@ async def test_execute_plan_stops_on_parallel_failure():
     assert result["plan"]["steps"][1]["status"] == "failed"
     assert result["plan"]["steps"][1]["error"] == "boom"
     assert result["plan"]["steps"][2]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_reports_all_parallel_outcomes_on_first_failure():
+    plan = agent.build_plan(
+        {
+            "goal": "g",
+            "steps": [
+                {"tool": "core_health", "why": "w1", "parallel": True},
+                {"tool": "core_list_plugins", "why": "w2", "parallel": True},
+                {"tool": "core_capabilities", "why": "w3"},
+            ],
+        }
+    )
+    dispatched: list[str] = []
+    events: list[tuple] = []
+
+    async def dispatch(tool, args, *, approved=False):
+        dispatched.append(tool)
+        if tool == "core_health":
+            raise RuntimeError("boom")
+        return {"content": [], "data": {"tool": tool}}
+
+    async def emit(event):
+        events.append((event["type"], event["phase"], event["step"]["tool"]))
+
+    result = await agent.execute_plan(plan, dispatch=dispatch, emit=emit)
+
+    assert set(dispatched) == {"core_health", "core_list_plugins"}
+    assert "core_capabilities" not in dispatched
+    assert result["plan"]["status"] == "failed"
+    assert result["plan"]["steps"][0]["status"] == "failed"
+    assert result["plan"]["steps"][0]["error"] == "boom"
+    assert result["plan"]["steps"][1]["status"] == "done"
+    assert result["plan"]["steps"][2]["status"] == "pending"
+    assert all(step["status"] != "running" for step in result["plan"]["steps"])
+    assert [r["step"]["tool"] for r in result["results"]] == ["core_list_plugins"]
+    assert ("plan_step", "done", "core_list_plugins") in events
+    assert ("plan_step", "failed", "core_health") in events

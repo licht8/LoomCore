@@ -11,6 +11,14 @@ task report (RULES 14).
 - Persist plugin enable/disable state to `/data/plugins.json` on the `loomdata`
   volume in Docker Compose (`PLUGINS_STATE_FILE`), so it survives container
   recreation; the local/non-Docker default is unchanged.
+- Per-tool plugin call timeouts: a tool may declare `timeout` (seconds, default
+  30, clamped to `[1, 600]`); LoomWG/LoomOps declare theirs. On timeout the core
+  kills the plugin's whole process group, so `apt-get`/`wg-quick` grandchildren
+  are not orphaned.
+- Parallel plan steps now report every outcome: a failed step marks the plan
+  failed while a successful sibling is still emitted `done` and kept in results.
+- `ops_run_command` accepts an argv list (`["df", "-h"]`) as well as a command
+  string.
 
 ## 2026-09-29
 

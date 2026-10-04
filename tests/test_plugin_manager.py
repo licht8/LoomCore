@@ -4,6 +4,8 @@ import asyncio
 import io
 import json
 import logging
+import os
+import signal
 import threading
 import time
 
@@ -12,7 +14,13 @@ import pytest
 from src.config import settings
 from src.core.contracts import ToolContractError
 from src.plugins.errors import PluginPolicyDenied
-from src.plugins.manager import ManagedPlugin, PluginManager, PluginState
+from src.plugins.manager import (
+    DEFAULT_TOOL_TIMEOUT,
+    MAX_TOOL_TIMEOUT,
+    ManagedPlugin,
+    PluginManager,
+    PluginState,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +134,37 @@ def test_index_tools_caches_schema_and_risk():
 
     assert manager.tool_schema("demo_tool")["required"] == ["a"]
     assert manager.tool_risk("demo_tool") == "moderate"
+
+
+def test_index_tools_caches_declared_timeout():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [{**_schema("demo_tool"), "timeout": 120}])
+
+    assert manager._tool_timeouts["demo_tool"] == 120.0
+
+
+def test_index_tools_clamps_timeout_above_max():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [{**_schema("demo_tool"), "timeout": 9999}])
+
+    assert manager._tool_timeouts["demo_tool"] == MAX_TOOL_TIMEOUT
+
+
+@pytest.mark.parametrize("value", ["60", 0, -1, True, None, [], {}])
+def test_index_tools_ignores_malformed_timeout(value):
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [{**_schema("demo_tool"), "timeout": value}])
+
+    assert "demo_tool" not in manager._tool_timeouts
+
+
+def test_rebuild_cache_purges_stale_timeout():
+    manager = PluginManager()
+    manager._rebuild_tool_cache("demo", [{**_schema("old"), "timeout": 60}])
+
+    manager._rebuild_tool_cache("demo", [_schema("new")])
+
+    assert manager._tool_timeouts == {}
 
 
 def test_tool_accessors_default_for_unknown():
@@ -787,6 +826,56 @@ async def test_execute_tool_timeout_kills_process(monkeypatch):
 
     assert proc.killed is True
     assert manager._plugins["demo"].state == PluginState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_uses_declared_timeout(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager)
+    manager._rebuild_tool_cache("demo", [{**_schema("demo_tool"), "timeout": 120}])
+    seen = {}
+
+    async def fake_exchange(plugin_name, request, call_timeout):
+        seen["call_timeout"] = call_timeout
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(manager, "_exchange", fake_exchange)
+
+    await manager.execute_tool("demo", "demo_tool")
+
+    assert seen["call_timeout"] == 120.0
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_uses_default_timeout(monkeypatch):
+    manager = PluginManager()
+    _add_plugin(manager)
+    manager._rebuild_tool_cache("demo", [_schema("demo_tool")])
+    seen = {}
+
+    async def fake_exchange(plugin_name, request, call_timeout):
+        seen["call_timeout"] = call_timeout
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(manager, "_exchange", fake_exchange)
+
+    await manager.execute_tool("demo", "demo_tool")
+
+    assert seen["call_timeout"] == DEFAULT_TOOL_TIMEOUT
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process groups only")
+def test_kill_process_tree_signals_process_group(monkeypatch):
+    manager = PluginManager()
+    proc = _FakeProc(pid=1234)
+    calls = []
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
+
+    manager._kill_process_tree(proc)
+
+    assert calls == [(1234, signal.SIGKILL)]
+    assert proc.killed is False
 
 
 @pytest.mark.asyncio

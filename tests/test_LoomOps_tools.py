@@ -14,6 +14,9 @@ from pathlib import Path
 
 import pytest
 
+from src.core.contracts import ToolContractError
+from src.plugins.manager import PluginManager
+
 EXPECTED_TOOLS = {
     "ops_run_command",
     "ops_read_file",
@@ -2063,3 +2066,75 @@ def test_configure_logging_warns_with_the_raw_input(
     value = stream.getvalue()
     assert "'Chatty'" in value
     assert "'CHATTY'" not in value
+
+
+# === schemas.py: per-tool timeout + argv-list contract ===
+
+
+def test_schema_declares_expected_timeouts(load_loomops):
+    schemas = load_loomops("loomops.schemas")["loomops.schemas"]
+    timeouts = {
+        tool["name"]: tool["timeout"]
+        for tool in schemas.TOOLS_SCHEMA
+        if "timeout" in tool
+    }
+    assert timeouts == {
+        "ops_run_command": 600,
+        "ops_systemctl_status": 60,
+        "ops_systemctl_restart": 60,
+        "ops_log_search": 60,
+        "ops_dmesg": 60,
+        "ops_failed_units": 60,
+        "ops_network_connections": 60,
+        "ops_scan_health": 120,
+    }
+
+
+def _run_command_manager(load_loomops) -> PluginManager:
+    schemas = load_loomops("loomops.schemas")["loomops.schemas"]
+    manager = PluginManager()
+    manager._rebuild_tool_cache(
+        "LoomOps",
+        [tool for tool in schemas.TOOLS_SCHEMA if tool["name"] == "ops_run_command"],
+    )
+    return manager
+
+
+async def test_run_command_contract_accepts_argv_list(load_loomops, monkeypatch):
+    manager = _run_command_manager(load_loomops)
+    captured = {}
+
+    async def fake_execute_tool(plugin_name, tool_name, arguments=None):
+        captured["arguments"] = arguments
+        return {"ok": True}
+
+    monkeypatch.setattr(manager, "execute_tool", fake_execute_tool)
+
+    result = await manager.execute_tool_by_name(
+        "ops_run_command", {"command": ["echo", "hi"]}
+    )
+
+    assert result == {"ok": True}
+    assert captured["arguments"] == {"command": ["echo", "hi"]}
+
+
+async def test_run_command_contract_accepts_string(load_loomops, monkeypatch):
+    manager = _run_command_manager(load_loomops)
+
+    async def fake_execute_tool(plugin_name, tool_name, arguments=None):
+        return {"ok": True}
+
+    monkeypatch.setattr(manager, "execute_tool", fake_execute_tool)
+
+    result = await manager.execute_tool_by_name(
+        "ops_run_command", {"command": "uptime -p"}
+    )
+
+    assert result == {"ok": True}
+
+
+async def test_run_command_contract_rejects_non_string_command(load_loomops):
+    manager = _run_command_manager(load_loomops)
+
+    with pytest.raises(ToolContractError):
+        await manager.execute_tool_by_name("ops_run_command", {"command": 123})

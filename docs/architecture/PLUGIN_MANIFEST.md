@@ -118,6 +118,11 @@ core-facing keys alongside `name`/`description`/`inputSchema`:
   The core only treats it as a report when the command's basename is in
   `LOOMCORE_REPORT_COMMANDS` and the command has no shell metacharacters, so the
   read-only classification is opt-in and best-effort.
+- `timeout` — optional per-tool call budget in seconds. The core uses it for that
+  tool's `tools/call` and kills the plugin's whole process group when it expires.
+  Absent or malformed values fall back to the 30s default; a positive number is
+  clamped to `[1, 600]`. Declare it for tools whose real work can exceed 30s
+  (e.g. LoomWG `wg_install_dependencies` = 360, LoomOps `ops_run_command` = 600).
 
 ## Adding a plugin
 

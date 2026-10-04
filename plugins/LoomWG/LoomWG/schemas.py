@@ -278,6 +278,24 @@ def _declare_risk(tools: list[dict], risk: dict[str, str]) -> None:
         tool["risk"] = risk[tool["name"]]
 
 
+def _declare_timeouts(tools: list[dict], timeouts: dict[str, float]) -> None:
+    """Declare per-tool call timeouts; refuse stale names.
+
+    Timeouts are opt-in (like reports): a tool without an entry uses the core
+    default (30s). A declared name without a matching tool means the declaration
+    went stale and is an error.
+    """
+    names = {tool["name"] for tool in tools}
+    unknown = sorted(set(timeouts) - names)
+    if unknown:
+        raise RuntimeError(
+            f"Timeout declarations reference unknown tools: {unknown}"
+        )
+    for tool in tools:
+        if tool["name"] in timeouts:
+            tool["timeout"] = timeouts[tool["name"]]
+
+
 def _declare_report(tools: list[dict], report: set[str]) -> None:
     """Mark the listed tools as reports; refuse stale names.
 
@@ -334,3 +352,18 @@ _REPORT_TOOLS = {
 }
 
 _declare_report(TOOLS_SCHEMA, _REPORT_TOOLS)
+
+# Per-tool call timeouts (seconds) for work that can exceed the 30s default:
+# wg_install_dependencies runs apt-get (budget 300s), wg_setup_server runs
+# firewall/NAT commands (budget 300s), and the lifecycle/autostart tools run
+# wg-quick (budget 60s). Tools not listed keep the core default.
+_TOOL_TIMEOUTS = {
+    "wg_install_dependencies": 360,
+    "wg_setup_server": 360,
+    "wg_interface_start": 90,
+    "wg_interface_restart": 90,
+    "wg_service_enable": 90,
+    "wg_service_disable": 90,
+}
+
+_declare_timeouts(TOOLS_SCHEMA, _TOOL_TIMEOUTS)

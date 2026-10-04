@@ -2206,3 +2206,30 @@ def test_atomic_write_replaces_content_and_cleans_up(load_loomwg, tmp_path):
 
     assert target.read_text(encoding="utf-8") == "new"
     assert list(tmp_path.glob(".wg0.conf.*")) == []
+
+
+# === schemas.py: declared per-tool call timeouts ===
+
+def test_schema_declares_expected_timeouts(load_loomwg):
+    schemas = load_loomwg("schemas")["schemas"]
+    timeouts = {
+        tool["name"]: tool["timeout"]
+        for tool in schemas.TOOLS_SCHEMA
+        if "timeout" in tool
+    }
+    assert timeouts == {
+        "wg_install_dependencies": 360,
+        "wg_setup_server": 360,
+        "wg_interface_start": 90,
+        "wg_interface_restart": 90,
+        "wg_service_enable": 90,
+        "wg_service_disable": 90,
+    }
+
+
+def test_schema_timeouts_are_positive_and_within_core_max(load_loomwg):
+    schemas = load_loomwg("schemas")["schemas"]
+    for tool in schemas.TOOLS_SCHEMA:
+        if "timeout" in tool:
+            assert isinstance(tool["timeout"], (int, float))
+            assert 0 < tool["timeout"] <= 600

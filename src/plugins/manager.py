@@ -1,12 +1,16 @@
 """Plugin Manager — launches plugins as subprocesses + MCP transport (stdin/stdout).
 
 Each plugin runs as a separate process. Communication uses JSON-RPC 2.0 over
-stdin/stdout. Call timeout: 30 seconds. A plugin crash does not take down the Hub.
+stdin/stdout. Call timeout: a per-tool value declared by the plugin, defaulting
+to 30 seconds. A plugin crash does not take down the Hub.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -35,6 +39,35 @@ from src.plugins.state import load_disabled, save_disabled
 logger = logging.getLogger("loomcore.plugins")
 
 _VALID_RISKS = frozenset({"safe", "moderate", "dangerous"})
+
+# Per-tool call timeout: plugins may declare an optional ``timeout`` (seconds)
+# in their TOOLS_SCHEMA; anything heavier than MAX is clamped so a bad value
+# cannot hang a request for an unbounded time.
+DEFAULT_TOOL_TIMEOUT = 30.0
+MAX_TOOL_TIMEOUT = 600.0
+
+
+def _normalize_timeout(value: object, tool_name: str) -> float | None:
+    """Return a clamped per-tool timeout, or None when absent/malformed.
+
+    A plugin declares an optional ``timeout`` (seconds) per tool; only a
+    positive int/float is accepted (bools are rejected), clamped to
+    ``MAX_TOOL_TIMEOUT``. Anything else is ignored with a warning so a bad
+    declaration falls back to the default instead of breaking discovery.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        logger.warning(
+            f"Tool '{tool_name}' declares an invalid timeout {value!r}; using default"
+        )
+        return None
+    if value <= 0:
+        logger.warning(
+            f"Tool '{tool_name}' declares a non-positive timeout {value!r}; using default"
+        )
+        return None
+    return min(float(value), MAX_TOOL_TIMEOUT)
 
 
 def allowed_plugins() -> set[str]:
@@ -145,6 +178,9 @@ class PluginManager:
         # Per-tool report declaration: "always" for ``report: true``, otherwise
         # the name of the argument whose read-only value makes it a report.
         self._tool_report: dict[str, str] = {}
+        # Per-tool call timeout (seconds) declared in TOOLS_SCHEMA; tools absent
+        # from this map use DEFAULT_TOOL_TIMEOUT.
+        self._tool_timeouts: dict[str, float] = {}
         # True once the external tool catalog has been indexed at least once.
         self._tools_indexed: bool = False
 
@@ -157,14 +193,27 @@ class PluginManager:
         self._max_tool_calls_per_minute = 10
 
     def _spawn(self, command: list[str], working_dir: str | None) -> subprocess.Popen:
-        """Launch a plugin subprocess with the standard stdio pipes."""
+        """Launch a plugin subprocess in its own session/process group.
+
+        Isolating the child in a new session lets a timed-out call signal the
+        whole tree (grandchildren like ``apt-get`` or ``wg-quick`` included)
+        instead of orphaning them.
+        """
+        kwargs: dict = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
         return subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=working_dir,
+            **kwargs,
         )
 
     def _drain_stderr(self, name: str, proc: subprocess.Popen) -> None:
@@ -590,13 +639,37 @@ class PluginManager:
                     delay=delay,
                 )
 
+    def _kill_process_tree(self, proc: subprocess.Popen) -> None:
+        """Kill a plugin process and every process in its group.
+
+        The plugin runs in its own session/process group (see ``_spawn``), so the
+        whole tree — including grandchildren such as ``apt-get`` or ``wg-quick``
+        — is signalled together. Falls back to ``proc.kill()`` (best effort) when
+        the group is already gone or cannot be signalled.
+        """
+        if os.name != "nt":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                return
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        with contextlib.suppress(ProcessLookupError, OSError):
+            proc.kill()
+
     def _terminate_process(self, proc: subprocess.Popen) -> None:
-        """Terminate a subprocess, escalating to kill; blocks, so run in a thread."""
-        proc.terminate()
+        """Terminate a subprocess group, escalating to kill; blocks, so run in a thread."""
+        try:
+            if os.name != "nt":
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            else:
+                proc.terminate()
+        except (ProcessLookupError, PermissionError, OSError):
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            self._kill_process_tree(proc)
             proc.wait()
 
     def terminate_all(self) -> None:
@@ -671,6 +744,9 @@ class PluginManager:
             risk = _normalize_risk(tool.get("risk"))
             if risk:
                 self._tool_risk[tool_name] = risk
+            timeout = _normalize_timeout(tool.get("timeout"), tool_name)
+            if timeout is not None:
+                self._tool_timeouts[tool_name] = timeout
             if tool.get("report") is True:
                 self._tool_report[tool_name] = "always"
             else:
@@ -699,6 +775,7 @@ class PluginManager:
             self._tool_schemas.pop(name, None)
             self._tool_risk.pop(name, None)
             self._tool_report.pop(name, None)
+            self._tool_timeouts.pop(name, None)
 
         # Add new ones: internal — core only, the rest — for the LLM
         return self._index_tools(plugin_name, tools)
@@ -1069,8 +1146,9 @@ class PluginManager:
     ) -> dict:
         """Invoke a plugin tool (tools/call → result).
 
-        Timeout: 30 seconds. If the plugin does not respond, kill the process.
-        On STOPPED or a dead process, attempts auto-restart.
+        Timeout: the tool's declared ``timeout`` if any, else 30 seconds. If the
+        plugin does not respond, kill its whole process group. On STOPPED or a
+        dead process, attempts auto-restart.
         """
         plugin = self._plugins.get(plugin_name)
 
@@ -1112,9 +1190,12 @@ class PluginManager:
             },
         }
 
+        call_timeout = self._tool_timeouts.get(tool_name, DEFAULT_TOOL_TIMEOUT)
         started = monotonic()
         try:
-            response = await self._exchange(plugin_name, request, call_timeout=30)
+            response = await self._exchange(
+                plugin_name, request, call_timeout=call_timeout
+            )
             if response.get("error"):
                 raise RuntimeError(response["error"].get("message", "MCP plugin error"))
             result = response.get("result")
@@ -1131,7 +1212,8 @@ class PluginManager:
             raise
         except TimeoutError:
             raise TimeoutError(
-                f"Call to '{tool_name}' in '{plugin_name}' timed out (30s)"
+                f"Call to '{tool_name}' in '{plugin_name}' timed out "
+                f"({call_timeout:.0f}s)"
             ) from None
         finally:
             log_stage(
@@ -1151,7 +1233,7 @@ class PluginManager:
         proc = plugin.proc
         if proc and proc.poll() is None:
             try:
-                proc.kill()
+                self._kill_process_tree(proc)
                 proc.wait(timeout=5)
             except Exception:
                 logger.exception(f"Failed to kill plugin '{plugin_name}'")

@@ -365,7 +365,9 @@ async def execute_plan(
                         "error": str(outcome),
                     }
                 )
-                return {"plan": plan, "results": results}
+                # Keep processing siblings: a successful parallel step must
+                # still be reported as done and included in the results.
+                continue
             step["status"] = "done"
             await emit(
                 {
@@ -376,6 +378,9 @@ async def execute_plan(
                 }
             )
             results.append({"step": step, "result": outcome})
+
+        if plan["status"] == "failed":
+            return {"plan": plan, "results": results}
 
     plan["status"] = "done"
     return {"plan": plan, "results": results}

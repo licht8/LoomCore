@@ -8,19 +8,26 @@ TOOLS_SCHEMA = [
         "description": (
             "Run an allow-listed command without a shell. The executable basename "
             "must be listed in LOOMOPS_ALLOWED_COMMANDS (empty denies all). "
-            "Arguments are split with shlex; output is captured and capped. "
-            "Requires admin approval."
+            "Provide a shell-quoted string or an argv list. Arguments are split "
+            "with shlex; output is captured and capped. Requires admin approval."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "command": {
-                    "type": "string",
-                    "description": "Command line, e.g. 'uptime -p' or 'df -h'",
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                    "description": (
+                        "Command line (shell-quoted string) or an argv list, "
+                        "e.g. 'uptime -p' or ['df', '-h']"
+                    ),
                 }
             },
             "required": ["command"],
         },
+        "timeout": 600,
     },
     {
         "name": "ops_read_file",
@@ -99,6 +106,7 @@ TOOLS_SCHEMA = [
             "properties": {"service": {"type": "string"}},
             "required": ["service"],
         },
+        "timeout": 60,
     },
     {
         "name": "ops_systemctl_restart",
@@ -111,6 +119,7 @@ TOOLS_SCHEMA = [
             "properties": {"service": {"type": "string"}},
             "required": ["service"],
         },
+        "timeout": 60,
     },
     {
         "name": "ops_disk_usage",
@@ -155,6 +164,7 @@ TOOLS_SCHEMA = [
             },
             "required": [],
         },
+        "timeout": 60,
     },
     {
         "name": "ops_dmesg",
@@ -169,11 +179,13 @@ TOOLS_SCHEMA = [
             },
             "required": [],
         },
+        "timeout": 60,
     },
     {
         "name": "ops_failed_units",
         "description": "List failed systemd units. Read-only.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "timeout": 60,
     },
     {
         "name": "ops_network_connections",
@@ -183,6 +195,7 @@ TOOLS_SCHEMA = [
             "properties": {"limit": {"type": "integer", "default": 200}},
             "required": [],
         },
+        "timeout": 60,
     },
     {
         "name": "ops_scan_health",
@@ -202,6 +215,7 @@ TOOLS_SCHEMA = [
             },
             "required": [],
         },
+        "timeout": 120,
     },
 ]
 
