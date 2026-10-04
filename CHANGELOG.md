@@ -3,6 +3,15 @@
 Short entries only: date + one or two lines. Details live in `docs/` or in the
 task report (RULES 14).
 
+## 2026-10-04
+
+- Enforce `REQUIRE_TLS` on the admin session cookie: `GET /api/auth/session` now
+  re-validates a valid cookie through `require_admin_token`, so a JWT cookie over
+  plain HTTP is 403; an invalid cookie still falls through to the Bearer token.
+- Persist plugin enable/disable state to `/data/plugins.json` on the `loomdata`
+  volume in Docker Compose (`PLUGINS_STATE_FILE`), so it survives container
+  recreation; the local/non-Docker default is unchanged.
+
 ## 2026-09-29
 
 - Long-conversation memory: once a session's history passes 12000 chars the

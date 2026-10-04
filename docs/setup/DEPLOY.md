@@ -296,6 +296,10 @@ PostgreSQL data lives in the `pgdata` Docker volume:
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sql
 ```
 
+The `loomdata` volume also holds runtime state: LLM settings, the revoked-JWT
+store and the plugin enable/disable file (`PLUGINS_STATE_FILE`, Compose default
+`/data/plugins.json`), so back it up to preserve disabled-plugin choices.
+
 `.env` and `backup.sql` must never be committed to Git.
 
 ## Container security

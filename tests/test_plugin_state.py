@@ -22,6 +22,18 @@ def test_resolve_state_path_override():
     )
 
 
+def test_resolve_state_path_docker_volume():
+    assert state_module.resolve_state_path("/app/plugins", "/data/plugins.json") == Path(
+        "/data/plugins.json"
+    )
+
+
+def test_resolve_state_path_empty_override_uses_default():
+    assert state_module.resolve_state_path("/app/plugins", "") == (
+        state_module.default_state_path("/app/plugins")
+    )
+
+
 def test_resolve_state_path_default():
     assert state_module.resolve_state_path("/app/plugins") == (
         state_module.default_state_path("/app/plugins")

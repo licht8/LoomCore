@@ -179,7 +179,9 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 ```
 
 State persists to `.loomcore/plugins.json` under the repo (override with
-`PLUGINS_STATE_FILE`), so a disabled plugin stays disabled across restarts.
+`PLUGINS_STATE_FILE`). The Compose stack defaults `PLUGINS_STATE_FILE` to
+`/data/plugins.json` on the `loomdata` volume, so a disabled plugin survives a
+container recreate; without Compose the local default applies.
 
 LoomOps is **deny-by-default**: until you set its environment, `ops_run_command`
 runs nothing and `ops_read_file`/`ops_write_file` refuse every path. The Compose

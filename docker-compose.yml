@@ -108,7 +108,8 @@ services:
       LOOMOPS_CPU_THRESHOLD: ${LOOMOPS_CPU_THRESHOLD:-80}
       LOOMOPS_DISK_THRESHOLD: ${LOOMOPS_DISK_THRESHOLD:-90}
       LOOMOPS_LOAD_THRESHOLD: ${LOOMOPS_LOAD_THRESHOLD:-2.0}
-      PLUGINS_STATE_FILE: ${PLUGINS_STATE_FILE:-}
+      # Enable/disable state on the loomdata volume, so it survives recreate.
+      PLUGINS_STATE_FILE: ${PLUGINS_STATE_FILE:-/data/plugins.json}
       # Plugin trust boundary: comma/space-separated plugin ids allowed to
       # launch (empty = every discovered plugin). Plugins run unsandboxed.
       LOOMCORE_PLUGINS_ALLOWED: ${LOOMCORE_PLUGINS_ALLOWED:-}

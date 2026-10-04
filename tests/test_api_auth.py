@@ -315,6 +315,78 @@ async def test_session_accepts_valid_cookie(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_cookie_requires_tls_when_configured(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "jwt")
+    monkeypatch.setattr(settings, "admin_password_hash", "hash")
+    monkeypatch.setattr(settings, "admin_totp_secret", "totp")
+    monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
+    monkeypatch.setattr(settings, "require_tls", True)
+    token = create_jwt_token({"username": "admin"}, LONG_SECRET)
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, token)
+        response = await client.get(
+            "/api/auth/session",
+            headers={"X-Forwarded-For": "198.51.100.33"},
+        )
+
+    assert response.status_code == 403
+    assert "TLS" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_session_cookie_allowed_over_https_when_tls_required(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "jwt")
+    monkeypatch.setattr(settings, "admin_password_hash", "hash")
+    monkeypatch.setattr(settings, "admin_totp_secret", "totp")
+    monkeypatch.setattr(settings, "session_secret", LONG_SECRET)
+    monkeypatch.setattr(settings, "require_tls", True)
+    token = create_jwt_token({"username": "admin"}, LONG_SECRET)
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, token)
+        response = await client.get(
+            "/api/auth/session",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True}
+
+
+@pytest.mark.asyncio
+async def test_session_bad_cookie_falls_through_to_bearer_over_https(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+    monkeypatch.setattr(settings, "require_tls", True)
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, "bogus")
+        response = await client.get(
+            "/api/auth/session",
+            headers={
+                "Authorization": "Bearer static-token",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True}
+
+
+@pytest.mark.asyncio
+async def test_session_rejects_invalid_cookie_without_token(monkeypatch):
+    monkeypatch.setattr(settings, "auth_mode", "token")
+    monkeypatch.setattr(settings, "admin_token", "static-token")
+
+    async with _client() as client:
+        client.cookies.set(SESSION_COOKIE, "bogus")
+        response = await client.get("/api/auth/session")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_session_rejects_cookie_when_jwt_disabled(monkeypatch):
     monkeypatch.setattr(settings, "auth_mode", "token")
     monkeypatch.setattr(settings, "admin_token", "static-token")

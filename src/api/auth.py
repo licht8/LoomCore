@@ -128,6 +128,9 @@ async def auth_session(request: Request, authorization: str | None = Header(defa
     """
     cookie = request.cookies.get(SESSION_COOKIE)
     if is_valid_admin_credential(cookie):
+        # A valid cookie must still satisfy REQUIRE_TLS and emit security events
+        # exactly like the Bearer path; is_valid_admin_credential alone skips both.
+        require_admin_token(cookie, request)
         return {"authenticated": True}
 
     if authorization and authorization.lower().startswith("bearer "):
