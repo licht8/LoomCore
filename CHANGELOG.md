@@ -5,6 +5,8 @@ task report (RULES 14).
 
 ## 2026-10-04
 
+- README: added a CI badge and a Features section, and dropped the link to the
+  now-local-only `RULES.md`; added an MIT `LICENSE`.
 - Untracked local-only agent instructions (`AGENTS.md`, `Agents/`, `RULES.md`,
   `frontend/AGENTS.md`, `frontend/CLAUDE.md`) and process docs (`docs/README.md`,
   `docs/tasks/`); they stay in the working tree via `.gitignore`.

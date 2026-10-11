@@ -1,6 +1,19 @@
 # LoomCore
 
+[![CI](https://github.com/licht8/LoomCore/actions/workflows/ci.yml/badge.svg)](https://github.com/licht8/LoomCore/actions/workflows/ci.yml)
+
 **AI-Driven Infrastructure Hub** — an infrastructure orchestrator with an AI assistant.
+
+## Features
+
+- Conversational AI assistant that turns a request into a reviewable plan; a single obvious action runs directly.
+- Approval-gated execution — non-safe steps run only after you approve; risky direct actions are confirmed in chat.
+- Tamper-evident audit: every mutation is appended to a hash-chained log (`GET /api/audit`, `/api/audit/verify`).
+- Auth: static admin token and/or password + TOTP (JWT), TLS-enforced by default, revoked-token persistence and rate limiting.
+- Plugin system over MCP (JSON-RPC 2.0, stdio): enable/disable/reload, per-tool timeouts, process-group kill and an allowlist.
+- Shipped plugins: **LoomWG** (WireGuard server, peers, client configs/QR) and **LoomOps** (deny-by-default system commands, confined files, processes, services, logs and health scans).
+- Runtime LLM configuration (OpenAI-compatible providers) with usage tracking and a daily call budget.
+- Web dashboard: Chat, Overview, Tools, Approvals, Plugins, Audit, Usage and Settings.
 
 ## Stack
 
@@ -38,7 +51,6 @@ Detailed instructions: [VDS deploy](docs/setup/DEPLOY.md) and the
 
 ## Documentation
 
-- [Project rules](RULES.md)
 - [VDS deploy](docs/setup/DEPLOY.md)
 - [Rocky Linux 10 runbook](docs/setup/VDS_RUNBOOK.md)
 - [Testing](docs/setup/TESTING.md)
