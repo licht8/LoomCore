@@ -5,6 +5,9 @@ task report (RULES 14).
 
 ## 2026-10-04
 
+- Untracked local-only agent instructions (`AGENTS.md`, `Agents/`, `RULES.md`,
+  `frontend/AGENTS.md`, `frontend/CLAUDE.md`) and process docs (`docs/README.md`,
+  `docs/tasks/`); they stay in the working tree via `.gitignore`.
 - `GET /api/approvals` now reads the authoritative `sessions.pending` slot
   instead of stale `role="plan"` rows, so a superseded plan is no longer listed.
 - Long-conversation compaction is gated in `refresh_memory` over the foldable
